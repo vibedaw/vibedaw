@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/components/IconButton.h"
 
 namespace vibedaw {
 
@@ -16,8 +17,6 @@ public:
     void mouseDown(const juce::MouseEvent& e) override;
     
 private:
-    class IconButton;
-    
     Panel& owner_;
     
     std::unique_ptr<IconButton> collapseBtn_;

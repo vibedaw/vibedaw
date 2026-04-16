@@ -3,6 +3,10 @@
 #include "plugins/PluginHost.h"
 #include "core/Constants.h"
 #include "utils/Logger.h"
+#include "sidebar/Sidebar.h"
+#include "sidebar/SidebarContainer.h"
+#include "sidebar/channel/ChannelRackSidebar.h"
+#include "sidebar/browser/BrowserSidebar.h"
 
 namespace vibedaw {
 
@@ -10,8 +14,31 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     : midiManager_(manager),
       project_(proj)
 {
-    transport_ = std::make_unique<TransportComponent>();
+    setOpaque(true);
+    
+    transport_ = std::make_unique<TransportComponent>(transportState_);
     addAndMakeVisible(*transport_);
+    
+    leftSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Left);
+    leftSidebarContainer_->setContainerListener(this);
+    addAndMakeVisible(*leftSidebarContainer_);
+    
+    auto* browserSidebar = createBrowserSidebar(pluginScanner_);
+    browserSidebar->getContent();
+    auto* browserContent = dynamic_cast<BrowserSidebar*>(browserSidebar->getContent());
+    if (browserContent) {
+        browserContent->setListener(this);
+    }
+    leftSidebarContainer_->addSidebar(browserSidebar);
+    
+    auto* channelRack = createChannelRackSidebar(project_);
+    leftSidebarContainer_->addSidebar(channelRack);
+    
+    pluginScanner_.scanDefaultDirectories();
+    
+    rightSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Right);
+    rightSidebarContainer_->setContainerListener(this);
+    addChildComponent(*rightSidebarContainer_);
     
     panelContainer_ = std::make_unique<PanelContainer>();
     addAndMakeVisible(*panelContainer_);
@@ -25,13 +52,13 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     pianoPanel_ = new PianoPanel(keyboardState, &midiManager_);
     panelContainer_->addPanel(pianoPanel_);
     
-    pluginButton_.setButtonText("Open Plugin");
+    pluginButton_.setButtonText("Plugin");
     pluginButton_.onClick = [this]() {
         openPluginWindow();
     };
     addAndMakeVisible(pluginButton_);
     
-    midiLabel_.setText("MIDI Input:", juce::dontSendNotification);
+    midiLabel_.setText("MIDI:", juce::dontSendNotification);
     addAndMakeVisible(midiLabel_);
     
     midiDeviceCombo_.addItem("None", 1);
@@ -61,11 +88,28 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     
     setWantsKeyboardFocus(true);
     
-    LOG_INFO("MainContent: Created with panel system");
+    startTimerHz(30);
+    lastUpdateTime_ = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    
+    LOG_INFO("MainContent: Created with transport bar and sidebars");
 }
 
 MainContent::~MainContent() {
+    stopTimer();
     LOG_INFO("MainContent: Destroyed");
+}
+
+void MainContent::timerCallback() {
+    if (transportState_.isPlaying()) {
+        double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        double elapsed = now - lastUpdateTime_;
+        lastUpdateTime_ = now;
+        
+        double newPos = transportState_.getPosition() + elapsed;
+        transportState_.setPosition(newPos);
+    } else {
+        lastUpdateTime_ = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    }
 }
 
 void MainContent::paint(juce::Graphics& g) {
@@ -73,19 +117,43 @@ void MainContent::paint(juce::Graphics& g) {
 }
 
 void MainContent::resized() {
+    updateLayout();
+}
+
+void MainContent::updateLayout() {
     auto bounds = getLocalBounds();
     
-    auto topArea = bounds.removeFromTop(topBarHeight).reduced(10, 5);
-    transport_->setBounds(topArea.removeFromLeft(250));
+    transport_->setBounds(bounds.removeFromTop(transportBarHeight));
     
-    midiLabel_.setBounds(topArea.removeFromLeft(80).withTrimmedTop(5));
-    midiDeviceCombo_.setBounds(topArea.removeFromLeft(200));
+    auto statusBarBounds = bounds.removeFromBottom(statusBarHeight);
     
-    pluginButton_.setBounds(topArea.removeFromRight(120));
+    int leftWidth = leftSidebarContainer_->getTotalWidth();
+    int rightWidth = rightSidebarContainer_->getTotalWidth();
     
-    statusLabel_.setBounds(bounds.removeFromBottom(30).reduced(10, 0));
+    if (leftWidth > 0) {
+        leftSidebarContainer_->setBounds(bounds.removeFromLeft(leftWidth));
+    } else {
+        leftSidebarContainer_->setBounds(0, transportBarHeight, 0, bounds.getHeight());
+    }
+    
+    if (rightWidth > 0) {
+        rightSidebarContainer_->setBounds(bounds.removeFromRight(rightWidth));
+    } else {
+        rightSidebarContainer_->setBounds(getWidth(), transportBarHeight, 0, bounds.getHeight());
+    }
     
     panelContainer_->setBounds(bounds);
+    
+    auto statusBar = statusBarBounds.reduced(10, 2);
+    midiLabel_.setBounds(statusBar.removeFromLeft(40));
+    midiDeviceCombo_.setBounds(statusBar.removeFromLeft(150));
+    pluginButton_.setBounds(statusBar.removeFromRight(70));
+    statusLabel_.setBounds(statusBar);
+}
+
+void MainContent::sidebarContainerChanged(SidebarContainer* container) {
+    juce::ignoreUnused(container);
+    updateLayout();
 }
 
 bool MainContent::keyPressed(const juce::KeyPress& key) {
@@ -93,15 +161,101 @@ bool MainContent::keyPressed(const juce::KeyPress& key) {
 }
 
 bool MainContent::handleKeyPress(const juce::KeyPress& key) {
+    if (key.getKeyCode() == ' ' && !key.getModifiers().isCtrlDown()) {
+        transportState_.togglePlay();
+        return true;
+    }
+    
+    if (key.getKeyCode() == juce::KeyPress::returnKey && !key.getModifiers().isAltDown()) {
+        transportState_.reset();
+        return true;
+    }
+    
+    auto* focused = panelContainer_->getFocusedPanel();
+    double now = juce::Time::getMillisecondCounterHiRes();
+    
     if ((key.getKeyCode() == 'P' || key.getKeyCode() == 'p') && key.getModifiers().isCtrlDown()) {
-        pianoPanel_->toggleCollapsed();
+        handlePanelFocusHotkey(2, now);
         return true;
     }
     if ((key.getKeyCode() == 'M' || key.getKeyCode() == 'm') && key.getModifiers().isCtrlDown()) {
-        mixerPanel_->toggleCollapsed();
+        handlePanelFocusHotkey(1, now);
+        return true;
+    }
+    if ((key.getKeyCode() == 'T' || key.getKeyCode() == 't') && key.getModifiers().isCtrlDown()) {
+        handlePanelFocusHotkey(0, now);
+        return true;
+    }
+    
+    if ((key.getKeyCode() == 'B' || key.getKeyCode() == 'b') && key.getModifiers().isCtrlDown()) {
+        if (leftSidebarContainer_->getSidebarCount() > 0) {
+            auto* sidebar = leftSidebarContainer_->getSidebar(0);
+            if (sidebar) {
+                sidebar->toggle();
+                updateLayout();
+            }
+        }
+        return true;
+    }
+    
+    if (key.getModifiers().isShiftDown()) {
+        if (key.getKeyCode() == '-' || key.getKeyCode() == juce::KeyPress::numberPadSubtract) {
+            if (focused) {
+                if (focused->getWindowState() == PanelWindowState::Maximized) {
+                    focused->restore();
+                } else if (focused->getWindowState() == PanelWindowState::Restored) {
+                    focused->minimize();
+                }
+            }
+            return true;
+        }
+        if (key.getKeyCode() == '+' || key.getKeyCode() == '=' || key.getKeyCode() == juce::KeyPress::numberPadAdd) {
+            if (focused) {
+                if (focused->getWindowState() == PanelWindowState::Minimized) {
+                    focused->restore();
+                } else if (focused->getWindowState() == PanelWindowState::Restored) {
+                    focused->maximize();
+                } else if (focused->getWindowState() == PanelWindowState::Maximized) {
+                    focused->restore();
+                }
+            }
+            return true;
+        }
+    }
+    
+    if (key.getKeyCode() == '-' || key.getKeyCode() == juce::KeyPress::numberPadSubtract) {
+        panelContainer_->resizeFocusedPanel(-30);
+        return true;
+    }
+    if (key.getKeyCode() == '+' || key.getKeyCode() == '=' || key.getKeyCode() == juce::KeyPress::numberPadAdd) {
+        panelContainer_->resizeFocusedPanel(30);
         return true;
     }
     return false;
+}
+
+void MainContent::handlePanelFocusHotkey(int panelIndex, double currentTime) {
+    bool isDoubleTap = (lastFocusedPanelIndex_ == panelIndex && 
+                        (currentTime - lastPanelFocusTime_) < doubleTapIntervalMs_);
+    
+    auto* panel = panelContainer_->getPanel(panelIndex);
+    
+    if (isDoubleTap && panel) {
+        if (panel->getWindowState() == PanelWindowState::Minimized) {
+            panel->restore();
+        } else {
+            panel->minimize();
+        }
+        lastFocusedPanelIndex_ = -1;
+        lastPanelFocusTime_ = 0;
+    } else {
+        panelContainer_->focusPanelByIndex(panelIndex);
+        if (panel && panel->getWindowState() == PanelWindowState::Minimized) {
+            panel->restore();
+        }
+        lastPanelFocusTime_ = currentTime;
+        lastFocusedPanelIndex_ = panelIndex;
+    }
 }
 
 void MainContent::openPluginWindow() {
@@ -131,6 +285,22 @@ void MainContent::updateStatusLabel() {
     status += " | MIDI: " + (midiManager_.isConnected() ? midiManager_.getCurrentDeviceName() : "Not connected");
     
     statusLabel_.setText(status, juce::dontSendNotification);
+}
+
+void MainContent::pluginSelectedForLoad(const juce::String& pluginPath) {
+    LOG_INFO("MainContent: Loading plugin from browser: " + pluginPath);
+    
+    if (project_.loadPlugin(pluginPath)) {
+        updateStatusLabel();
+    }
+}
+
+void MainContent::sampleSelected(const juce::File& file) {
+    LOG_INFO("MainContent: Sample selected: " + file.getFullPathName());
+}
+
+void MainContent::presetSelected(const juce::File& file) {
+    LOG_INFO("MainContent: Preset selected: " + file.getFullPathName());
 }
 
 } // namespace vibedaw

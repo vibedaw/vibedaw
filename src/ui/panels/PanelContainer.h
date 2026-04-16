@@ -17,6 +17,19 @@ public:
     int getPanelCount() const;
     Panel* getPanel(int index) const;
     
+    void setFocusedPanel(Panel* panel);
+    Panel* getFocusedPanel() const;
+    void focusPanelByIndex(int index);
+    int getFocusedPanelIndex() const;
+    
+    void resizeFocusedPanel(int deltaHeight);
+    void minimizeFocusedPanel();
+    void restoreFocusedPanel();
+    void maximizeFocusedPanel();
+    
+    void onPanelRestored(Panel* panel);
+    void onPanelMaximized(Panel* panel);
+    
     void paint(juce::Graphics& g) override;
     void resized() override;
     
@@ -26,6 +39,8 @@ public:
     
 private:
     juce::OwnedArray<Panel> panels_;
+    Panel* focusedPanel_ = nullptr;
+    Panel* maximizedPanel_ = nullptr;
     std::vector<int> splitterPositions_;
     int draggedSplitterIndex_ = -1;
     int splitterDragStartY_ = 0;

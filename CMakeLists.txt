@@ -72,6 +72,7 @@ set(SOURCES
     src/Main.cpp
     src/core/AudioEngine.cpp
     src/core/MidiManager.cpp
+    src/core/TransportState.cpp
     src/project/Project.cpp
     src/project/Track.cpp
     src/project/TrackList.cpp
@@ -79,18 +80,29 @@ set(SOURCES
     src/project/Settings.cpp
     src/plugins/PluginHost.cpp
     src/plugins/PluginWindow.cpp
+    src/plugins/PluginScanner.cpp
     src/ui/MainWindow.cpp
     src/ui/MainContent.cpp
     src/ui/TransportComponent.cpp
     src/ui/PianoComponent.cpp
     src/ui/FloatingPianoPanel.cpp
     src/ui/panels/Panel.cpp
+    src/ui/components/IconButton.cpp
     src/ui/panels/PanelTitleBar.cpp
     src/ui/panels/PanelWindow.cpp
     src/ui/panels/PanelContainer.cpp
     src/ui/panels/TimelinePanel.cpp
     src/ui/panels/MixerPanel.cpp
     src/ui/panels/PianoPanel.cpp
+    src/ui/sidebar/Sidebar.cpp
+    src/ui/sidebar/SidebarTab.cpp
+    src/ui/sidebar/SidebarContainer.cpp
+    src/ui/sidebar/channel/ChannelRackSidebar.cpp
+    src/ui/sidebar/browser/BrowserSection.cpp
+    src/ui/sidebar/browser/PluginSection.cpp
+    src/ui/sidebar/browser/SampleSection.cpp
+    src/ui/sidebar/browser/PresetSection.cpp
+    src/ui/sidebar/browser/BrowserSidebar.cpp
     src/ui/timeline/TimeRuler.cpp
     src/ui/timeline/TrackHeader.cpp
     src/ui/timeline/TrackHeaderList.cpp

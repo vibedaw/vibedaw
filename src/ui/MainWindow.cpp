@@ -12,10 +12,14 @@ MainWindow::MainWindow(juce::String name, juce::MidiKeyboardState& keyboardState
     setContentOwned(content.release(), false);
     
     setResizable(true, true);
-    setResizeLimits(600, 400, 2000, 1200);
+    setResizeLimits(600, 400, 10000, 10000);
     setUsingNativeTitleBar(true);
     
-    centreWithSize(800, 500);
+    auto& displays = juce::Desktop::getInstance().getDisplays();
+    auto displayArea = displays.getDisplayForPoint(displays.getPrimaryDisplay()->userArea.getCentre())->userArea;
+    int width = static_cast<int>(displayArea.getWidth() * 0.8f);
+    int height = static_cast<int>(displayArea.getHeight() * 0.8f);
+    centreWithSize(width, height);
     setVisible(true);
     
     LOG_INFO("MainWindow: Created");

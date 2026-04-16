@@ -20,8 +20,27 @@ void TimelineLane::paint(juce::Graphics& g) {
     }
     
     g.setColour(juce::Colour(0xff333333));
-    for (int x = 0; x < bounds.getWidth(); x += 50) {
-        g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
+    
+    double minorInterval = 1.0;
+    if (pixelsPerSecond < 10.0) {
+        minorInterval = 10.0;
+    } else if (pixelsPerSecond < 30.0) {
+        minorInterval = 5.0;
+    } else if (pixelsPerSecond < 100.0) {
+        minorInterval = 1.0;
+    } else {
+        minorInterval = 0.5;
+    }
+    
+    double startTime = scrollOffset / pixelsPerSecond;
+    double endTime = startTime + (bounds.getWidth() / pixelsPerSecond);
+    double firstTick = std::floor(startTime / minorInterval) * minorInterval + minorInterval;
+    
+    for (double t = firstTick; t <= endTime; t += minorInterval) {
+        int x = static_cast<int>((t * pixelsPerSecond) - scrollOffset);
+        if (x >= 0 && x < bounds.getWidth()) {
+            g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
+        }
     }
     
     g.setColour(juce::Colour(0xff505050));

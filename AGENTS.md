@@ -1,6 +1,6 @@
 # VibeDAW - Architecture Overview
 
-DO NOT LAUNCH THE APPLICATION AFTER A TASK. WE HAVE A WATCHER RUNNING!
+DO NOT TRY TO BUILD OR LAUNCH THE APPLICATION AFTER A TASK. WE HAVE A WATCHER RUNNING!
 
 ## Framework
 - **JUCE 7.x** - Cross-platform C++ framework for audio applications

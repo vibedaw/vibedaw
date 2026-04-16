@@ -3,6 +3,61 @@
 
 namespace vibedaw {
 
+class TimelinePanel::AddTrackButton : public juce::Component {
+public:
+    AddTrackButton() {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    
+    void paint(juce::Graphics& g) override {
+        auto bounds = getLocalBounds().toFloat();
+        
+        if (isDown) {
+            g.fillAll(juce::Colour(0xff404040));
+        } else if (isOver) {
+            g.fillAll(juce::Colour(0xff353535));
+        } else {
+            g.fillAll(juce::Colour(0xff2a2a2a));
+        }
+        
+        g.setColour(juce::Colour(0xff666666));
+        g.drawRect(bounds, 1.0f);
+        
+        g.setColour(juce::Colour(0xffaaaaaa));
+        g.setFont(juce::Font(16.0f, juce::Font::bold));
+        g.drawText("+", bounds, juce::Justification::centred);
+    }
+    
+    void mouseEnter(const juce::MouseEvent&) override {
+        isOver = true;
+        repaint();
+    }
+    
+    void mouseExit(const juce::MouseEvent&) override {
+        isOver = false;
+        repaint();
+    }
+    
+    void mouseDown(const juce::MouseEvent&) override {
+        isDown = true;
+        repaint();
+    }
+    
+    void mouseUp(const juce::MouseEvent&) override {
+        isDown = false;
+        repaint();
+        if (onClick) onClick();
+    }
+    
+    std::function<void()> onClick;
+    
+private:
+    bool isOver = false;
+    bool isDown = false;
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AddTrackButton)
+};
+
 TimelinePanel::TimelinePanel(Project& proj)
     : Panel("Timeline")
     , project(proj)
@@ -25,9 +80,12 @@ TimelinePanel::TimelinePanel(Project& proj)
     horizontalScrollBar->addListener(this);
     addAndMakeVisible(*horizontalScrollBar);
     
-    cornerComponent = std::make_unique<juce::Component>();
-    cornerComponent->setOpaque(true);
-    addAndMakeVisible(*cornerComponent);
+    addTrackButton = std::make_unique<AddTrackButton>();
+    addTrackButton->onClick = [this] {
+        int trackCount = trackList.getNumTracks();
+        trackList.addTrack("Track " + juce::String(trackCount + 1));
+    };
+    addAndMakeVisible(*addTrackButton);
     
     headerList->onTrackSelected = [this](int index) {
         content->setSelectedTrack(index);
@@ -112,8 +170,8 @@ void TimelinePanel::layoutContent() {
                                     bounds.getBottom() - scrollBarWidth,
                                     availableWidth - headerWidth, scrollBarWidth);
     
-    cornerComponent->setBounds(bounds.getX(), bounds.getBottom() - scrollBarWidth,
-                                headerWidth, scrollBarWidth);
+    addTrackButton->setBounds(bounds.getX(), bounds.getBottom() - scrollBarWidth,
+                               headerWidth, scrollBarWidth);
     
     syncVerticalScroll();
     syncHorizontalScroll();

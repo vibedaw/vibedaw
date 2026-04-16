@@ -4,6 +4,7 @@
 namespace vibedaw {
 
 PanelContainer::PanelContainer() {
+    setOpaque(true);
     setInterceptsMouseClicks(true, true);
     setWantsKeyboardFocus(true);
 }
@@ -37,8 +38,104 @@ Panel* PanelContainer::getPanel(int index) const {
     return nullptr;
 }
 
+void PanelContainer::setFocusedPanel(Panel* panel) {
+    if (focusedPanel_ == panel) return;
+    
+    if (focusedPanel_) {
+        focusedPanel_->setFocused(false);
+    }
+    
+    focusedPanel_ = panel;
+    
+    if (focusedPanel_) {
+        focusedPanel_->setFocused(true);
+    }
+}
+
+Panel* PanelContainer::getFocusedPanel() const {
+    return focusedPanel_;
+}
+
+void PanelContainer::focusPanelByIndex(int index) {
+    if (index >= 0 && index < panels_.size()) {
+        setFocusedPanel(panels_[index]);
+    }
+}
+
+int PanelContainer::getFocusedPanelIndex() const {
+    if (focusedPanel_ == nullptr) return -1;
+    for (int i = 0; i < panels_.size(); ++i) {
+        if (panels_[i] == focusedPanel_) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void PanelContainer::resizeFocusedPanel(int deltaHeight) {
+    if (focusedPanel_ == nullptr) return;
+    if (focusedPanel_->isCollapsed()) return;
+    if (focusedPanel_->isFlexFill()) return;
+    
+    int currentHeight = focusedPanel_->getPreferredHeight();
+    int newHeight = currentHeight + deltaHeight;
+    newHeight = juce::jlimit(focusedPanel_->getMinHeight(), focusedPanel_->getMaxHeight(), newHeight);
+    
+    focusedPanel_->setPreferredHeight(newHeight);
+    focusedPanel_->setExpandedHeight(newHeight);
+    layoutPanels();
+    repaint();
+}
+
+void PanelContainer::minimizeFocusedPanel() {
+    if (focusedPanel_ == nullptr) return;
+    focusedPanel_->minimize();
+    layoutPanels();
+    repaint();
+}
+
+void PanelContainer::restoreFocusedPanel() {
+    if (focusedPanel_ == nullptr) return;
+    focusedPanel_->restore();
+}
+
+void PanelContainer::maximizeFocusedPanel() {
+    if (focusedPanel_ == nullptr) return;
+    focusedPanel_->maximize();
+}
+
+void PanelContainer::onPanelRestored(Panel* panel) {
+    if (maximizedPanel_ != nullptr && maximizedPanel_ == panel) {
+        maximizedPanel_ = nullptr;
+        for (auto* p : panels_) {
+            if (p != panel && p->getWindowState() == PanelWindowState::Minimized) {
+                p->restore();
+            }
+        }
+    }
+    layoutPanels();
+    repaint();
+}
+
+void PanelContainer::onPanelMaximized(Panel* panel) {
+    if (maximizedPanel_ != nullptr && maximizedPanel_ != panel) {
+        maximizedPanel_->restore();
+    }
+    
+    maximizedPanel_ = panel;
+    
+    for (auto* p : panels_) {
+        if (p != panel && !p->isCollapsed()) {
+            p->minimize();
+        }
+    }
+    
+    layoutPanels();
+    repaint();
+}
+
 void PanelContainer::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff0a0a0a));
+    g.fillAll(juce::Colour(0xff1a1a1a));
     
     auto visiblePanels = getNumVisiblePanels();
     
@@ -170,6 +267,43 @@ void PanelContainer::layoutPanels() {
     int visibleCount = getNumVisiblePanels();
     
     if (visibleCount == 0) return;
+    
+    if (maximizedPanel_ != nullptr) {
+        int titleBarTotal = 0;
+        int titleBarCount = 0;
+        
+        for (auto* panel : panels_) {
+            if (!panel->isPanelVisible() || panel->getDisplayMode() != DisplayMode::Flex) continue;
+            if (panel == maximizedPanel_) continue;
+            titleBarTotal += panel->getTitleBarHeight();
+            titleBarCount++;
+        }
+        
+        int splitterTotal = titleBarCount > 0 ? (titleBarCount) * getSplitterHeight() : 0;
+        int maximizedHeight = totalHeight - titleBarTotal - splitterTotal;
+        
+        int currentY = 0;
+        for (auto* panel : panels_) {
+            if (!panel->isPanelVisible() || panel->getDisplayMode() != DisplayMode::Flex) {
+                panel->setVisible(false);
+                continue;
+            }
+            
+            panel->setVisible(true);
+            
+            int panelHeight;
+            if (panel == maximizedPanel_) {
+                panelHeight = maximizedHeight;
+            } else {
+                panelHeight = panel->getTitleBarHeight();
+            }
+            
+            panel->setBounds(0, currentY, bounds.getWidth(), panelHeight);
+            currentY += panelHeight;
+            currentY += getSplitterHeight();
+        }
+        return;
+    }
     
     int totalSplitterHeight = (visibleCount - 1) * getSplitterHeight();
     int availableHeight = totalHeight - totalSplitterHeight;

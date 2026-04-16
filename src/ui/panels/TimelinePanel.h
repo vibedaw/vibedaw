@@ -33,7 +33,8 @@ private:
     std::unique_ptr<juce::ScrollBar> verticalScrollBar;
     std::unique_ptr<juce::ScrollBar> horizontalScrollBar;
     
-    std::unique_ptr<juce::Component> cornerComponent;
+    class AddTrackButton;
+    std::unique_ptr<AddTrackButton> addTrackButton;
     
     int headerWidth = TrackHeaderList::defaultWidth;
     int scrollBarWidth = 16;

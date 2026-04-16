@@ -77,7 +77,7 @@ private:
     bool muted = false;
     bool solo = false;
     Type trackType = Type::Insert;
-    juce::Colour colour{0xff6a6aff};
+    juce::Colour colour{0xffaaaaaa};
     
     static constexpr int maxSends = 4;
     SendDestination sends[maxSends];

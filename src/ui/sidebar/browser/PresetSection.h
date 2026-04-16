@@ -1,0 +1,71 @@
+#pragma once
+
+#include "BrowserSection.h"
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
+
+namespace vibedaw {
+
+class PresetFileTreeItem;
+
+class PresetSection : public BrowserSection {
+public:
+    class Listener {
+    public:
+        virtual ~Listener() = default;
+        virtual void presetSelected(const juce::File& file) = 0;
+        virtual void presetDoubleClicked(const juce::File& file) = 0;
+    };
+    
+    PresetSection();
+    ~PresetSection() override;
+    
+    void setPresetListener(Listener* listener) { presetListener_ = listener; }
+    
+    void refresh();
+    void setRootDirectory(const juce::File& directory);
+    
+    void paintContent(juce::Graphics& g, juce::Rectangle<int> bounds) override;
+    void resizedContent(juce::Rectangle<int> bounds) override;
+    
+private:
+    Listener* presetListener_ = nullptr;
+    
+    std::unique_ptr<juce::TreeView> treeView_;
+    std::unique_ptr<PresetFileTreeItem> rootItem_;
+    juce::File rootDirectory_;
+    
+    void buildTree();
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetSection)
+};
+
+class PresetFileTreeItem : public juce::TreeViewItem {
+public:
+    PresetFileTreeItem(const juce::File& file, bool isRoot = false);
+    ~PresetFileTreeItem() override = default;
+    
+    bool mightContainSubItems() override;
+    juce::String getUniqueName() const override;
+    void paintItem(juce::Graphics& g, int width, int height) override;
+    void itemClicked(const juce::MouseEvent& e) override;
+    void itemDoubleClicked(const juce::MouseEvent& e) override;
+    
+    juce::var getDragSourceDescription() override;
+    
+    void setListener(PresetSection::Listener* listener) { listener_ = listener; }
+    
+    const juce::File& getFile() const { return file_; }
+    bool isPreset() const { return !file_.isDirectory(); }
+    
+private:
+    juce::File file_;
+    bool isRoot_;
+    PresetSection::Listener* listener_ = nullptr;
+    
+    void populateChildren();
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetFileTreeItem)
+};
+
+} // namespace vibedaw

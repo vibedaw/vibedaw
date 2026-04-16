@@ -61,8 +61,8 @@ bool PluginHost::loadPlugin(const juce::String& pluginPath) {
     }
     
     LOG_INFO("PluginHost: Successfully loaded plugin: " + pluginInstance->getName());
-    LOG_INFO("PluginHost: Plugin has " + juce::String(pluginInstance->getNumInputChannels()) + " inputs, " 
-             + juce::String(pluginInstance->getNumOutputChannels()) + " outputs");
+    LOG_INFO("PluginHost: Plugin has " + juce::String(pluginInstance->getTotalNumInputChannels()) + " inputs, " 
+             + juce::String(pluginInstance->getTotalNumOutputChannels()) + " outputs");
     
     return true;
 }

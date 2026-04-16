@@ -37,7 +37,7 @@ private:
     Track* track = nullptr;
     int trackIndex = 0;
     juce::String trackName;
-    juce::Colour trackColour{0xff6a6aff};
+    juce::Colour trackColour{0xffaaaaaa};
     bool muted = false;
     bool solo = false;
     bool selected = false;

@@ -4,41 +4,10 @@
 
 namespace vibedaw {
 
-class PanelTitleBar::IconButton : public juce::Component {
-public:
-    IconButton(const juce::String& symbol) : symbol_(symbol) {
-        setInterceptsMouseClicks(true, false);
-    }
-    
-    void paint(juce::Graphics& g) override {
-        auto bounds = getLocalBounds().toFloat().reduced(2);
-        
-        if (isMouseOver()) {
-            g.setColour(juce::Colour(0xff444444));
-            g.fillRoundedRectangle(bounds, 3.0f);
-        }
-        
-        g.setColour(juce::Colour(0xffaaaaaa));
-        g.setFont(juce::Font(12.0f, juce::Font::plain));
-        g.drawText(symbol_, getLocalBounds(), juce::Justification::centred);
-    }
-    
-    void mouseDown(const juce::MouseEvent&) override {
-        if (onClick) onClick();
-    }
-    
-    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
-    void mouseExit(const juce::MouseEvent&) override { repaint(); }
-    
-    std::function<void()> onClick;
-    
-private:
-    juce::String symbol_;
-};
-
 PanelTitleBar::PanelTitleBar(Panel& owner)
     : owner_(owner)
 {
+    setOpaque(true);
     collapseBtn_ = std::make_unique<IconButton>("-");
     collapseBtn_->onClick = [this]() {
         owner_.setCollapsed(true);
@@ -59,7 +28,11 @@ PanelTitleBar::~PanelTitleBar() = default;
 void PanelTitleBar::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
-    g.fillAll(juce::Colour(0xff2a2a2a));
+    if (owner_.isFocused()) {
+        g.fillAll(juce::Colour(0xff3a5a6a));
+    } else {
+        g.fillAll(juce::Colour(0xff2a2a2a));
+    }
     
     g.setColour(juce::Colour(0xffcccccc));
     g.setFont(juce::Font(12.0f, juce::Font::plain));

@@ -8,6 +8,7 @@ namespace vibedaw {
 Panel::Panel(const juce::String& name)
     : panelName_(name)
 {
+    setOpaque(true);
     titleBar_ = std::make_unique<PanelTitleBar>(*this);
     addAndMakeVisible(*titleBar_);
 }
@@ -16,6 +17,11 @@ Panel::~Panel() = default;
 
 void Panel::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff1a1a1a));
+    
+    if (focused_) {
+        g.setColour(juce::Colour(0xff5a8a9a));
+        g.drawRect(getLocalBounds(), 1);
+    }
 }
 
 void Panel::resized() {
@@ -209,6 +215,73 @@ PanelContainer* Panel::getParentContainer() const {
 
 PanelTitleBar* Panel::getTitleBar() const {
     return titleBar_.get();
+}
+
+bool Panel::isFocused() const {
+    return focused_;
+}
+
+void Panel::setFocused(bool focused) {
+    if (focused_ == focused) return;
+    focused_ = focused;
+    repaint();
+    if (titleBar_) {
+        titleBar_->repaint();
+    }
+}
+
+PanelWindowState Panel::getWindowState() const {
+    return windowState_;
+}
+
+void Panel::setWindowState(PanelWindowState state) {
+    if (windowState_ == state) return;
+    
+    if (state == PanelWindowState::Restored) {
+        restore();
+    } else if (state == PanelWindowState::Minimized) {
+        minimize();
+    } else if (state == PanelWindowState::Maximized) {
+        maximize();
+    }
+}
+
+void Panel::minimize() {
+    if (windowState_ == PanelWindowState::Minimized) return;
+    
+    if (windowState_ == PanelWindowState::Restored) {
+        restoredHeight_ = preferredHeight_;
+    }
+    
+    windowState_ = PanelWindowState::Minimized;
+    setCollapsed(true, false);
+}
+
+void Panel::restore() {
+    if (windowState_ == PanelWindowState::Restored) return;
+    
+    windowState_ = PanelWindowState::Restored;
+    setPreferredHeight(restoredHeight_);
+    setCollapsed(false, false);
+    
+    if (parentContainer_) {
+        parentContainer_->onPanelRestored(this);
+    }
+}
+
+void Panel::maximize() {
+    if (windowState_ == PanelWindowState::Maximized) return;
+    
+    if (windowState_ == PanelWindowState::Restored) {
+        restoredHeight_ = preferredHeight_;
+    }
+    
+    windowState_ = PanelWindowState::Maximized;
+    setCollapsed(false, false);
+    
+    if (parentContainer_) {
+        parentContainer_->onPanelMaximized(this);
+    }
 }
 
 void Panel::updateLayout() {

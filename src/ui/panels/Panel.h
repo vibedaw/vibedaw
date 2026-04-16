@@ -17,6 +17,12 @@ enum class PanelState {
     Expanding
 };
 
+enum class PanelWindowState {
+    Minimized,
+    Restored,
+    Maximized
+};
+
 class PanelTitleBar;
 class PanelWindow;
 class PanelContainer;
@@ -72,6 +78,15 @@ public:
     void setParentContainer(PanelContainer* container);
     PanelContainer* getParentContainer() const;
     
+    bool isFocused() const;
+    void setFocused(bool focused);
+    
+    PanelWindowState getWindowState() const;
+    void setWindowState(PanelWindowState state);
+    void minimize();
+    void restore();
+    void maximize();
+    
     std::function<void()> onStateChange;
     
 protected:
@@ -90,6 +105,9 @@ private:
     int titleBarHeight_ = 24;
     
     PanelContainer* parentContainer_ = nullptr;
+    bool focused_ = false;
+    PanelWindowState windowState_ = PanelWindowState::Restored;
+    int restoredHeight_ = 200;
     
     std::unique_ptr<PanelTitleBar> titleBar_;
     std::unique_ptr<juce::Component> content_;
