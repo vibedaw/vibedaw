@@ -6,6 +6,7 @@
 
 #include "core/AudioEngine.h"
 #include "core/MidiManager.h"
+#include "core/ChannelMixer.h"
 #include "core/Constants.h"
 #include "project/Project.h"
 #include "project/Settings.h"
@@ -13,7 +14,8 @@
 #include "ui/MainWindow.h"
 #include "utils/Logger.h"
 
-class VibeDawApplication : public juce::JUCEApplication {
+class VibeDawApplication : public juce::JUCEApplication,
+                           public vibedaw::Project::Listener {
 public:
     VibeDawApplication() = default;
     
@@ -32,14 +34,11 @@ public:
         
         keyboardState->addListener(&audioEngine->getMidiMessageCollector());
         
+        project->addListener(this);
         project->initialise(*audioEngine, *midiManager);
         
-        if (project->getMasterTrack() && project->getMasterTrack()->getPlugin()) {
-            auto* plugin = project->getMasterTrack()->getPlugin();
-            plugin->prepareToPlay(audioEngine->getCurrentSampleRate(), 
-                                   audioEngine->getCurrentBufferSize());
-            audioEngine->setProcessor(plugin->getProcessor());
-        }
+        channelMixer = std::make_unique<vibedaw::ChannelMixer>(project->getChannelList());
+        audioEngine->setProcessor(channelMixer.get());
         
         mainWindow = std::make_unique<vibedaw::MainWindow>(
             vibedaw::Constants::APP_NAME, *keyboardState, *midiManager, *project);
@@ -51,11 +50,8 @@ public:
         LOG_INFO("VibeDAW: Shutting down application");
         
         mainWindow.reset();
-        
-        if (audioEngine && project && project->getMasterTrack()) {
-            audioEngine->clearProcessor();
-        }
-        
+        audioEngine->clearProcessor();
+        channelMixer.reset();
         project->shutdown();
         midiManager.reset();
         audioEngine->shutdown();
@@ -71,12 +67,19 @@ public:
         quit();
     }
     
+    void activeChannelChanged(int newActiveIndex) override {
+        if (channelMixer) {
+            channelMixer->setActiveChannel(newActiveIndex);
+        }
+    }
+    
 private:
     std::unique_ptr<vibedaw::AudioEngine> audioEngine;
     std::unique_ptr<vibedaw::MidiManager> midiManager;
     std::unique_ptr<vibedaw::Project> project;
     std::unique_ptr<juce::MidiKeyboardState> keyboardState;
     std::unique_ptr<vibedaw::MainWindow> mainWindow;
+    std::unique_ptr<vibedaw::ChannelMixer> channelMixer;
 };
 
 START_JUCE_APPLICATION(VibeDawApplication)

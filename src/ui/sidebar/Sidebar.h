@@ -42,6 +42,7 @@ public:
     void setListener(Listener* listener) { listener_ = listener; }
     
     void paint(juce::Graphics& g) override;
+    void paintOverChildren(juce::Graphics& g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;

@@ -216,11 +216,14 @@ void MixerPanel::updateMasterLevels(float left, float right) {
 void MixerPanel::updateMetersFromProject() {
     if (!project) return;
     
-    auto* masterTrack = project->getMasterTrack();
-    if (masterTrack) {
-        float leftLevel = masterTrack->getLeftLevel();
-        float rightLevel = masterTrack->getRightLevel();
-        updateMasterLevels(leftLevel, rightLevel);
+    auto& channels = project->getChannelList();
+    if (channels.getNumChannels() > 0) {
+        auto* channel = channels.getChannel(0);
+        if (channel) {
+            float leftLevel = channel->getLeftLevel();
+            float rightLevel = channel->getRightLevel();
+            updateMasterLevels(leftLevel, rightLevel);
+        }
     }
 }
 

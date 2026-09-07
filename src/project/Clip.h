@@ -3,6 +3,9 @@
 #include <juce_core/juce_core.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "Note.h"
+#include <vector>
+#include <memory>
 
 namespace vibedaw {
 
@@ -86,10 +89,21 @@ public:
     void setLoopEnabled(bool loop) { loopEnabled = loop; }
     bool isLoopEnabled() const { return loopEnabled; }
     
+    const std::vector<Note>& getNotes() const { return notes_; }
+    std::vector<Note>& getNotes() { return notes_; }
+    
+    void addNote(const Note& note);
+    void removeNote(int index);
+    void removeNote(const Note* note);
+    void clearNotes();
+    int getNumNotes() const { return static_cast<int>(notes_.size()); }
+    Note* findNoteAt(double time, int pitch);
+    
     std::unique_ptr<Clip> clone() const override;
     
 private:
     bool loopEnabled = false;
+    std::vector<Note> notes_;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiClip)
 };

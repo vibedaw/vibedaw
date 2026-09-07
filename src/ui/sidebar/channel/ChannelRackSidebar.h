@@ -2,12 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Sidebar.h"
+#include "project/ChannelList.h"
 #include <vector>
 
 namespace vibedaw {
 
 class Project;
-class Track;
+class Channel;
 
 enum class DragSourceType {
     Plugin,
@@ -24,24 +25,24 @@ struct DragDropInfo {
     static DragDropInfo fromDragDescription(const juce::var& description);
 };
 
-class TrackRow : public juce::Component, public juce::DragAndDropTarget {
+class ChannelRow : public juce::Component, public juce::DragAndDropTarget {
 public:
     class Listener {
     public:
         virtual ~Listener() = default;
-        virtual void trackSelected(Track* track) = 0;
-        virtual void pluginDroppedOnTrack(Track* track, const juce::String& pluginPath) = 0;
-        virtual void sampleDroppedOnTrack(Track* track, const juce::File& sampleFile) = 0;
+        virtual void channelSelected(Channel* channel) = 0;
+        virtual void pluginDroppedOnChannel(Channel* channel, const juce::String& pluginPath) = 0;
+        virtual void sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) = 0;
     };
     
-    TrackRow(Track* track, int index);
-    ~TrackRow() override = default;
+    ChannelRow(Channel* channel, int index);
+    ~ChannelRow() override = default;
     
     void setListener(Listener* listener) { listener_ = listener; }
     void setSelected(bool selected);
     bool isSelected() const { return isSelected_; }
     
-    Track* getTrack() const { return track_; }
+    Channel* getChannel() const { return channel_; }
     int getIndex() const { return index_; }
     
     void paint(juce::Graphics& g) override;
@@ -56,7 +57,7 @@ public:
     static constexpr int rowHeight = 28;
     
 private:
-    Track* track_;
+    Channel* channel_;
     int index_;
     Listener* listener_ = nullptr;
     bool isSelected_ = false;
@@ -65,40 +66,46 @@ private:
 };
 
 class ChannelRackContent : public juce::Component,
-                            public TrackRow::Listener {
+                           public ChannelRow::Listener,
+                           public ChannelList::Listener {
 public:
     class Listener {
     public:
         virtual ~Listener() = default;
-        virtual void trackCreated(const juce::String& pluginPath) = 0;
-        virtual void trackCreatedFromSample(const juce::File& sampleFile) = 0;
+        virtual void channelCreated(const juce::String& pluginPath) = 0;
+        virtual void channelCreatedFromSample(const juce::File& sampleFile) = 0;
     };
     
     ChannelRackContent(Project& project);
-    ~ChannelRackContent() override;
+    ~ChannelRackContent();
     
     void setChannelListener(Listener* listener) { channelListener_ = listener; }
     
-    void refreshTracks();
+    void refreshChannels();
     
     void paint(juce::Graphics& g) override;
     void resized() override;
     
-    void trackSelected(Track* track) override;
-    void pluginDroppedOnTrack(Track* track, const juce::String& pluginPath) override;
-    void sampleDroppedOnTrack(Track* track, const juce::File& sampleFile) override;
+    void channelAdded(Channel* channel) override;
+    void channelRemoved(int index) override;
+    void channelChanged(Channel* channel) override;
+    void channelListChanged() override;
+    
+    void channelSelected(Channel* channel) override;
+    void pluginDroppedOnChannel(Channel* channel, const juce::String& pluginPath) override;
+    void sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) override;
     
 private:
     Project& project_;
     Listener* channelListener_ = nullptr;
     
-    std::vector<std::unique_ptr<TrackRow>> trackRows_;
-    juce::TextButton addTrackButton_;
+    std::vector<std::unique_ptr<ChannelRow>> channelRows_;
+    juce::TextButton addChannelButton_;
     
-    int selectedTrackIndex_ = -1;
+    int selectedChannelIndex_ = -1;
     
-    void rebuildTrackRows();
-    void selectTrack(int index);
+    void rebuildChannelRows();
+    void selectChannel(int index);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelRackContent)
 };

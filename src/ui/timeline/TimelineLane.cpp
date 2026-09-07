@@ -1,5 +1,7 @@
 #include "TimelineLane.h"
 #include "project/Track.h"
+#include "project/ClipPool.h"
+#include "project/Clip.h"
 
 namespace vibedaw {
 
@@ -64,22 +66,30 @@ void TimelineLane::setSelected(bool sel) {
     repaint();
 }
 
+void TimelineLane::setClipPool(ClipPool* pool) {
+    clipPool = pool;
+}
+
 void TimelineLane::drawClips(juce::Graphics& g) {
     if (!track) return;
     
-    const auto& clips = track->getClips();
-    for (const auto& clip : clips) {
-        if (!clip) continue;
+    const auto& instances = track->getClipInstances();
+    for (const auto& instance : instances) {
+        if (!instance || !instance->isValid()) continue;
         
-        double clipStart = clip->getStartTime();
-        double clipDuration = clip->getDuration();
+        double clipStart = instance->getStartTime();
+        double clipDuration = instance->getDuration();
         
         int x = static_cast<int>((clipStart * pixelsPerSecond) - scrollOffset);
         int width = static_cast<int>(clipDuration * pixelsPerSecond);
         
         if (x + width < 0 || x >= getWidth()) continue;
         
-        drawClip(g, clip.get(), x, width);
+        if (clipPool) {
+            if (auto* clip = clipPool->getClip(instance->getClipId())) {
+                drawClip(g, clip, x, width);
+            }
+        }
     }
 }
 

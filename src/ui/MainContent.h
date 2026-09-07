@@ -12,6 +12,8 @@
 #include "sidebar/SidebarContainer.h"
 #include "plugins/PluginScanner.h"
 #include "sidebar/browser/BrowserSidebar.h"
+#include "sidebar/clips/ClipsSidebar.h"
+#include "editor/ClipEditorWindow.h"
 
 namespace vibedaw {
 
@@ -19,6 +21,9 @@ class MainContent : public juce::Component,
                      private juce::Timer,
                      public SidebarContainerListener,
                      public BrowserSidebar::Listener,
+                     public Project::Listener,
+                     public ClipsContent::Listener,
+                     public ClipEditorWindow::Listener,
                      public juce::DragAndDropContainer {
 public:
     MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& midiManager, Project& project);
@@ -41,10 +46,18 @@ public:
     void sampleSelected(const juce::File& file) override;
     void presetSelected(const juce::File& file) override;
     
+    void activeChannelChanged(int newActiveIndex) override;
+    
+    void clipCreated(ClipId clipId, Clip* clip) override;
+    void clipOpened(ClipId clipId, Clip* clip) override;
+    void clipEditorClosed(ClipEditorWindow* window) override;
+    
 private:
     void timerCallback() override;
     void updateStatusLabel();
     void handlePanelFocusHotkey(int panelIndex, double currentTime);
+    std::vector<ClipEditorWindow*> openClipEditors_;
+    
     void updateLayout();
     
     MidiManager& midiManager_;

@@ -1,7 +1,7 @@
 #include "ChannelRackSidebar.h"
 #include "project/Project.h"
-#include "project/TrackList.h"
-#include "project/Track.h"
+#include "project/ChannelList.h"
+#include "project/Channel.h"
 #include "plugins/PluginHost.h"
 #include "utils/Logger.h"
 
@@ -33,20 +33,20 @@ DragDropInfo DragDropInfo::fromDragDescription(const juce::var& description) {
     return info;
 }
 
-TrackRow::TrackRow(Track* track, int index)
-    : track_(track), index_(index)
+ChannelRow::ChannelRow(Channel* channel, int index)
+    : channel_(channel), index_(index)
 {
     setInterceptsMouseClicks(true, false);
 }
 
-void TrackRow::setSelected(bool selected) {
+void ChannelRow::setSelected(bool selected) {
     if (isSelected_ != selected) {
         isSelected_ = selected;
         repaint();
     }
 }
 
-void TrackRow::paint(juce::Graphics& g) {
+void ChannelRow::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
     if (isDragOver_) {
@@ -60,10 +60,10 @@ void TrackRow::paint(juce::Graphics& g) {
     g.setColour(juce::Colours::white);
     g.setFont(12.0f);
     
-    juce::String name = track_ ? track_->getName() : "Track " + juce::String(index_ + 1);
+    juce::String name = channel_ ? channel_->getName() : "Channel " + juce::String(index_ + 1);
     
-    if (track_ && track_->hasPlugin()) {
-        name += " [" + track_->getPlugin()->getPluginName() + "]";
+    if (channel_ && channel_->hasPlugin()) {
+        name += " [" + channel_->getPlugin()->getPluginName() + "]";
     }
     
     g.drawText(name, 8, 0, bounds.getWidth() - 16, bounds.getHeight(), 
@@ -78,50 +78,50 @@ void TrackRow::paint(juce::Graphics& g) {
     g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
 }
 
-void TrackRow::mouseDown(const juce::MouseEvent& e) {
+void ChannelRow::mouseDown(const juce::MouseEvent& e) {
     juce::ignoreUnused(e);
-    if (listener_ && track_) {
-        listener_->trackSelected(track_);
+    if (listener_ && channel_) {
+        listener_->channelSelected(channel_);
     }
 }
 
-void TrackRow::mouseUp(const juce::MouseEvent& e) {
+void ChannelRow::mouseUp(const juce::MouseEvent& e) {
     juce::ignoreUnused(e);
 }
 
-bool TrackRow::isInterestedInDragSource(const SourceDetails& dragSourceDetails) {
+bool ChannelRow::isInterestedInDragSource(const SourceDetails& dragSourceDetails) {
     auto info = DragDropInfo::fromDragDescription(dragSourceDetails.description);
     return info.type != DragSourceType::Unknown;
 }
 
-void TrackRow::itemDragEnter(const SourceDetails& dragSourceDetails) {
+void ChannelRow::itemDragEnter(const SourceDetails& dragSourceDetails) {
     isDragOver_ = true;
     pendingDragInfo_ = DragDropInfo::fromDragDescription(dragSourceDetails.description);
     repaint();
 }
 
-void TrackRow::itemDragExit(const SourceDetails&) {
+void ChannelRow::itemDragExit(const SourceDetails&) {
     isDragOver_ = false;
     pendingDragInfo_ = DragDropInfo();
     repaint();
 }
 
-void TrackRow::itemDropped(const SourceDetails& dragSourceDetails) {
+void ChannelRow::itemDropped(const SourceDetails& dragSourceDetails) {
     isDragOver_ = false;
     repaint();
     
     auto info = DragDropInfo::fromDragDescription(dragSourceDetails.description);
     
-    if (!listener_ || !track_) {
+    if (!listener_ || !channel_) {
         return;
     }
     
     switch (info.type) {
         case DragSourceType::Plugin:
-            listener_->pluginDroppedOnTrack(track_, info.path);
+            listener_->pluginDroppedOnChannel(channel_, info.path);
             break;
         case DragSourceType::Sample:
-            listener_->sampleDroppedOnTrack(track_, juce::File(info.path));
+            listener_->sampleDroppedOnChannel(channel_, juce::File(info.path));
             break;
         default:
             break;
@@ -131,22 +131,25 @@ void TrackRow::itemDropped(const SourceDetails& dragSourceDetails) {
 ChannelRackContent::ChannelRackContent(Project& project)
     : project_(project)
 {
-    addTrackButton_.setButtonText("+ Add Track");
-    addTrackButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a3a));
-    addTrackButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    addTrackButton_.onClick = [this]() {
-        project_.getTrackList().addTrack();
-        rebuildTrackRows();
+    addChannelButton_.setButtonText("+ Add Channel");
+    addChannelButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a3a));
+    addChannelButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    addChannelButton_.onClick = [this]() {
+        auto* channel = project_.getChannelList().addChannel();
+        rebuildChannelRows();
     };
-    addAndMakeVisible(addTrackButton_);
+    addAndMakeVisible(addChannelButton_);
     
-    rebuildTrackRows();
+    project_.getChannelList().addListener(this);
+    rebuildChannelRows();
 }
 
-ChannelRackContent::~ChannelRackContent() = default;
+ChannelRackContent::~ChannelRackContent() {
+    project_.getChannelList().removeListener(this);
+}
 
-void ChannelRackContent::refreshTracks() {
-    rebuildTrackRows();
+void ChannelRackContent::refreshChannels() {
+    rebuildChannelRows();
 }
 
 void ChannelRackContent::paint(juce::Graphics& g) {
@@ -156,79 +159,85 @@ void ChannelRackContent::paint(juce::Graphics& g) {
 void ChannelRackContent::resized() {
     auto bounds = getLocalBounds();
     
-    addTrackButton_.setBounds(bounds.removeFromBottom(32).reduced(4));
+    addChannelButton_.setBounds(bounds.removeFromBottom(32).reduced(4));
     
     int y = 0;
-    for (auto& row : trackRows_) {
-        row->setBounds(0, y, bounds.getWidth(), TrackRow::rowHeight);
-        y += TrackRow::rowHeight;
+    for (auto& row : channelRows_) {
+        row->setBounds(0, y, bounds.getWidth(), ChannelRow::rowHeight);
+        y += ChannelRow::rowHeight;
     }
 }
 
-void ChannelRackContent::trackSelected(Track* track) {
-    int index = -1;
-    auto& tracks = project_.getTrackList().getTracks();
-    for (int i = 0; i < static_cast<int>(tracks.size()); ++i) {
-        if (tracks[i].get() == track) {
-            index = i;
-            break;
-        }
-    }
-    selectTrack(index);
+void ChannelRackContent::channelAdded(Channel* channel) {
+    rebuildChannelRows();
 }
 
-void ChannelRackContent::pluginDroppedOnTrack(Track* track, const juce::String& pluginPath) {
-    LOG_INFO("ChannelRack: Loading plugin '" + pluginPath + "' on track");
+void ChannelRackContent::channelRemoved(int index) {
+    rebuildChannelRows();
+}
+
+void ChannelRackContent::channelChanged(Channel* channel) {
+    rebuildChannelRows();
+}
+
+void ChannelRackContent::channelListChanged() {
+    rebuildChannelRows();
+}
+
+void ChannelRackContent::channelSelected(Channel* channel) {
+    int index = project_.getChannelList().indexOfChannel(channel);
+    selectChannel(index);
+    project_.setActiveChannel(index);
+}
+
+void ChannelRackContent::pluginDroppedOnChannel(Channel* channel, const juce::String& pluginPath) {
+    LOG_INFO("ChannelRack: Loading plugin '" + pluginPath + "' on channel");
     
     auto pluginHost = std::make_unique<PluginHost>();
     if (pluginHost->loadPlugin(pluginPath)) {
-        track->setPlugin(std::move(pluginHost));
-        rebuildTrackRows();
+        channel->setPlugin(std::move(pluginHost));
+        rebuildChannelRows();
     } else {
         LOG_ERROR("ChannelRack: Failed to load plugin: " + pluginPath);
     }
 }
 
-void ChannelRackContent::sampleDroppedOnTrack(Track* track, const juce::File& sampleFile) {
-    LOG_INFO("ChannelRack: Sample '" + sampleFile.getFileName() + "' dropped on track");
-    
-    if (channelListener_) {
-        channelListener_->trackCreatedFromSample(sampleFile);
-    }
-    
-    rebuildTrackRows();
+void ChannelRackContent::sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) {
+    LOG_INFO("ChannelRack: Sample '" + sampleFile.getFileName() + "' dropped on channel");
+    channel->setSampleFile(sampleFile);
+    rebuildChannelRows();
 }
 
-void ChannelRackContent::rebuildTrackRows() {
-    for (auto& row : trackRows_) {
+void ChannelRackContent::rebuildChannelRows() {
+    for (auto& row : channelRows_) {
         removeChildComponent(row.get());
     }
-    trackRows_.clear();
+    channelRows_.clear();
     
-    auto& trackList = project_.getTrackList();
-    int numTracks = trackList.getNumTracks();
+    auto& channelList = project_.getChannelList();
+    int numChannels = channelList.getNumChannels();
     
-    for (int i = 0; i < numTracks; ++i) {
-        auto* track = trackList.getTrack(i);
-        auto row = std::make_unique<TrackRow>(track, i);
+    for (int i = 0; i < numChannels; ++i) {
+        auto* channel = channelList.getChannel(i);
+        auto row = std::make_unique<ChannelRow>(channel, i);
         row->setListener(this);
-        row->setSelected(i == selectedTrackIndex_);
+        row->setSelected(i == selectedChannelIndex_);
         addAndMakeVisible(*row);
-        trackRows_.push_back(std::move(row));
+        channelRows_.push_back(std::move(row));
     }
     
     resized();
 }
 
-void ChannelRackContent::selectTrack(int index) {
-    if (selectedTrackIndex_ == index) {
+void ChannelRackContent::selectChannel(int index) {
+    if (selectedChannelIndex_ == index) {
         return;
     }
     
-    selectedTrackIndex_ = index;
+    selectedChannelIndex_ = index;
     
-    for (int i = 0; i < static_cast<int>(trackRows_.size()); ++i) {
-        trackRows_[i]->setSelected(i == selectedTrackIndex_);
+    for (int i = 0; i < static_cast<int>(channelRows_.size()); ++i) {
+        channelRows_[i]->setSelected(i == selectedChannelIndex_);
     }
 }
 

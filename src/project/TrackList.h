@@ -22,7 +22,7 @@ public:
     TrackList();
     ~TrackList();
     
-    Track* addTrack(const juce::String& name = {}, Track::Type type = Track::Type::Insert);
+    Track* addTrack(const juce::String& name = {});
     void removeTrack(int index);
     void clearTracks();
     

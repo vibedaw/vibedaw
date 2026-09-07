@@ -6,12 +6,12 @@ TrackList::TrackList() = default;
 
 TrackList::~TrackList() = default;
 
-Track* TrackList::addTrack(const juce::String& name, Track::Type type) {
+Track* TrackList::addTrack(const juce::String& name) {
     auto trackName = name.isEmpty() 
         ? "Track " + juce::String(tracks.size() + 1) 
         : name;
     
-    auto track = std::make_unique<Track>(trackName, type);
+    auto track = std::make_unique<Track>(trackName);
     auto* ptr = track.get();
     tracks.push_back(std::move(track));
     

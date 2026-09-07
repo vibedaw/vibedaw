@@ -98,8 +98,6 @@ TrackHeader::TrackHeader(Track* track, int index)
     if (track) {
         trackName = track->getName();
         trackColour = track->getColour();
-        muted = track->isMuted();
-        solo = track->isSolo();
         muteButton->setToggled(muted);
         soloButton->setToggled(solo);
     }

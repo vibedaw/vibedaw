@@ -1,4 +1,6 @@
 #include "Clip.h"
+#include "Note.h"
+#include <algorithm>
 
 namespace vibedaw {
 
@@ -75,6 +77,39 @@ MidiClip::MidiClip(double startTime, double duration)
     name = "MIDI";
 }
 
+void MidiClip::addNote(const Note& note) {
+    notes_.push_back(note);
+    std::sort(notes_.begin(), notes_.end(), Note::compareByTime);
+}
+
+void MidiClip::removeNote(int index) {
+    if (index >= 0 && index < static_cast<int>(notes_.size())) {
+        notes_.erase(notes_.begin() + index);
+    }
+}
+
+void MidiClip::removeNote(const Note* note) {
+    if (note == nullptr) return;
+    auto it = std::find_if(notes_.begin(), notes_.end(),
+        [note](const Note& n) { return &n == note; });
+    if (it != notes_.end()) {
+        notes_.erase(it);
+    }
+}
+
+void MidiClip::clearNotes() {
+    notes_.clear();
+}
+
+Note* MidiClip::findNoteAt(double time, int pitch) {
+    for (auto& note : notes_) {
+        if (note.getPitch() == pitch && note.containsTime(time)) {
+            return &note;
+        }
+    }
+    return nullptr;
+}
+
 std::unique_ptr<Clip> MidiClip::clone() const {
     auto cloned = std::make_unique<MidiClip>(startTime, duration);
     cloned->name = name;
@@ -82,6 +117,7 @@ std::unique_ptr<Clip> MidiClip::clone() const {
     cloned->selected = selected;
     cloned->muted = muted;
     cloned->loopEnabled = loopEnabled;
+    cloned->notes_ = notes_;
     return cloned;
 }
 

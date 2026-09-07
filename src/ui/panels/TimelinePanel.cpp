@@ -93,31 +93,6 @@ TimelinePanel::TimelinePanel(Project& proj)
     content->onTrackSelected = [this](int index) {
         headerList->setSelectedTrack(index);
     };
-    
-    trackList.addTrack("Audio 1");
-    trackList.addTrack("MIDI 1");
-    trackList.addTrack("Synth 1");
-    
-    if (trackList.getNumTracks() > 0) {
-        auto* track = trackList.getTrack(0);
-        if (track) {
-            track->addClip(std::make_unique<AudioClip>(0.0, 5.0));
-            track->addClip(std::make_unique<AudioClip>(8.0, 3.0));
-        }
-    }
-    if (trackList.getNumTracks() > 1) {
-        auto* track = trackList.getTrack(1);
-        if (track) {
-            track->addClip(std::make_unique<MidiClip>(2.0, 4.0));
-            track->addClip(std::make_unique<MidiClip>(10.0, 6.0));
-        }
-    }
-    if (trackList.getNumTracks() > 2) {
-        auto* track = trackList.getTrack(2);
-        if (track) {
-            track->addClip(std::make_unique<PatternClip>(0.0, 16.0));
-        }
-    }
 }
 
 TimelinePanel::~TimelinePanel() = default;

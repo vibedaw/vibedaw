@@ -7,6 +7,7 @@
 #include "sidebar/SidebarContainer.h"
 #include "sidebar/channel/ChannelRackSidebar.h"
 #include "sidebar/browser/BrowserSidebar.h"
+#include "sidebar/clips/ClipsSidebar.h"
 
 namespace vibedaw {
 
@@ -15,6 +16,8 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
       project_(proj)
 {
     setOpaque(true);
+    
+    project_.addListener(this);
     
     transport_ = std::make_unique<TransportComponent>(transportState_);
     addAndMakeVisible(*transport_);
@@ -38,7 +41,14 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     
     rightSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Right);
     rightSidebarContainer_->setContainerListener(this);
-    addChildComponent(*rightSidebarContainer_);
+    addAndMakeVisible(*rightSidebarContainer_);
+    
+    auto* clipsSidebar = createClipsSidebar(project_);
+    auto* clipsContent = dynamic_cast<ClipsContent*>(clipsSidebar->getContent());
+    if (clipsContent) {
+        clipsContent->setClipsListener(this);
+    }
+    rightSidebarContainer_->addSidebar(clipsSidebar);
     
     panelContainer_ = std::make_unique<PanelContainer>();
     addAndMakeVisible(*panelContainer_);
@@ -96,6 +106,7 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
 
 MainContent::~MainContent() {
     stopTimer();
+    project_.removeListener(this);
     LOG_INFO("MainContent: Destroyed");
 }
 
@@ -259,27 +270,41 @@ void MainContent::handlePanelFocusHotkey(int panelIndex, double currentTime) {
 }
 
 void MainContent::openPluginWindow() {
-    auto* track = project_.getMasterTrack();
-    if (track && track->getPlugin()) {
-        auto* pluginHost = track->getPlugin();
+    int activeIndex = project_.getActiveChannel();
+    if (activeIndex < 0) {
+        LOG_WARN("MainContent: No active channel selected");
+        return;
+    }
+    
+    auto& channels = project_.getChannelList();
+    auto* channel = channels.getChannel(activeIndex);
+    if (channel && channel->hasPlugin()) {
+        auto* pluginHost = channel->getPlugin();
         if (pluginHost->hasEditor()) {
             new PluginWindow(pluginHost, pluginHost->getPluginName());
         } else {
             LOG_WARN("MainContent: Plugin has no editor");
         }
     } else {
-        LOG_WARN("MainContent: No plugin loaded");
+        LOG_WARN("MainContent: No plugin on active channel");
     }
 }
 
 void MainContent::updateStatusLabel() {
     juce::String status;
     
-    auto* track = project_.getMasterTrack();
-    if (track && track->hasPlugin()) {
-        status = "Plugin: " + track->getPlugin()->getPluginName();
+    int activeIndex = project_.getActiveChannel();
+    auto& channels = project_.getChannelList();
+    
+    if (activeIndex >= 0 && activeIndex < channels.getNumChannels()) {
+        auto* channel = channels.getChannel(activeIndex);
+        if (channel && channel->hasPlugin()) {
+            status = "Ch" + juce::String(activeIndex + 1) + ": " + channel->getPlugin()->getPluginName();
+        } else {
+            status = "Ch" + juce::String(activeIndex + 1) + ": No plugin";
+        }
     } else {
-        status = "Plugin: None";
+        status = "No channel selected";
     }
     
     status += " | MIDI: " + (midiManager_.isConnected() ? midiManager_.getCurrentDeviceName() : "Not connected");
@@ -301,6 +326,33 @@ void MainContent::sampleSelected(const juce::File& file) {
 
 void MainContent::presetSelected(const juce::File& file) {
     LOG_INFO("MainContent: Preset selected: " + file.getFullPathName());
+}
+
+void MainContent::activeChannelChanged(int newActiveIndex) {
+    juce::ignoreUnused(newActiveIndex);
+    updateStatusLabel();
+}
+
+void MainContent::clipCreated(ClipId clipId, Clip* clip) {
+    clipOpened(clipId, clip);
+}
+
+void MainContent::clipOpened(ClipId clipId, Clip* clip) {
+    if (clip && clip->getType() == Clip::Type::Midi) {
+        auto* midiClip = dynamic_cast<MidiClip*>(clip);
+        if (midiClip) {
+            auto* window = new ClipEditorWindow(midiClip, clipId, &midiManager_);
+            window->setListener(this);
+            openClipEditors_.push_back(window);
+        }
+    }
+}
+
+void MainContent::clipEditorClosed(ClipEditorWindow* window) {
+    auto it = std::find(openClipEditors_.begin(), openClipEditors_.end(), window);
+    if (it != openClipEditors_.end()) {
+        openClipEditors_.erase(it);
+    }
 }
 
 } // namespace vibedaw

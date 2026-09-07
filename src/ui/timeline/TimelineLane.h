@@ -6,6 +6,7 @@
 namespace vibedaw {
 
 class Track;
+class ClipPool;
 
 class TimelineLane : public juce::Component {
 public:
@@ -21,6 +22,7 @@ public:
     double getScrollOffset() const { return scrollOffset; }
     
     void setSelected(bool selected);
+    void setClipPool(ClipPool* pool);
     
     int getTrackIndex() const { return trackIndex; }
     
@@ -31,6 +33,7 @@ private:
     void drawClip(juce::Graphics& g, const Clip* clip, int x, int width);
     
     Track* track = nullptr;
+    ClipPool* clipPool = nullptr;
     int trackIndex = 0;
     double pixelsPerSecond = 50.0;
     double scrollOffset = 0.0;

@@ -71,12 +71,18 @@ target_include_directories(vibedaw PRIVATE
 set(SOURCES
     src/Main.cpp
     src/core/AudioEngine.cpp
+    src/core/ChannelMixer.cpp
     src/core/MidiManager.cpp
     src/core/TransportState.cpp
     src/project/Project.cpp
     src/project/Track.cpp
     src/project/TrackList.cpp
     src/project/Clip.cpp
+    src/project/ClipInstance.cpp
+    src/project/ClipPool.cpp
+    src/project/Note.cpp
+    src/project/Channel.cpp
+    src/project/ChannelList.cpp
     src/project/Settings.cpp
     src/plugins/PluginHost.cpp
     src/plugins/PluginWindow.cpp
@@ -103,6 +109,12 @@ set(SOURCES
     src/ui/sidebar/browser/SampleSection.cpp
     src/ui/sidebar/browser/PresetSection.cpp
     src/ui/sidebar/browser/BrowserSidebar.cpp
+    src/ui/sidebar/clips/ClipsSidebar.cpp
+    src/ui/editor/PianoRollKeyboard.cpp
+    src/ui/editor/NoteGridComponent.cpp
+    src/ui/editor/TimeRulerComponent.cpp
+    src/ui/editor/PianoRollEditor.cpp
+    src/ui/editor/ClipEditorWindow.cpp
     src/ui/timeline/TimeRuler.cpp
     src/ui/timeline/TrackHeader.cpp
     src/ui/timeline/TrackHeaderList.cpp

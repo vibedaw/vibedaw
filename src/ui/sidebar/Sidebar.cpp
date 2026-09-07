@@ -87,6 +87,15 @@ void Sidebar::paint(juce::Graphics& g) {
     g.fillRect(resizeX, 0, resizeEdgeWidth, getHeight());
 }
 
+void Sidebar::paintOverChildren(juce::Graphics& g) {
+    g.setColour(juce::Colour(0xff555555));
+    if (side_ == Side::Left) {
+        g.fillRect(getWidth() - 1, 0, 1, getHeight());
+    } else {
+        g.fillRect(0, 0, 1, getHeight());
+    }
+}
+
 void Sidebar::resized() {
     auto bounds = getLocalBounds();
     

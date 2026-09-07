@@ -6,7 +6,6 @@
 namespace vibedaw {
 
 Project::Project() {
-    masterTrack = std::make_unique<Track>("Master");
     LOG_INFO("Project: Created");
 }
 
@@ -20,25 +19,14 @@ bool Project::initialise(AudioEngine& audioEngine, MidiManager& midiManager) {
     
     loadSettings();
     
-    if (audioEngine.getCurrentSampleRate() > 0.0 && masterTrack) {
-        masterTrack->prepareToPlay(audioEngine.getCurrentSampleRate(), 
-                                    audioEngine.getCurrentBufferSize());
-    }
-    
-    if (settings.pluginPath.isNotEmpty()) {
-        if (!loadPlugin(settings.pluginPath)) {
-            LOG_WARN("Project: Failed to load plugin from settings, continuing without plugin");
-        }
-    }
-    
-    if (masterTrack && masterTrack->getPlugin()) {
-        audioEngine.setProcessor(masterTrack->getPlugin()->getProcessor());
-    }
-    
     if (settings.midiInputDevice.isNotEmpty()) {
         if (!midiManager.connectToDevice(settings.midiInputDevice)) {
             LOG_WARN("Project: Failed to connect to MIDI device: " + settings.midiInputDevice);
         }
+    }
+    
+    if (channelList.getNumChannels() > 0) {
+        setActiveChannel(0);
     }
     
     LOG_INFO("Project: Initialised");
@@ -48,9 +36,6 @@ bool Project::initialise(AudioEngine& audioEngine, MidiManager& midiManager) {
 void Project::shutdown() {
     LOG_INFO("Project: Shutting down");
     saveSettings();
-    if (masterTrack) {
-        masterTrack->releaseResources();
-    }
     LOG_INFO("Project: Shutdown complete");
 }
 
@@ -68,26 +53,51 @@ void Project::saveSettings() {
 bool Project::loadPlugin(const juce::String& pluginPath) {
     LOG_INFO("Project: Loading plugin: " + pluginPath);
     
-    auto plugin = std::make_unique<PluginHost>();
-    if (!plugin->loadPlugin(pluginPath)) {
+    auto pluginHost = std::make_unique<PluginHost>();
+    if (!pluginHost->loadPlugin(pluginPath)) {
         LOG_ERROR("Project: Failed to load plugin");
         return false;
     }
     
+    auto* channel = channelList.addChannel(pluginHost->getPluginName(), Channel::Type::Instrument);
+    channel->setPlugin(std::move(pluginHost));
+    
     settings.pluginPath = pluginPath;
     
-    if (masterTrack) {
-        masterTrack->setPlugin(std::move(plugin));
-    }
+    setActiveChannel(channelList.indexOfChannel(channel));
     
+    LOG_INFO("Project: Plugin loaded successfully");
     return true;
 }
 
-juce::AudioProcessor* Project::getProcessorGraph() {
-    if (masterTrack && masterTrack->getPlugin()) {
-        return masterTrack->getPlugin()->getProcessor();
+void Project::setActiveChannel(int index) {
+    if (activeChannelIndex_ == index) {
+        return;
     }
-    return nullptr;
+    
+    if (index >= channelList.getNumChannels()) {
+        index = channelList.getNumChannels() - 1;
+    }
+    
+    if (index < 0 && channelList.getNumChannels() > 0) {
+        index = 0;
+    }
+    
+    activeChannelIndex_ = index;
+    notifyActiveChannelChanged(index);
+    LOG_INFO("Project: Active channel set to " + juce::String(index));
+}
+
+void Project::addListener(Listener* listener) {
+    listeners_.add(listener);
+}
+
+void Project::removeListener(Listener* listener) {
+    listeners_.remove(listener);
+}
+
+void Project::notifyActiveChannelChanged(int newIndex) {
+    listeners_.call([newIndex](Listener& l) { l.activeChannelChanged(newIndex); });
 }
 
 } // namespace vibedaw
