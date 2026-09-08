@@ -172,3 +172,12 @@ git diff --check
   and stable routing. It remains todo pending acceptance or explicit authorization.
   T05 owns loop spans/splitting and metronome synthesis; no premature span framework
   was introduced. Loop/metronome state APIs remain preparatory only and UI is disabled.
+
+### T05 Integration Update (2026-09-08)
+
+T05 supersedes the temporary no-loop/no-click passages above: the captured block
+now includes fixed fractional loop spans and metronome state. Loop enable/disable/
+bound changes are block-boundary discontinuities; normal wraps preserve overshoot
+and publish wrapped feedback through the same poll-only path. Nonloop compensated
+clock and seek/stop acknowledgment regressions remain intact. See T05's exact
+minimum/capacity/carry contract. T01 stays runtime-blocked; no app build/launch.

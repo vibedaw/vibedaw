@@ -42,7 +42,7 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 | 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | blocked | T06 |
 | 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | blocked | T01, T03, T06 |
 | 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | blocked | T02, T06 |
-| 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | todo | T01, T02, T04 |
+| 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | blocked | T01, T02, T04 |
 | 7 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | backlog | M1 |
 | 8 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
 | 9 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | backlog | T07, T08 |
@@ -116,6 +116,30 @@ manual checks, including native pop-out behavior. Earlier statuses remain unchan
 T05 remains todo. No app build/
 launch, staging or commit.
 
+User override 2026-09-08: continue authorizes T05 end to end despite the earlier
+T03/T06/T01/T02/T04 runtime acceptance blocks. T05 was marked in_progress; earlier statuses
+remain unchanged. Preserve all existing work; no application build/launch, staging
+or commit. Only the independent offline_tests project may be built and tested.
+
+T05 implementation/offline verification completed 2026-09-08: audio-owned bounded
+loop spans with fractional carry, process-once wrap cleanup/live ownership, numeric
+validated loop controls/ruler region, sample-timed denominator-aware oscillator and
+pre-master injection. Existing 976/1072/2048 capacity/reset contracts are preserved;
+see T05 for short-loop, dense-block and pedal fallback policies. Full CTest 1/1
+passes with all previous regressions, one-hour loop drift, exact timestamp/waveform,
+capacity/reset, master and actual transport/timeline component tests. T05 is blocked
+on watcher/audible acceptance; M1 is not released. Earlier
+statuses are unchanged; T07 remains backlog. No application build/launch, staging
+or commit. The T05 completion record enumerates the remaining eight-step workflow.
+
+T05 independent review's P2 deferred-wrap negative-offset finding is corrected:
+the barrier delivery clamps to sample zero while preserving its fractional span
+origin. The exact 48kHz/512/120-to-20BPM reproduction failed before the fix and
+passes afterward, alongside nextafter/tempo variants, all-input range checks,
+off-before-on/click alignment and later-event fractional timing. Full offline
+CTest 1/1 passed. Independent review has been performed; runtime/M1 acceptance
+remains blocked. No application build/launch, staging or commit.
+
 ## Verified Starting Point
 
 Historical baseline below, before T03 implementation. See the T03 task for current contracts.
@@ -159,5 +183,5 @@ Status vocabulary: `backlog`, `todo`, `ready`, `in_progress`, `blocked`, `done`.
 - [ ] Block boundaries, seeks, looping, overlapping notes, and deletion do not leave stuck notes.
 - [ ] Two destinations work independently; shared clips and channel reorder do not corrupt routing.
 - [ ] Audio-thread ownership and cleanup have been reviewed; no callback logging or per-block scratch allocation remains in our processing path.
-- [ ] Deterministic tests cover transport, scheduling, routing, and loop math; any unavailable runtime verification is explicitly recorded.
+- [x] Deterministic tests cover transport, scheduling, routing, and loop math; any unavailable runtime verification is explicitly recorded.
 - [ ] Limitations are clear: MIDI arrangement playback, not recording or sample playback; saving arrives in T07.

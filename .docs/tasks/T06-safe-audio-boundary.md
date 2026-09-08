@@ -360,3 +360,16 @@ No callback allocation, locks or notifications were added; existing limits and
 lifetime/reset contracts remain intact. Full offline CTest 1/1 passed, including
 new signal/suppression/UI-binding cases. T04 records the authoritative mixer policy;
 watcher/device acceptance and hosted-editor restriction are unchanged.
+
+### T05 Integration Update (2026-09-08)
+
+T05 preserves the 976 normal / 1072 cleanup / 2048 total input budget, quiescence,
+reset service and disabled hosted editors. Loop spans/click storage are fixed;
+normal wrap cleanup releases arrangement ownership only. An arrangement-delivery
+history latch, cleared with completed reset/plugin replacement, distinguishes
+pedal-retained arrangement voices from live-only pedal owners. A required wrap
+reset rejects the entire destination block, delivers original-ledger cleanup and
+stays silent until the same off-audio service completes. Dense wrap rejection and
+global span-capacity failure are explicit T05 policies, not extra input reserves.
+Full offline regressions/allocation probes pass; no runtime acceptance change,
+application build/launch, staging or commit. See T05's completion contract.

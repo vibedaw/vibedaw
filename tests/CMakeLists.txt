@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(JUCE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../build/_deps/juce-src" CACHE PATH "Existing JUCE checkout, no download")
 add_subdirectory("${JUCE_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/juce" EXCLUDE_FROM_ALL)
 add_executable(offline_tests offline_tests.cpp
+    ../src/ui/TransportComponent.cpp ../src/ui/timeline/TimeRuler.cpp
+    ../src/ui/timeline/TimelineContent.cpp ../src/ui/timeline/TimelineLane.cpp
+    ../src/ui/timeline/TrackHeaderList.cpp ../src/ui/timeline/TrackHeader.cpp ../src/ui/panels/TimelinePanel.cpp
     ../src/project/Note.cpp ../src/project/Clip.cpp ../src/project/ClipInstance.cpp
     ../src/project/ClipPool.cpp ../src/project/Track.cpp ../src/project/TrackList.cpp
     ../src/project/Channel.cpp ../src/project/ChannelList.cpp ../src/project/Project.cpp

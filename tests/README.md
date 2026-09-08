@@ -144,3 +144,59 @@ Add/remove/reorder and hidden dock resizing preserve viewport bounds while updat
 strip layout; the actual dock-return hook restores dock layout and further resizing.
 This failed on the original unconditional base resize and passes with the ownership
 guard. Full CTest 1/1 passed; real native pop-out behavior still requires the watcher.
+
+## T05 Loop and Metronome
+
+The same independent build/CTest commands now compile actual TransportComponent,
+TimeRuler, TimelineContent/lanes/headers and TimelinePanel, with no application or
+native peer/window. All earlier suites remain enabled; only T01's deliberately
+temporary no-loop assertion now expects T05's enabled-loop behavior.
+
+- `loopTimestampTests`: exact plugin absolute on/off timestamps across four-bar and
+  minimum 1/64-qn loops, 44.1/48kHz, 120/137BPM, 1/7/127/512/4096 partitions (one
+  sample on short loops), origins 3.125/2165.993971306134, partial tails, multiple wraps, exclusive
+  end, off-before-on, live held alongside arrangement and process-once counts.
+- `loopControlCapacityTests`: invalid bounds, enable/disable/seek/edit/stop while
+  playing, live collision ownership, span overflow with full modulo advancement,
+  recovery and dense all-or-cleanup rejection.
+- `loopPedalAndLedgerTests`: previous/current-block pedal history, quiet reset wait,
+  off-audio reset, independent destination; 1024 held arrangement voices fall back
+  to exactly 1072 cleanup messages without any speculative attack reaching a plugin.
+  An independent live pedal owner survives wraps and destination-local overflow.
+- `metronomeTests`: every sample compared against independent timing/phase/envelope
+  calculations in 4/4, 3/4 and 6/8 at two rates/tempos and three block partitions,
+  including zero channels, stereo equality, master gain/mute and stopped/disabled silence.
+- `clickMasterAndOverflowTests`: exact post-master meter, channel mute/solo does not
+  gate click, master mute preserves phase, bounded 1024-trigger rejection is silent
+  while transport advances fully.
+- `loopClickAndClockTests`: one hour at 44.1kHz/137BPM with 1e-10-qn tolerance,
+  partition-identical fractional-loop click retriggers/tails, exact-end deferred
+  ownership, tempo/meter/seek changes, tempo-tail continuity/next-grid retiming without
+  seek, accents, no chase and sub-sample loop rejection.
+- `loopUiTests`: actual validation/apply/toggle/external-refresh paths, recording
+  disabled, 600px layout containment, distant-loop scrollbar extent and an offscreen
+  ruler image showing the real enabled region. No native paint/focus observation.
+
+T05 retains T02's 976 normal + 1072 reserved cleanup messages, total <=2048 including
+CCs, and T06's reset/editor restrictions. Wrap offs consume normal capacity; dense
+destinations reject the entire speculative block with sample-zero original-ledger
+cleanup. Up to 128 musical spans per block; span overflow/sub-sample loops clean
+globally and suppress arrangement/click, but retain complete modulo clock movement.
+Ordinary wraps preserve live notes; pedal history with arrangement deliveries can
+require a destination-wide off-audio reset and cut live audition. See the T05 task
+for the complete timing, capacity, click synthesis and live/pedal tradeoffs.
+
+Full offline CTest 1/1 passed, including previous regressions and zero callback C++
+new/delete probes. `git diff --check` passed. Actual device/plugin sound, watcher
+compilation, native focus/layout, busy-UI playhead and the complete M1 workflow remain
+unobserved. No application build/launch, staging or commit; T05/M1 remain blocked.
+
+T05 independent-review regression `deferredWrapOffsetTests` reproduces the reported
+48kHz/512-sample, loop `[0,0.021333333332)`, 120-to-20BPM negative wrap release.
+The new all-plugin-input offset probe failed before the fix and passes after
+clamping barrier delivery, not its fractional span origin. Exact/nextafter loop
+ends and subsequent tempos 20/120/300 verify `[0,512)` input bounds, off-before-on
+at absolute sample 512 and click alignment. A later attack stays at offset 99
+rather than moving to 100. Ordinary multiwrap timestamp tests also check every
+plugin input's range. Full CTest 1/1 passed with prior suites/allocation probes;
+independent review correction complete, runtime acceptance remains blocked.

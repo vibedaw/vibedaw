@@ -98,6 +98,7 @@ TimelinePanel::TimelinePanel(Project& proj)
         headerList->setSelectedTrack(index);
     };
     content->onPlacementSelected = [this](int track, int placement) { selectPlacement(track, placement); };
+    content->onExtentChanged = [this] { layoutContent(); };
 
     startLabel.setText("Start beat", juce::dontSendNotification);
     startBeat.setText("0", false);

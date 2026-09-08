@@ -7,6 +7,14 @@ TimeRuler::TimeRuler() { setOpaque(true); }
 
 void TimeRuler::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff2a2a2a));
+    const float left = static_cast<float>(juce::jlimit(0.0, static_cast<double>(getWidth()),
+        loop.startBeats * pixelsPerBeat - scrollOffset));
+    const float right = static_cast<float>(juce::jlimit(0.0, static_cast<double>(getWidth()),
+        loop.endBeats * pixelsPerBeat - scrollOffset));
+    g.setColour(juce::Colour(loop.enabled ? 0xff365978 : 0xff383e44));
+    g.fillRect(left, 0.0f, right - left, static_cast<float>(getHeight()));
+    g.setColour(juce::Colour(loop.enabled ? 0xff66aaff : 0xff667788));
+    g.fillRect(left, 0.0f, right - left, 3.0f);
     const double interval = pixelsPerBeat < 25.0 ? 4.0 : 1.0;
     const double first = std::ceil(scrollOffset / pixelsPerBeat / interval) * interval;
     const double end = (scrollOffset + getWidth()) / pixelsPerBeat;

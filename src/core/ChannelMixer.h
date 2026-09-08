@@ -7,6 +7,7 @@
 #include <atomic>
 #include "ArrangementSnapshot.h"
 #include "TransportState.h"
+#include "Metronome.h"
 
 namespace vibedaw {
 
@@ -55,9 +56,11 @@ private:
     ArrangementPublisher arrangement;
     TransportState& transport;
     TransportClock clock;
+    Metronome metronome;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer channelMidi;
     struct ScheduledEvent {
+        // size == -1 is an internal arrangement-only wrap barrier, never plugin MIDI.
         int sample = 0, size = 0;
         unsigned token = 0;
         unsigned char data[3]{};

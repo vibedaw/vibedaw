@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include "core/TransportState.h"
 
 namespace vibedaw {
 
@@ -13,6 +14,7 @@ public:
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& event) override;
     std::function<void(double)> onSeek;
+    void setLoopRegion(LoopRegion value) { loop = value; repaint(); }
     
     void setTotalDuration(double duration);
     double getTotalDuration() const { return totalDuration; }
@@ -26,6 +28,7 @@ public:
     static constexpr int rulerHeight = 24;
     
 private:
+    LoopRegion loop;
     double totalDuration = 64.0; // Quarter-note beats, not seconds.
     double pixelsPerBeat = 50.0;
     double scrollOffset = 0.0;

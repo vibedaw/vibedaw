@@ -288,3 +288,15 @@ its ledger under quiescence. Master mute/gain zero are output-only; MIDI keeps
 processing. T02 boundary indices, tokens, live-priority collision policy and the
 976/1072 budget remain unchanged and pass in the full offline suite. See T04's
 completion record for exact signal/voice semantics and remaining runtime checks.
+
+### T05 Integration Update (2026-09-08)
+
+T05 adds bounded loop spans to the same scheduler. Per-destination integer event
+ownership remains monotonic within a pass and resets only at wraps/discontinuities.
+Wrap barriers release arrangement tokens before new attacks, preserving ordinary
+live audition and one plugin process per block. The 976 normal / 1072 cleanup reserve
+is unchanged: wrap offs consume normal space; excess rejects the entire destination
+with original-ledger cleanup, not a partial pass. Pedal-held arrangement history can
+require the existing destination-wide off-audio reset. See T05 for deferred exact
+wrap origins and exceptional span-overflow policies. All T02 regressions pass;
+T02 acceptance remains runtime-blocked and no earlier work was reverted.

@@ -38,6 +38,7 @@ void Channel::setPlugin(std::unique_ptr<PluginHost> pluginHost) {
     deliveredCount = 0;
     sustainSeen = false;
     voicesSinceReset = false;
+    arrangementSinceReset = false;
     resetPending.store(false);
     startTimerHz(60);
     plugin = std::move(pluginHost);
@@ -188,6 +189,7 @@ void Channel::servicePendingVoiceReset() {
     arrangementVoices.fill(0);
     deliveredCount = 0;
     voicesSinceReset = false;
+    arrangementSinceReset = false;
     // A mapped pedal parameter can survive reset. Keep this conservative latch
     // until plugin replacement, but redundant panic without fresh notes needs no reset.
     resetPending.store(false);

@@ -9,6 +9,7 @@ TimelineContent::TimelineContent(TrackList& list, ClipPool& pool, ChannelList& c
     trackList.addListener(this);
     
     timeRuler = std::make_unique<TimeRuler>();
+    timeRuler->setLoopRegion(transport.getLoopRegion());
     timeRuler->onSeek = [this](double beats) { transport.setPositionInBeats(beats); };
     transport.addListener(this);
     addAndMakeVisible(*timeRuler);
@@ -62,7 +63,7 @@ int TimelineContent::getScrollableHeight() const {
 }
 
 double TimelineContent::getTotalWidth() const {
-    double beats = timeRuler->getTotalDuration();
+    double beats = juce::jmax(timeRuler->getTotalDuration(), transport.getLoopRegion().endBeats + 4.0);
     for (const auto& track : trackList.getTracks())
         for (const auto& instance : track->getClipInstances())
             if (instance->isValid()) beats = juce::jmax(beats, instance->getEndTime() + 4.0);

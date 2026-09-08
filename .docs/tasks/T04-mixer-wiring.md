@@ -241,3 +241,12 @@ git diff --check
   Actual native pop-out resize/dock behavior and watcher/audible acceptance remain
   pending, so T04 stays blocked on runtime acceptance. No application build/launch,
   staging, commit or changes to earlier acceptance statuses.
+
+### T05 Integration Update (2026-09-08)
+
+T05 now uses the reserved injection point: a bounded synthesized click is added
+after instrument summing/channel meters and before the unchanged master gain/mute
+and actual output meter. Channel mute/solo does not suppress it; master output
+gating preserves its phase. Exact synthetic output/meter regressions pass with all
+T04 tests. No bus/sends, master policy change or application build/launch. T04's
+runtime acceptance remains blocked; see T05 for the M1 release result.

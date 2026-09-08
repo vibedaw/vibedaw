@@ -1,5 +1,6 @@
 #include "TransportComponent.h"
 #include "utils/Logger.h"
+#include <cstdlib>
 
 namespace vibedaw {
 
@@ -300,6 +301,32 @@ TransportComponent::TransportComponent(TransportState& state)
     addAndMakeVisible(*metronomeBtn_);
     
     setupButtons();
+    loopLabel_.setText("Loop start (qn, 0-based)", juce::dontSendNotification);
+    loopEndLabel_.setText("End (qn)", juce::dontSendNotification);
+    for (auto* component : std::initializer_list<juce::Component*>{&loopLabel_, &loopEndLabel_,
+            &loopStart_, &loopEnd_, &applyLoop_, &loopValidation_}) addAndMakeVisible(component);
+    loopStart_.setComponentID("loopStart");
+    loopEnd_.setComponentID("loopEnd");
+    applyLoop_.setComponentID("applyLoop");
+    loopValidation_.setComponentID("loopValidation");
+    applyLoop_.onClick = [this] {
+        const auto parse = [](const juce::String& text, double& value) {
+            const auto trimmed = text.trim();
+            const char* start = trimmed.toRawUTF8();
+            char* end = nullptr;
+            value = std::strtod(start, &end);
+            return end != start && *end == '\0';
+        };
+        double start = 0, end = 0;
+        if (!parse(loopStart_.getText(), start) || !parse(loopEnd_.getText(), end) ||
+            !TransportState::validLoopRegion(start, end)) {
+            loopValidation_.setColour(juce::Label::textColourId, juce::Colour(0xffff8888));
+            loopValidation_.setText("Invalid: 0 <= start; end <= 1e9; length >= 1/64 qn", juce::dontSendNotification);
+            return;
+        }
+        transportState_.setLoopRegion(start, end);
+    };
+    loopStart_.onReturnKey = loopEnd_.onReturnKey = applyLoop_.onClick;
     
     transportState_.addListener(this);
     updateButtonStates();
@@ -307,6 +334,8 @@ TransportComponent::TransportComponent(TransportState& state)
     transportTempoChanged(transportState_.getTempo());
     const auto meter = transportState_.getTimeSignature();
     transportTimeSignatureChanged(meter.numerator, meter.denominator);
+    const auto loop = transportState_.getLoopRegion();
+    transportLoopChanged(loop.enabled, loop.startBeats, loop.endBeats);
     
     LOG_INFO("TransportComponent: Created with full transport controls");
 }
@@ -337,12 +366,11 @@ void TransportComponent::setupButtons() {
     recordBtn_->setAlpha(0.35f);
     recordBtn_->setTitle("Recording unavailable");
     recordBtn_->setDescription("Recording is not implemented.");
-    loopBtn_->setEnabled(false);
-    loopBtn_->setAlpha(0.35f);
-    loopBtn_->setTitle("Loop playback unavailable until T05");
-    metronomeBtn_->setEnabled(false);
-    metronomeBtn_->setAlpha(0.35f);
-    metronomeBtn_->setTitle("Metronome audio unavailable until T05");
+    loopBtn_->setTitle("Enable loop playback");
+    loopBtn_->setComponentID("loopToggle");
+    metronomeBtn_->setTitle("Enable audible metronome");
+    metronomeBtn_->setComponentID("metronomeToggle");
+    recordBtn_->setComponentID("record");
     
     fastForwardBtn_->onClick = [this]() {
         double currentPos = transportState_.getPosition();
@@ -382,29 +410,39 @@ void TransportComponent::paint(juce::Graphics& g) {
 
 void TransportComponent::resized() {
     auto bounds = getLocalBounds().reduced(10, 5);
-    
-    auto leftSection = bounds.removeFromLeft(200);
+    loopValidation_.setBounds(bounds.removeFromBottom(20));
+    auto loopRow = bounds.removeFromBottom(32);
+    loopLabel_.setBounds(loopRow.removeFromLeft(160));
+    loopStart_.setBounds(loopRow.removeFromLeft(90).reduced(2));
+    loopEndLabel_.setBounds(loopRow.removeFromLeft(65));
+    loopEnd_.setBounds(loopRow.removeFromLeft(90).reduced(2));
+    applyLoop_.setBounds(loopRow.removeFromLeft(90).reduced(2));
     auto rightSection = bounds.removeFromRight(250);
-    
-    timeDisplay_->setBounds(bounds.removeFromLeft(180).withTrimmedTop(2).withTrimmedBottom(2));
+    const bool compact = getWidth() < 800;
+    timeDisplay_->setBounds(bounds.removeFromLeft(compact ? 130 : 180).withTrimmedTop(2).withTrimmedBottom(2));
     
     bounds.removeFromLeft(20);
     
-    auto transportButtons = bounds.removeFromLeft(240);
+    auto transportButtons = bounds.removeFromLeft(compact ? 120 : 240);
     int btnWidth = 36;
     int btnHeight = 28;
     
-    returnToStartBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    transportButtons.removeFromLeft(4);
-    rewindBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    transportButtons.removeFromLeft(4);
+    returnToStartBtn_->setVisible(!compact);
+    rewindBtn_->setVisible(!compact);
+    fastForwardBtn_->setVisible(!compact);
+    if (!compact) {
+        returnToStartBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+        transportButtons.removeFromLeft(4);
+        rewindBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+        transportButtons.removeFromLeft(4);
+    }
     stopBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
     transportButtons.removeFromLeft(4);
     playBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
     transportButtons.removeFromLeft(4);
     recordBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
     transportButtons.removeFromLeft(4);
-    fastForwardBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+    if (!compact) fastForwardBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
     
     auto rightControls = rightSection;
     timeSigControl_->setBounds(rightControls.removeFromLeft(50).withSizeKeepingCentre(50, btnHeight));
@@ -445,8 +483,12 @@ void TransportComponent::transportTimeSignatureChanged(int numerator, int denomi
     timeDisplay_->setTimeSignature(numerator, denominator);
 }
 
-void TransportComponent::transportLoopChanged(bool enabled, double, double) {
+void TransportComponent::transportLoopChanged(bool enabled, double start, double end) {
     loopBtn_->setActive(enabled);
+    loopStart_.setText(juce::String(start, 9), false);
+    loopEnd_.setText(juce::String(end, 9), false);
+    loopValidation_.setColour(juce::Label::textColourId, juce::Colour(0xffbbbbbb));
+    loopValidation_.setText("Quarter notes; min 1/64. Enter or Apply.", juce::dontSendNotification);
 }
 
 void TransportComponent::transportMetronomeChanged(bool enabled) {

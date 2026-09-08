@@ -104,6 +104,7 @@ private:
     bool muted = false;
     bool solo = false;
     bool wasSuppressed = false; // Render-owned, independent of arrangement tokens.
+    bool arrangementSinceReset = false; // Includes released notes potentially held by pedals.
     struct Controls { float volume = 1.0f, pan = 0.0f; bool muted = false, solo = false; };
     LatestState<Controls> controls;
     juce::Colour colour{0xff6a6aff};

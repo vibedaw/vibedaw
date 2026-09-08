@@ -90,7 +90,7 @@ private:
     static constexpr double doubleTapIntervalMs_ = 400.0;
     
     
-    static constexpr int transportBarHeight = 48;
+    static constexpr int transportBarHeight = 104;
     static constexpr int statusBarHeight = 28;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainContent)

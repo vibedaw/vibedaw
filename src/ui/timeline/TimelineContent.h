@@ -32,10 +32,15 @@ public:
     
     std::function<void(int)> onTrackSelected;
     std::function<void(int, int)> onPlacementSelected;
+    std::function<void()> onExtentChanged;
     void refresh();
     
 private:
     void transportPositionChanged(double) override { repaint(); }
+    void transportLoopChanged(bool enabled, double start, double end) override {
+        timeRuler->setLoopRegion({enabled, start, end});
+        if (onExtentChanged) onExtentChanged();
+    }
     TransportState& transport;
     void trackAdded(Track* track) override;
     void trackRemoved(int index) override;

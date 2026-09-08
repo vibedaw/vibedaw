@@ -1,6 +1,7 @@
 #include "TransportState.h"
 #include "utils/Logger.h"
 #include <cmath>
+#include <limits>
 #include <juce_events/juce_events.h>
 
 namespace vibedaw {
@@ -111,8 +112,13 @@ void TransportState::setLoopEnabled(bool enabled) {
     }
 }
 
+bool TransportState::validLoopRegion(double start, double end) noexcept {
+    return std::isfinite(start) && std::isfinite(end) && start >= 0 &&
+           end <= maxPositionBeats && end - start >= minLoopBeats;
+}
+
 void TransportState::setLoopRegion(double startBeats, double endBeats) {
-    if (!std::isfinite(startBeats) || !std::isfinite(endBeats) || startBeats < 0.0 || endBeats <= startBeats) return;
+    if (!validLoopRegion(startBeats, endBeats)) return;
     loop_.startBeats = startBeats;
     loop_.endBeats = endBeats;
     publishControl();
@@ -187,20 +193,77 @@ TransportClock::Block TransportClock::beginBlock(TransportState& transport, int 
     const auto& control = transport.acquireControl();
     const bool panic = transport.consumePanic();
     const bool seek = control.seekGeneration != lastSeek;
-    const bool changed = interrupted || panic || seek || control.stopGeneration != lastStop || rate != lastRate;
+    const bool loopChanged = control.loop.enabled != lastLoop.enabled ||
+        control.loop.startBeats != lastLoop.startBeats || control.loop.endBeats != lastLoop.endBeats;
+    bool changed = interrupted || panic || seek || loopChanged || control.stopGeneration != lastStop || rate != lastRate;
     if (seek) { beats = control.positionBeats; correction = 0; }
+    lastLoop = control.loop;
+    if (control.playing && control.loop.enabled &&
+        (beats < control.loop.startBeats || beats >= control.loop.endBeats)) {
+        beats = control.loop.startBeats;
+        correction = 0;
+        changed = true;
+    }
+    if (changed) pendingWrap = false;
     lastSeek = control.seekGeneration;
     lastStop = control.stopGeneration;
     lastRate = rate;
     if (changed) ++revision;
     Block block{beats, beats, rate, control.tempo, control.meter, samples,
                 control.playing, changed, revision, lastSeek};
+    block.metronome = control.metronome;
     if (control.playing && samples > 0 && std::isfinite(rate) && rate > 0) {
+        const long double loopDelta = static_cast<long double>(samples) *
+            control.tempo / 60.0L / rate - correction;
         // Compensated summation retains fractional beats across arbitrary block sizes.
         const double delta = samples * (control.tempo / 60.0) / rate - correction;
         block.endBeats = juce::jmin(TransportState::maxPositionBeats, beats + delta);
         correction = (block.endBeats - beats) - delta;
         if (block.endBeats == TransportState::maxPositionBeats) correction = 0;
+        if (control.loop.enabled) {
+            const double length = control.loop.endBeats - control.loop.startBeats;
+            const double step = control.tempo / 60.0 / rate;
+            const long double finish = static_cast<long double>(beats) + loopDelta;
+            double start = pendingWrap ? control.loop.startBeats : beats;
+            double offset = (start - beats) / step;
+            bool wrap = pendingWrap;
+            pendingWrap = false;
+            long double remaining = finish - start;
+            while (remaining > 0 && block.spanCount < Block::maxSpans) {
+                // A floating-edge wrap quantized to the next block belongs there,
+                // including its cursor reset and cleanup, not to an out-of-range MIDI offset.
+                const double epsilon = 1.0e-7 + 8 * std::numeric_limits<double>::epsilon() *
+                    std::abs(beats) / step;
+                if (wrap && std::floor(offset + epsilon) >= samples) {
+                    pendingWrap = true;
+                    remaining = 0;
+                    break;
+                }
+                const double distance = control.loop.endBeats - start;
+                const bool reachesEnd = remaining >= distance;
+                block.spans[block.spanCount++] = {start, reachesEnd ? control.loop.endBeats :
+                    static_cast<double>(start + remaining), offset, wrap};
+                if (!reachesEnd) { remaining = 0; break; }
+                remaining -= distance;
+                offset += distance / step;
+                start = control.loop.startBeats;
+                wrap = true;
+                pendingWrap = remaining == 0;
+            }
+            block.spanOverflow = remaining > 0 || length / step < 1.0;
+            long double relative = finish - control.loop.startBeats;
+            relative = std::fmod(relative, static_cast<long double>(length));
+            const long double finalBeat = control.loop.startBeats + relative;
+            block.endBeats = static_cast<double>(finalBeat);
+            correction = static_cast<double>(block.endBeats - finalBeat);
+            if (block.endBeats >= control.loop.endBeats) {
+                block.endBeats = control.loop.startBeats;
+                correction = 0;
+                pendingWrap = true;
+            }
+        } else {
+            block.spans[block.spanCount++] = {beats, block.endBeats, 0, false};
+        }
     }
     return block;
 }

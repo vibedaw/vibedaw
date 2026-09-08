@@ -130,6 +130,9 @@ private:
     std::unique_ptr<TimeSignatureControl> timeSigControl_;
     std::unique_ptr<TransportButton> loopBtn_;
     std::unique_ptr<TransportButton> metronomeBtn_;
+    juce::TextEditor loopStart_, loopEnd_;
+    juce::TextButton applyLoop_{"Apply Loop"};
+    juce::Label loopLabel_, loopEndLabel_, loopValidation_;
     
     void setupButtons();
     void updateButtonStates();

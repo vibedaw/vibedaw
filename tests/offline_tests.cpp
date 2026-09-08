@@ -3,6 +3,8 @@
 #include "project/Project.h"
 #include "plugins/PluginHost.h"
 #include "ui/panels/MixerPanel.h"
+#include "ui/TransportComponent.h"
+#include "ui/panels/TimelinePanel.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -136,6 +138,7 @@ struct Probe {
     long long samples = 0;
     int blocks = 0, notes = 0, noteOffs = 0, sounding = 0, destroyed = 0, resets = 0;
     int lastInputCount = 0, lastOffSample = -1, editorCalls = 0;
+    bool invalidInputOffset = false;
     bool destroyedOnAudio = false, resetOnAudio = false, resetQuiescent = false, sustain = false;
     bool prepared = false;
     bool constantOutput = false;
@@ -167,6 +170,8 @@ public:
         probe.lastInputCount = midi.getNumEvents();
         unsigned converted = 0;
         for (const auto metadata : midi) {
+            probe.invalidInputOffset = probe.invalidInputOffset || metadata.samplePosition < 0 ||
+                metadata.samplePosition >= buffer.getNumSamples();
             if (++converted > 2048) break; // JUCE counts ignored CCs too.
             if (metadata.numBytes != 3) continue;
             const auto status = metadata.data[0] & 0xf0;
@@ -700,10 +705,9 @@ static void transportClockTests() {
     for (int i = 0; i < 10000; ++i) state.setTimeSignature(i % 7 + 1, 8);
     block = render();
     CHECK(block.playing && block.discontinuity && block.startBeats == stopped);
-    auto end = block.endBeats;
     state.setMetronomeEnabled(true); state.setLoopRegion(0, 1); state.setLoopEnabled(true);
     block = render();
-    CHECK(block.startBeats == end && block.endBeats > 1); // T05: no interim loop wrap.
+    CHECK(block.startBeats == 0 && block.endBeats < 1 && block.discontinuity);
     state.reset();
     block = render();
     CHECK(block.startBeats == 0 && block.playing && block.discontinuity);
@@ -1541,6 +1545,430 @@ static void mixerBindingTests() {
     juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
 }
 
+static void loopTimestampTests() {
+    for (double rate : {44100.0, 48000.0}) for (double tempo : {120.0, 137.0})
+    for (int size : {1, 7, 127, 512, 4096}) for (double length : {1.0 / 64, 16.0})
+    for (double start : {3.125, 2165.993971306134}) {
+        if (size == 1 && length == 16) continue;
+        Probe probe;
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        auto* channel = channels.addChannel("Loop");
+        channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
+        auto source = std::make_unique<MidiClip>(0, start + 40);
+        source->addNote(Note(60, start, 32));
+        source->addNote(Note(61, start + length, 1)); // Exclusive loop end never attacks.
+        const auto id = clips.addClip(std::move(source));
+        tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, channel->getId(), 0, start + 40));
+        ChannelMixer mixer(channels, tracks, clips, state);
+        mixer.prepareToPlay(rate, size); mixer.setActiveChannel(0);
+        state.setTempo(tempo); state.setLoopRegion(start, start + length);
+        state.setLoopEnabled(true); state.setPlaying(true);
+        juce::AudioBuffer<float> storage(2, size);
+        juce::MidiBuffer midi; midi.ensureSize(32768);
+        midi.addEvent(juce::MidiMessage::noteOn(1, 72, 0.5f), 0);
+        const double period = length * rate * 60 / tempo;
+        const int total = static_cast<int>(std::ceil(period * 4.5));
+        int blocks = 0;
+        for (int time = 0; time < total;) {
+            const int n = std::min(size, total - time);
+            float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+            juce::AudioBuffer<float> block(pointers, 2, n);
+            rendering = true; mixer.processBlock(block, midi); rendering = false;
+            CHECK(probe.lastInputCount <= 2048);
+            CHECK(!probe.invalidInputOffset);
+            time += n; ++blocks;
+        }
+        CHECK(mixer.getOverflowCount() == 0 && probe.blocks == blocks);
+        CHECK(probe.sounding == 2 && probe.held[72] == 1);
+        std::vector<Probe::Event> notes;
+        for (const auto& event : probe.events) if (event.pitch != 72) notes.push_back(event);
+        CHECK(notes.size() == 9);
+        for (size_t i = 0; i < notes.size(); ++i) {
+            const auto pass = (i + 1) / 2;
+            const auto expected = static_cast<long long>(std::floor(pass * period + 1e-7));
+            CHECK(notes[i].time == expected);
+            CHECK(notes[i].on == (i % 2 == 0) && notes[i].pitch == 60);
+            CHECK(notes[i].offset >= 0 && notes[i].offset < size);
+        }
+        state.pollRenderPosition();
+        const double expected = start + std::fmod(total * tempo / 60.0 / rate, length);
+        CHECK(std::abs(state.getPositionInBeats() - expected) < 1e-10);
+        state.stop();
+        rendering = true; mixer.processBlock(storage, midi); rendering = false;
+        CHECK(probe.sounding == 0);
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+    }
+}
+
+static void deferredWrapOffsetTests() {
+    const double reportedEnd = 0.021333333332;
+    const double exactEnd = 512.0 / 24000;
+    for (double end : {reportedEnd, std::nextafter(reportedEnd, 0.0),
+            std::nextafter(reportedEnd, 1.0), exactEnd,
+            std::nextafter(exactEnd, 0.0), std::nextafter(exactEnd, 1.0)})
+    for (double tempo : {20.0, 120.0, 300.0}) {
+        Probe probe;
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        auto* channel = channels.addChannel("Deferred wrap");
+        channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
+        auto source = std::make_unique<MidiClip>(0, 1);
+        source->addNote(Note(60, 0, 1));
+        const double eventBeat = 100.0 / 144000;
+        source->addNote(Note(62, eventBeat, 2.0 / 144000));
+        const auto id = clips.addClip(std::move(source));
+        tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, channel->getId(), 0, 1));
+        ChannelMixer mixer(channels, tracks, clips, state);
+        mixer.prepareToPlay(48000, 512);
+        state.setLoopRegion(0, end); state.setLoopEnabled(true);
+        state.setMetronomeEnabled(true); state.setPlaying(true);
+        juce::AudioBuffer<float> buffer(2, 512); juce::MidiBuffer midi; midi.ensureSize(32768);
+        const auto render = [&] {
+            rendering = true; mixer.processBlock(buffer, midi); rendering = false;
+            CHECK(!probe.invalidInputOffset); // All plugin inputs, including controllers/cleanup.
+            CHECK(renderAllocations == 0 && renderDeletions == 0);
+        };
+        render();
+        CHECK(probe.held[60] == 1 && buffer.getSample(0, 0) == 0.5f);
+        const auto firstCount = probe.events.size();
+        state.setTempo(tempo); render();
+        CHECK(probe.blocks == 2 && probe.events.size() >= firstCount + 2);
+        const auto& off = probe.events[firstCount];
+        const auto& on = probe.events[firstCount + 1];
+        CHECK(!off.on && on.on && off.pitch == 60 && on.pitch == 60);
+        CHECK(off.time == 512 && on.time == 512 && off.offset == 0 && on.offset == 0);
+        CHECK(buffer.getSample(0, 0) == 0.5f); // Click retrigger aligns with wrap off/on.
+        for (const auto& event : probe.events) CHECK(event.offset >= 0 && event.offset < 512);
+        if (end == reportedEnd && tempo == 20) {
+            // Keep the negative fractional span origin: clamping the origin itself
+            // would incorrectly move this later attack from sample 99 to sample 100.
+            CHECK(probe.events[firstCount + 2].pitch == 62 && probe.events[firstCount + 2].on);
+            CHECK(probe.events[firstCount + 2].offset == 99);
+        }
+        state.stop(); render(); CHECK(probe.sounding == 0 && mixer.getOverflowCount() == 0);
+    }
+}
+
+static void loopControlCapacityTests() {
+    TransportState state;
+    for (const auto bounds : {std::pair<double, double>{-1, 4}, {0, 0}, {1, 0},
+            {0, 1e-8}, {0, 1e10}, {0, std::numeric_limits<double>::infinity()},
+            {std::numeric_limits<double>::quiet_NaN(), 4}}) {
+        state.setLoopRegion(bounds.first, bounds.second);
+        CHECK(state.getLoopRegion().startBeats == 0 && state.getLoopRegion().endBeats == 4);
+    }
+    Probe probe;
+    ChannelList channels; TrackList tracks; ClipPool clips;
+    auto* channel = channels.addChannel("Control");
+    channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
+    auto source = std::make_unique<MidiClip>(0, 16);
+    source->addNote(Note(60, 0, 16)); source->addNote(Note(61, 4, 8));
+    const auto id = clips.addClip(std::move(source));
+    tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, channel->getId(), 0, 16));
+    ChannelMixer mixer(channels, tracks, clips, state);
+    mixer.prepareToPlay(48000, 4096); mixer.setActiveChannel(0);
+    juce::AudioBuffer<float> storage(2, 4096); juce::MidiBuffer midi; midi.ensureSize(32768);
+    const auto render = [&](int n = 4096) {
+        float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+        juce::AudioBuffer<float> block(pointers, 2, n);
+        rendering = true; mixer.processBlock(block, midi); rendering = false;
+        state.pollRenderPosition();
+        CHECK(probe.lastInputCount <= 2048);
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+    };
+    state.setPlaying(true); render(); CHECK(probe.held[60] == 1);
+    state.setLoopRegion(4, 5); state.setLoopEnabled(true); render();
+    CHECK(probe.held[60] == 0 && probe.held[61] == 1 && probe.lastOffSample == 0);
+    CHECK(state.getPositionInBeats() > 4 && state.getPositionInBeats() < 5);
+    state.setLoopEnabled(false); render(); CHECK(probe.sounding == 0); // Disable is seek-like, no chase.
+    state.setPositionInBeats(0); render(); CHECK(probe.held[60] == 1);
+    state.setLoopRegion(0, 1.0 / 64); state.setLoopEnabled(true);
+    midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.5f), 0);
+    render(); CHECK(probe.held[60] == 1); // Live priority survives all ordinary wraps.
+    midi.addEvent(juce::MidiMessage::noteOff(1, 60), 101); render();
+    CHECK(probe.held[60] == 1); // Only a later loop attack resumes, not immediate chase.
+    state.stop(); render(); CHECK(probe.sounding == 0);
+
+    // More than 128 spans rejects traversal, but keeps exact elapsed position and live audition.
+    mixer.prepareToPlay(48000, 96000); storage.setSize(2, 96000);
+    state.setPlaying(true); state.setPositionInBeats(0);
+    const auto overflow = mixer.getOverflowCount();
+    render(96000);
+    CHECK(mixer.getOverflowCount() > overflow && probe.sounding == 0);
+    CHECK(std::abs(state.getPositionInBeats()) < 1e-10);
+    render(64); CHECK(probe.held[60] == 1); // Recovery resets consumed indices safely.
+
+    // Dense passes exhaust normal capacity atomically, not the 1072 cleanup reserve.
+    state.stop(); render(64);
+    auto* clip = dynamic_cast<MidiClip*>(clips.getClip(id));
+    for (int key = 1; key < 100; ++key) clip->addNote(Note(key, 0, 16));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    state.setPositionInBeats(0); state.setPlaying(true);
+    const auto notesBefore = probe.notes;
+    render(4096);
+    CHECK(probe.notes == notesBefore && probe.sounding == 0 && probe.lastInputCount <= 1072);
+}
+
+static void metronomeTests() {
+    for (double rate : {44100.0, 48000.0}) for (double tempo : {120.0, 137.0})
+    for (TimeSignature meter : {TimeSignature{4, 4}, {3, 4}, {6, 8}})
+    for (int size : {7, 127, 4096}) {
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        ChannelMixer mixer(channels, tracks, clips, state);
+        mixer.prepareToPlay(rate, size);
+        state.setTempo(tempo); state.setTimeSignature(meter.numerator, meter.denominator);
+        state.setMetronomeEnabled(true); state.setPlaying(true);
+        channels.getMasterBus().setGain(0.5f);
+        juce::AudioBuffer<float> storage(2, size); juce::MidiBuffer midi; midi.ensureSize(32768);
+        const double period = rate * 60 / tempo * 4 / meter.denominator;
+        const int total = static_cast<int>(std::ceil(period * (meter.numerator + 1))) + 1000;
+        int tick = 0;
+        for (int time = 0; time < total;) {
+            const int n = std::min(size, total - time);
+            float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+            juce::AudioBuffer<float> block(pointers, 2, n);
+            rendering = true; mixer.processBlock(block, midi); rendering = false;
+            for (int i = 0; i < n; ++i) {
+                const int sample = time + i;
+                while (sample >= static_cast<int>(std::floor((tick + 1) * period + 1e-7))) ++tick;
+                const int age = sample - static_cast<int>(std::floor(tick * period + 1e-7));
+                const bool accent = tick % meter.numerator == 0;
+                const double expected = age < std::ceil(rate * 0.02) ?
+                    0.5 * (accent ? 0.25 : 0.15) * std::exp(-7.0 * age / (rate * 0.02)) *
+                    std::cos(juce::MathConstants<double>::twoPi * (accent ? 1760 : 1320) * age / rate) : 0;
+                CHECK(std::abs(block.getSample(0, i) - expected) < 1e-6);
+                CHECK(block.getSample(0, i) == block.getSample(1, i));
+            }
+            time += n;
+        }
+        CHECK(channels.getMasterBus().meter.getLeft() > 0);
+        state.setPositionInBeats(0);
+        channels.getMasterBus().setMuted(true);
+        rendering = true; mixer.processBlock(storage, midi); rendering = false;
+        CHECK(storage.getMagnitude(0, size) == 0);
+        channels.getMasterBus().setMuted(false);
+        state.setMetronomeEnabled(false);
+        rendering = true; mixer.processBlock(storage, midi); rendering = false;
+        CHECK(storage.getMagnitude(0, size) == 0);
+        state.setMetronomeEnabled(true); state.stop();
+        rendering = true; mixer.processBlock(storage, midi); rendering = false;
+        CHECK(storage.getMagnitude(0, size) == 0);
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+    }
+}
+
+static void clickMasterAndOverflowTests() {
+    ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+    auto* silent = channels.addChannel("Muted solo"); silent->setSolo(true); silent->setMuted(true);
+    ChannelMixer mixer(channels, tracks, clips, state); mixer.prepareToPlay(48000, 512);
+    juce::AudioBuffer<float> storage(2, 512); juce::MidiBuffer midi; midi.ensureSize(32768);
+    const auto render = [&](int n) {
+        float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+        juce::AudioBuffer<float> block(pointers, 2, n);
+        rendering = true; mixer.processBlock(block, midi); rendering = false;
+    };
+    state.setMetronomeEnabled(true); state.setPlaying(true); channels.getMasterBus().setGain(0.5f);
+    render(1);
+    CHECK(storage.getSample(0, 0) == 0.125f && channels.getMasterBus().meter.getLeft() == 0.125f);
+    CHECK(silent->getMeter().getLeft() == 0);
+    channels.getMasterBus().setMuted(true); render(1); CHECK(storage.getSample(0, 0) == 0);
+    channels.getMasterBus().setMuted(false); render(1);
+    const double expected = 0.125 * std::exp(-14.0 / 960) * std::cos(juce::MathConstants<double>::twoPi * 1760 * 2 / 48000);
+    CHECK(std::abs(storage.getSample(0, 0) - expected) < 1e-6); // Master gate doesn't restart click phase.
+    mixer.prepareToPlay(1, 512); state.setTempo(300); state.setTimeSignature(4, 16); state.setPositionInBeats(0);
+    const auto before = mixer.getOverflowCount(); render(512);
+    CHECK(mixer.getOverflowCount() == before + 1 && storage.getMagnitude(0, 512) == 0);
+    state.pollRenderPosition(); CHECK(state.getPositionInBeats() == 2560);
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
+static void loopUiTests() {
+    TransportState state;
+    TransportComponent ui(state); ui.setSize(1000, 104);
+    auto* start = dynamic_cast<juce::TextEditor*>(ui.findChildWithID("loopStart"));
+    auto* end = dynamic_cast<juce::TextEditor*>(ui.findChildWithID("loopEnd"));
+    auto* apply = dynamic_cast<juce::TextButton*>(ui.findChildWithID("applyLoop"));
+    auto* loop = dynamic_cast<TransportButton*>(ui.findChildWithID("loopToggle"));
+    auto* click = dynamic_cast<TransportButton*>(ui.findChildWithID("metronomeToggle"));
+    auto* validation = dynamic_cast<juce::Label*>(ui.findChildWithID("loopValidation"));
+    CHECK(start && end && apply && loop && click && validation);
+    for (const auto invalid : {"", "abc", "1foo", "nan", "inf", "-1"}) {
+        start->setText(invalid); apply->onClick();
+        CHECK(state.getLoopRegion().startBeats == 0 && validation->getText().startsWith("Invalid"));
+    }
+    start->setText("2.5"); end->setText("6.5"); start->onReturnKey();
+    CHECK(state.getLoopRegion().startBeats == 2.5 && state.getLoopRegion().endBeats == 6.5);
+    loop->onClick(); click->onClick();
+    CHECK(state.isLoopEnabled() && state.isMetronomeEnabled() && loop->isActive() && click->isActive());
+    CHECK(!ui.findChildWithID("record")->isEnabled());
+    state.setLoopRegion(1, 3); CHECK(start->getText().getDoubleValue() == 1 && end->getText().getDoubleValue() == 3);
+    CHECK(ui.getLocalBounds().contains(start->getBounds()) && ui.getLocalBounds().contains(end->getBounds()));
+    ui.setSize(600, 104);
+    for (auto* child : ui.getChildren()) if (child->isVisible()) CHECK(ui.getLocalBounds().contains(child->getBounds()));
+    CHECK(validation->getWidth() == 580 && validation->getHeight() == 20);
+    Project project;
+    TimelinePanel timeline(project); timeline.setSize(800, 400);
+    TimelineContent* content = nullptr;
+    juce::ScrollBar* horizontal = nullptr;
+    for (auto* child : timeline.getChildren()) {
+        if (auto* value = dynamic_cast<TimelineContent*>(child)) content = value;
+        if (auto* value = dynamic_cast<juce::ScrollBar*>(child)) if (!value->isVertical()) horizontal = value;
+    }
+    CHECK(content && horizontal);
+    project.getTransportState().setLoopRegion(100, 104);
+    CHECK(content->getTotalWidth() == 108 * content->getPixelsPerBeat());
+    CHECK(horizontal->getMaximumRangeLimit() == content->getTotalWidth());
+    TimeRuler* ruler = nullptr;
+    for (auto* child : content->getChildren()) if (auto* value = dynamic_cast<TimeRuler*>(child)) ruler = value;
+    CHECK(ruler);
+    project.getTransportState().setLoopEnabled(true);
+    ruler->setSize(400, 24); ruler->setScrollOffset(100 * 50);
+    juce::Image image(juce::Image::RGB, 400, 24, true);
+    juce::Graphics graphics(image); ruler->paint(graphics);
+    CHECK(image.getPixelAt(25, 1) == juce::Colour(0xff66aaff));
+    CHECK(image.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a));
+}
+
+static void loopPedalAndLedgerTests() {
+    for (int size : {512, 1024}) {
+        Probe a, b;
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        auto* first = channels.addChannel("Pedal"); auto* second = channels.addChannel("Independent");
+        first->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(a)));
+        second->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(b)));
+        auto source = std::make_unique<MidiClip>(0, 4); source->addNote(Note(60, 0, 4));
+        const auto id = clips.addClip(std::move(source));
+        auto* track = tracks.addTrack();
+        track->addClipInstance(std::make_unique<ClipInstance>(id, first->getId(), 0, 4));
+        track->addClipInstance(std::make_unique<ClipInstance>(id, second->getId(), 0, 4));
+        ChannelMixer mixer(channels, tracks, clips, state); mixer.prepareToPlay(48000, size); mixer.setActiveChannel(0);
+        state.setLoopRegion(0, 1.0 / 32); state.setLoopEnabled(true); state.setPlaying(true);
+        juce::AudioBuffer<float> buffer(2, size); juce::MidiBuffer midi; midi.ensureSize(32768);
+        const auto render = [&] { rendering = true; mixer.processBlock(buffer, midi); rendering = false; };
+        midi.addEvent(juce::MidiMessage::controllerEvent(1, 64, 127), 0);
+        midi.addEvent(juce::MidiMessage::noteOn(1, 72, 0.5f), 0);
+        render();
+        if (size == 512) { CHECK(a.sounding == 2); render(); }
+        CHECK(first->isVoiceResetPending() && b.sounding == 1 && b.resets == 0);
+        CHECK(buffer.getSample(0, 0) == 0.25f); // Only independent destination is audible.
+        CHECK(a.lastInputCount <= 1072 && mixer.getOverflowCount() == 0);
+        const auto calls = a.blocks; render(); CHECK(a.blocks == calls);
+        ChannelTestAccess::resetVoices(*first);
+        CHECK(a.resets == 1 && !a.resetOnAudio && a.resetQuiescent && a.sounding == 0);
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+    }
+    // A live-only pedal owner must not be reset merely because another destination wraps.
+    Probe dense, live;
+    ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+    auto* first = channels.addChannel("1024 notes"); auto* second = channels.addChannel("Live pedal");
+    first->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(dense)));
+    second->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(live)));
+    auto source = std::make_unique<MidiClip>(0, 4);
+    for (int key = 0; key < 1024; ++key) {
+        Note note(key % 128, key < 512 ? 0 : 0.05, 3); note.setChannel(key / 128 + 1); source->addNote(note);
+    }
+    const auto id = clips.addClip(std::move(source));
+    auto* track = tracks.addTrack();
+    track->addClipInstance(std::make_unique<ClipInstance>(id, first->getId(), 0, 4));
+    // Future events give the live-only destination a scheduler range, but no delivered arrangement history.
+    track->addClipInstance(std::make_unique<ClipInstance>(id, second->getId(), 8, 4));
+    ChannelMixer mixer(channels, tracks, clips, state); mixer.prepareToPlay(48000, 1024); mixer.setActiveChannel(1);
+    state.setLoopRegion(0, 0.125); state.setLoopEnabled(true); state.setPlaying(true);
+    juce::AudioBuffer<float> buffer(2, 1024); juce::MidiBuffer midi; midi.ensureSize(32768);
+    const auto render = [&] { rendering = true; mixer.processBlock(buffer, midi); rendering = false; };
+    midi.addEvent(juce::MidiMessage::controllerEvent(1, 64, 127), 0);
+    midi.addEvent(juce::MidiMessage::noteOn(1, 72, 0.5f), 0);
+    render(); CHECK(dense.sounding == 512 && live.sounding == 1);
+    render(); CHECK(dense.sounding == 1024);
+    const auto notes = dense.notes;
+    render();
+    CHECK(dense.sounding == 0 && dense.notes == notes && dense.lastInputCount == 1072);
+    CHECK(mixer.getOverflowCount() == 1 && live.sounding == 1 && live.noteOffs == 0 && live.resets == 0);
+    CHECK(!second->isVoiceResetPending());
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
+static void loopClickAndClockTests() {
+    // Musical time remains partition-independent over one hour, including fractional wraps.
+    for (int size : {127, 4096}) {
+        TransportState state; TransportClock clock;
+        state.setTempo(137); state.setLoopRegion(3.125, 19.125); state.setLoopEnabled(true); state.setPlaying(true);
+        const int total = 44100 * 3600;
+        for (int time = 0; time < total;) {
+            const int n = std::min(size, total - time);
+            rendering = true;
+            const auto block = clock.beginBlock(state, n, 44100); clock.endBlock(state, block);
+            rendering = false;
+            CHECK(!block.spanOverflow && block.endBeats >= 3.125 && block.endBeats < 19.125);
+            time += n;
+        }
+        state.pollRenderPosition();
+        CHECK(std::abs(state.getPositionInBeats() - (3.125 + std::fmod(137.0 * 60, 16.0))) < 1e-10);
+    }
+    for (int size : {1, 7, 127, 4096}) {
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        ChannelMixer mixer(channels, tracks, clips, state); mixer.prepareToPlay(44100, size);
+        state.setTempo(137); state.setTimeSignature(6, 8);
+        state.setLoopRegion(0, 1.0 / 64); state.setLoopEnabled(true);
+        state.setMetronomeEnabled(true); state.setPlaying(true);
+        juce::AudioBuffer<float> storage(2, size); juce::MidiBuffer midi; midi.ensureSize(32768);
+        const double period = 44100.0 * 60 / 137 / 64;
+        int pass = 0;
+        const int total = 10000;
+        for (int time = 0; time < total;) {
+            const int n = std::min(size, total - time);
+            float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+            juce::AudioBuffer<float> block(pointers, 2, n);
+            rendering = true; mixer.processBlock(block, midi); rendering = false;
+            for (int i = 0; i < n; ++i) {
+                const int sample = time + i;
+                while (sample >= static_cast<int>(std::floor((pass + 1) * period + 1e-7))) ++pass;
+                const int age = sample - static_cast<int>(std::floor(pass * period + 1e-7));
+                const double expected = 0.25 * std::exp(-7.0 * age / (44100 * 0.02)) *
+                    std::cos(juce::MathConstants<double>::twoPi * 1760 * age / 44100);
+                CHECK(std::abs(block.getSample(0, i) - expected) < 1e-6);
+            }
+            time += n;
+        }
+    }
+    // Exact end ownership, seek/edit, tempo and denominator changes on captured boundaries.
+    TransportState state; TransportClock clock; Metronome click;
+    juce::AudioBuffer<float> storage(2, 24000);
+    state.setLoopRegion(0, 1); state.setLoopEnabled(true); state.setMetronomeEnabled(true); state.setPlaying(true);
+    const auto render = [&](int n) {
+        float* pointers[]{storage.getWritePointer(0), storage.getWritePointer(1)};
+        juce::AudioBuffer<float> block(pointers, 2, n); block.clear();
+        rendering = true;
+        const auto timing = clock.beginBlock(state, n, 48000);
+        click.render(block, timing); clock.endBlock(state, timing);
+        rendering = false;
+        return timing;
+    };
+    auto timing = render(24000);
+    CHECK(timing.spanCount == 1 && !timing.spans[0].wrap && timing.endBeats == 0);
+    CHECK(storage.getSample(0, 0) == 0.25f && storage.getSample(0, 23999) == 0);
+    timing = render(1); CHECK(timing.spans[0].wrap && storage.getSample(0, 0) == 0.25f);
+    state.setLoopEnabled(false); state.setPositionInBeats(0); state.setTempo(60); state.setTimeSignature(6, 8);
+    timing = render(24000); CHECK(timing.discontinuity && timing.endBeats == 0.5);
+    render(1); CHECK(storage.getSample(0, 0) == 0.15f); // Eighth-note beat, not dotted-quarter.
+    state.setPositionInBeats(3); render(1); CHECK(storage.getSample(0, 0) == 0.25f);
+    state.setPositionInBeats(2); state.setTimeSignature(3, 4); render(1); CHECK(storage.getSample(0, 0) == 0.15f);
+    state.setPositionInBeats(3); render(1); CHECK(storage.getSample(0, 0) == 0.25f);
+    state.setMetronomeEnabled(false); render(1); CHECK(storage.getSample(0, 0) == 0);
+    state.setMetronomeEnabled(true); render(1); CHECK(storage.getSample(0, 0) == 0); // No off-grid chase.
+    state.setPositionInBeats(0); state.setTempo(120); state.setTimeSignature(4, 4);
+    render(1); state.setTempo(60); render(24000);
+    const double tail = 0.25 * std::exp(-7.0 / 960) * std::cos(juce::MathConstants<double>::twoPi * 1760 / 48000);
+    CHECK(std::abs(storage.getSample(0, 0) - tail) < 1e-6); // Tempo preserves the existing oscillator tail.
+    render(23998); render(1); CHECK(storage.getSample(0, 0) == 0.15f); // New tempo owns the next grid tick.
+    state.setTempo(300); state.setTimeSignature(6, 8); render(4800);
+    CHECK(storage.getSample(0, 0) == 0 && storage.getSample(0, 4799) == 0.15f);
+    state.setLoopRegion(0, 1.0 / 64); state.setLoopEnabled(true);
+    timing = clock.beginBlock(state, 4, 1); // Below one sample per loop: bounded rejection, valid final clock.
+    CHECK(timing.spanOverflow && timing.spanCount <= TransportClock::Block::maxSpans);
+    clock.endBlock(state, timing);
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
 int main() {
     try {
         // Project's real destructor saves settings. Never touch the user's home.
@@ -1563,8 +1991,16 @@ int main() {
         mixerMeterTests();
         mixerSuppressionTests();
         mixerBindingTests();
+        loopTimestampTests();
+        deferredWrapOffsetTests();
+        loopControlCapacityTests();
+        metronomeTests();
+        clickMasterAndOverflowTests();
+        loopUiTests();
+        loopPedalAndLedgerTests();
+        loopClickAndClockTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "T03 model, T06 boundary, T01 transport, T02 arrangement and T04 mixer tests passed\n";
+        std::cout << "T03/T06/T01/T02/T04 and T05 loop/metronome tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

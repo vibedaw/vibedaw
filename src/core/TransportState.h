@@ -56,6 +56,8 @@ public:
     const RenderPosition& acquireRenderPosition() noexcept { return positionFeedback.acquire(); }
     void pollRenderPosition();
     static constexpr double maxPositionBeats = 1.0e9;
+    static constexpr double minLoopBeats = 1.0 / 64.0;
+    static bool validLoopRegion(double start, double end) noexcept;
     static juce::String formatBarsBeatsTicks(double beats, TimeSignature meter);
     TransportState();
     ~TransportState();
@@ -130,12 +132,22 @@ public:
         int numSamples = 0;
         bool playing = false, discontinuity = false;
         unsigned revision = 0, seekGeneration = 0;
+        struct Span {
+            double start = 0, end = 0, sampleOffset = 0;
+            bool wrap = false;
+        };
+        static constexpr unsigned maxSpans = 128;
+        std::array<Span, maxSpans> spans{};
+        unsigned spanCount = 0;
+        bool spanOverflow = false, metronome = false;
     };
     Block beginBlock(TransportState& transport, int samples, double rate, bool interrupted = false) noexcept;
     void endBlock(TransportState& transport, const Block& block) noexcept;
 private:
     double beats = 0, correction = 0, lastRate = 0;
     unsigned lastSeek = 0, lastStop = 0, revision = 0;
+    LoopRegion lastLoop;
+    bool pendingWrap = false;
 };
 
 } // namespace vibedaw
