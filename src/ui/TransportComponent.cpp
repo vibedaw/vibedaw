@@ -23,8 +23,8 @@ void TimeDisplay::paint(juce::Graphics& g) {
     g.drawText(timeStr, bounds, juce::Justification::centred);
 }
 
-void TimeDisplay::setPosition(double positionInSeconds, double tempo) {
-    position_ = positionInSeconds;
+void TimeDisplay::setPosition(double positionInBeats, double tempo) {
+    position_ = positionInBeats;
     tempo_ = tempo;
     repaint();
 }
@@ -41,25 +41,19 @@ void TimeDisplay::setDisplayMode(int mode) {
 }
 
 juce::String TimeDisplay::formatBarsBeatsTicks() {
-    double beatsPerSecond = tempo_ / 60.0;
-    double totalBeats = position_ * beatsPerSecond;
-    double beatsPerBar = timeSigNumerator_;
-    
-    int bar = static_cast<int>(totalBeats / beatsPerBar) + 1;
-    int beat = static_cast<int>(totalBeats) % timeSigNumerator_ + 1;
-    int ticks = static_cast<int>((totalBeats - static_cast<int>(totalBeats)) * 960.0);
-    
-    return juce::String::formatted("%d:%d:%03d", bar, beat, ticks);
+    return TransportState::formatBarsBeatsTicks(position_,
+                                               {timeSigNumerator_, timeSigDenominator_});
 }
 
 juce::String TimeDisplay::formatTimeCode() {
-    int totalSeconds = static_cast<int>(position_);
-    int hours = totalSeconds / 3600;
+    const double positionSeconds = position_ * 60.0 / tempo_;
+    auto totalSeconds = static_cast<juce::int64>(positionSeconds);
+    auto hours = totalSeconds / 3600;
     int minutes = (totalSeconds % 3600) / 60;
     int seconds = totalSeconds % 60;
-    int millis = static_cast<int>((position_ - totalSeconds) * 100.0);
+    int millis = static_cast<int>((positionSeconds - totalSeconds) * 100.0);
     
-    return juce::String::formatted("%d:%02d:%02d.%02d", hours, minutes, seconds, millis);
+    return juce::String(hours) + juce::String::formatted(":%02d:%02d.%02d", minutes, seconds, millis);
 }
 
 TransportButton::TransportButton(Type type)
@@ -159,6 +153,7 @@ juce::Path TransportButton::createIcon() {
 }
 
 void TransportButton::mouseDown(const juce::MouseEvent&) {
+    if (!isEnabled()) return;
     pressed_ = true;
     repaint();
 }
@@ -166,7 +161,7 @@ void TransportButton::mouseDown(const juce::MouseEvent&) {
 void TransportButton::mouseUp(const juce::MouseEvent&) {
     pressed_ = false;
     repaint();
-    if (onClick) onClick();
+    if (isEnabled() && onClick) onClick();
 }
 
 void TransportButton::setActive(bool active) {
@@ -307,6 +302,11 @@ TransportComponent::TransportComponent(TransportState& state)
     setupButtons();
     
     transportState_.addListener(this);
+    updateButtonStates();
+    transportPositionChanged(transportState_.getPosition());
+    transportTempoChanged(transportState_.getTempo());
+    const auto meter = transportState_.getTimeSignature();
+    transportTimeSignatureChanged(meter.numerator, meter.denominator);
     
     LOG_INFO("TransportComponent: Created with full transport controls");
 }
@@ -322,8 +322,7 @@ void TransportComponent::setupButtons() {
     };
     
     rewindBtn_->onClick = [this]() {
-        double currentPos = transportState_.getPosition();
-        transportState_.setPosition(std::max(0.0, currentPos - 1.0));
+        transportState_.reset();
     };
     
     stopBtn_->onClick = [this]() {
@@ -334,12 +333,16 @@ void TransportComponent::setupButtons() {
         transportState_.togglePlay();
     };
     
-    recordBtn_->onClick = [this]() {
-        if (!transportState_.isPlaying()) {
-            transportState_.setPlaying(true);
-        }
-        transportState_.toggleRecord();
-    };
+    recordBtn_->setEnabled(false);
+    recordBtn_->setAlpha(0.35f);
+    recordBtn_->setTitle("Recording unavailable");
+    recordBtn_->setDescription("Recording is not implemented.");
+    loopBtn_->setEnabled(false);
+    loopBtn_->setAlpha(0.35f);
+    loopBtn_->setTitle("Loop playback unavailable until T05");
+    metronomeBtn_->setEnabled(false);
+    metronomeBtn_->setAlpha(0.35f);
+    metronomeBtn_->setTitle("Metronome audio unavailable until T05");
     
     fastForwardBtn_->onClick = [this]() {
         double currentPos = transportState_.getPosition();
@@ -428,13 +431,13 @@ void TransportComponent::transportRecordingChanged(bool) {
     updateButtonStates();
 }
 
-void TransportComponent::transportPositionChanged(double positionInSeconds) {
-    timeDisplay_->setPosition(positionInSeconds, transportState_.getTempo());
+void TransportComponent::transportPositionChanged(double) {
+    timeDisplay_->setPosition(transportState_.getPositionInBeats(), transportState_.getTempo());
 }
 
 void TransportComponent::transportTempoChanged(double tempo) {
     tempoControl_->setTempo(tempo);
-    timeDisplay_->setPosition(transportState_.getPosition(), tempo);
+    timeDisplay_->setPosition(transportState_.getPositionInBeats(), tempo);
 }
 
 void TransportComponent::transportTimeSignatureChanged(int numerator, int denominator) {

@@ -70,7 +70,7 @@ public:
     }
     
     void mouseDoubleClick(const juce::MouseEvent&) override {
-        value = 0.85f;
+        value = 0.5f;
         repaint();
         if (onValueChanged) {
             onValueChanged(value);
@@ -100,9 +100,9 @@ public:
     std::function<void(float)> onValueChanged;
     
 private:
-    float value = 0.85f;
+    float value = 0.5f;
     int dragStartY = 0;
-    float dragStartValue = 0.85f;
+    float dragStartValue = 0.5f;
 };
 
 MasterStrip::MasterStrip() {
@@ -110,18 +110,18 @@ MasterStrip::MasterStrip() {
     leftMeter->setMeterWidth(6);
     addAndMakeVisible(*leftMeter);
     
-    rightMeter = std::make_unique<LevelMeter>();
-    rightMeter->setMeterWidth(6);
-    addAndMakeVisible(*rightMeter);
-    
     fader = std::make_unique<MasterFader>();
     fader->onValueChanged = [this](float v) {
-        volume = v;
+        volume = v * 2.0f;
+        repaint();
         if (onVolumeChanged) {
-            onVolumeChanged(v);
+            onVolumeChanged(volume);
         }
     };
     addAndMakeVisible(*fader);
+    muteButton.setClickingTogglesState(true);
+    muteButton.onClick = [this] { if (onMuteToggled) onMuteToggled(muteButton.getToggleState()); };
+    addAndMakeVisible(muteButton);
 }
 
 MasterStrip::~MasterStrip() = default;
@@ -144,8 +144,8 @@ void MasterStrip::paint(juce::Graphics& g) {
     g.setColour(juce::Colour(0xff888888));
     g.setFont(juce::Font(9.0f));
     
-    float dbValue = 20.0f * std::log10(volume > 0.0f ? volume : 0.0001f);
-    g.drawText(juce::String(dbValue, 1) + " dB", 5, bounds.getHeight() - 18, 
+    const auto label = volume > 0 ? juce::String(juce::Decibels::gainToDecibels(volume), 1) + " dB" : "-inf dB";
+    g.drawText(label, 5, bounds.getHeight() - 18,
                bounds.getWidth() - 10, 14, juce::Justification::centred);
 }
 
@@ -154,35 +154,24 @@ void MasterStrip::resized() {
 }
 
 void MasterStrip::updateComponentPositions() {
-    auto bounds = getLocalBounds();
-    int width = bounds.getWidth();
-    int height = bounds.getHeight();
-    int margin = 4;
-    int topHeight = 24;
-    int bottomHeight = 20;
-    int meterWidth = 12;
-    int meterSpacing = 2;
-    int totalMetersWidth = meterWidth * 2 + meterSpacing;
-    
-    int meterAreaX = (width - totalMetersWidth) / 2;
-    int faderWidth = width - margin * 2;
-    int faderStart = topHeight;
-    int faderHeight = height - topHeight - bottomHeight - margin;
-    
-    leftMeter->setBounds(meterAreaX, faderStart, meterWidth, faderHeight);
-    rightMeter->setBounds(meterAreaX + meterWidth + meterSpacing, faderStart, meterWidth, faderHeight);
-    
-    fader->setBounds(margin, faderStart + faderHeight + 4, faderWidth, bottomHeight - 8);
+    auto bounds = getLocalBounds().reduced(4);
+    bounds.removeFromTop(24);
+    muteButton.setBounds(bounds.removeFromTop(20));
+    bounds.removeFromTop(4);
+    bounds.removeFromBottom(20);
+    leftMeter->setBounds(bounds.removeFromRight(20));
+    bounds.removeFromRight(4);
+    fader->setBounds(bounds);
 }
 
 void MasterStrip::setVolume(float v) {
     volume = v;
-    fader->setValue(v);
+    fader->setValue(v * 0.5f);
+    repaint();
 }
 
-void MasterStrip::setLevels(float left, float right) {
-    leftMeter->setLevels(left, right);
-    rightMeter->setLevels(right, left);
+void MasterStrip::pollMeter(const StereoMeter& source) {
+    leftMeter->poll(source);
 }
 
 } // namespace vibedaw

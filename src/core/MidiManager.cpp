@@ -1,4 +1,5 @@
 #include "MidiManager.h"
+#include "AudioEngine.h"
 #include "utils/Logger.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -9,8 +10,16 @@ MidiManager::MidiManager() {
 }
 
 MidiManager::~MidiManager() {
+    stopTimer();
     disconnect();
     LOG_INFO("MidiManager: Destroyed");
+}
+
+void MidiManager::setAudioDestination(AudioEngine& engine, juce::MidiKeyboardState& state) {
+    jassert(!midiInput);
+    audio = &engine;
+    keyboard = &state;
+    startTimerHz(60);
 }
 
 juce::StringArray MidiManager::getAvailableDevices() const {
@@ -49,7 +58,7 @@ bool MidiManager::connectToDevice(const juce::String& deviceName) {
         return false;
     }
     
-    midiInput = juce::MidiInput::openDevice(deviceIndex, this);
+    midiInput = juce::MidiInput::openDevice(devices[deviceIndex].identifier, this);
     
     if (midiInput == nullptr) {
         LOG_ERROR("MidiManager: Failed to open device: " + deviceName);
@@ -65,6 +74,8 @@ void MidiManager::disconnect() {
     if (midiInput != nullptr) {
         midiInput->stop();
         midiInput.reset();
+        for (int ch = 1; ch <= 16; ++ch)
+            sendMidiMessage(juce::MidiMessage::allSoundOff(ch));
         LOG_INFO("MidiManager: Disconnected");
     }
 }
@@ -85,27 +96,33 @@ void MidiManager::removeListener(MidiListener* listener) {
 }
 
 void MidiManager::sendMidiMessage(const juce::MidiMessage& message) {
-    listeners.call([&message](MidiListener& l) {
-        l.handleMidiMessage(message, 0);
-    });
+    handleIncomingMidiMessage(nullptr, message);
 }
 
 void MidiManager::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) {
-    if (message.isNoteOn()) {
-        LOG_INFO("MidiManager: Note On - " + juce::MidiMessage::getMidiNoteName(message.getNoteNumber(), true, true, 4)
-                 + " vel: " + juce::String(message.getVelocity()));
-    } else if (message.isNoteOff()) {
-        LOG_INFO("MidiManager: Note Off - " + juce::MidiMessage::getMidiNoteName(message.getNoteNumber(), true, true, 4));
-    } else if (message.isController()) {
-        LOG_INFO("MidiManager: CC " + juce::String(message.getControllerNumber())
-                 + " val: " + juce::String(message.getControllerValue()));
-    } else {
-        LOG_INFO("MidiManager: MIDI message - " + juce::String::toHexString(message.getRawData(), message.getRawDataSize()));
+    if (audio) audio->handleIncomingMidiMessage(source, message);
+    std::lock_guard<std::mutex> lock(producers);
+    Feedback event;
+    event.size = message.getRawDataSize();
+    if (event.size < 1 || event.size > 3) return;
+    std::copy_n(message.getRawData(), event.size, event.bytes);
+    if (!feedback.push(event)) feedbackOverflow.store(true);
+}
+
+void MidiManager::timerCallback() {
+    const bool overflow = feedbackOverflow.exchange(false);
+    Feedback event;
+    for (unsigned i = 0; i < 2048 && feedback.pop(event); ++i) {
+        if (overflow) continue;
+        juce::MidiMessage message(event.bytes, event.size);
+        if (audio && keyboard) audio->updateKeyboardFeedback(*keyboard, message);
+        listeners.call([&](MidiListener& l) { l.handleMidiMessage(message, 0); });
     }
-    
-    listeners.call([&message](MidiListener& l) {
-        l.handleMidiMessage(message, 0);
-    });
+    if (overflow && audio && keyboard) {
+        audio->requestPanic();
+        for (int ch = 1; ch <= 16; ++ch)
+            audio->updateKeyboardFeedback(*keyboard, juce::MidiMessage::allNotesOff(ch));
+    }
 }
 
 } // namespace vibedaw

@@ -56,7 +56,7 @@ public:
     
     void mouseDrag(const juce::MouseEvent& e) override {
         int height = getHeight();
-        float dragDistance = static_cast<float>(e.y - dragStartY) / height;
+        float dragDistance = static_cast<float>(e.y - dragStartY) / juce::jmax(1, height);
         float newValue = dragStartValue - dragDistance;
         
         newValue = juce::jlimit(0.0f, 1.0f, newValue);
@@ -101,7 +101,7 @@ public:
     std::function<void(float)> onValueChanged;
     
 private:
-    float value = 0.8f;
+    float value = 0.5f;
     int dragStartY = 0;
     float dragStartValue = 0.0f;
     bool isHovered = false;
@@ -260,10 +260,9 @@ private:
     bool isToggled = false;
 };
 
-MixerStrip::MixerStrip(int index)
-    : stripIndex(index)
+MixerStrip::MixerStrip(ChannelId id)
+    : channelId(id)
 {
-    trackName = "Ch " + juce::String(index + 1);
     
     meter = std::make_unique<LevelMeter>();
     meter->setMeterStyle(true);
@@ -271,9 +270,10 @@ MixerStrip::MixerStrip(int index)
     
     fader = std::make_unique<FaderComponent>();
     fader->onValueChanged = [this](float v) {
-        volume = v;
+        volume = v * 2.0f;
+        repaint();
         if (onVolumeChanged) {
-            onVolumeChanged(v);
+            onVolumeChanged(volume);
         }
     };
     addAndMakeVisible(*fader);
@@ -306,15 +306,16 @@ MixerStrip::MixerStrip(int index)
     addAndMakeVisible(*soloButton);
     
     fxButton = std::make_unique<SmallButton>("FX");
-    fxButton->onClicked = [this](bool) {
-        if (onFxButtonClicked) {
-            onFxButtonClicked();
-        }
-    };
     addAndMakeVisible(*fxButton);
+    fxButton->setEnabled(false);
+    fxButton->setAlpha(0.35f);
 }
 
 MixerStrip::~MixerStrip() = default;
+
+void MixerStrip::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isLeftButtonDown() && onStripSelected) onStripSelected();
+}
 
 void MixerStrip::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
@@ -334,10 +335,11 @@ void MixerStrip::paint(juce::Graphics& g) {
     int textY = 5;
     g.drawText(trackName, 5, textY, bounds.getWidth() - 10, 14, juce::Justification::centred);
     
-    if (stripIndex >= 0 && stripIndex < 100) {
+    {
         g.setColour(juce::Colour(0xff666666));
         g.setFont(juce::Font(8.0f));
-        g.drawText(juce::String(stripIndex + 1), 5, textY + 12, bounds.getWidth() - 10, 10, 
+        const auto label = volume > 0 ? juce::String(juce::Decibels::gainToDecibels(volume), 1) + " dB" : "-inf dB";
+        g.drawText(label, 5, textY + 12, bounds.getWidth() - 10, 10,
                    juce::Justification::centred);
     }
 }
@@ -390,7 +392,8 @@ void MixerStrip::setTrackColour(const juce::Colour& colour) {
 
 void MixerStrip::setVolume(float v) {
     volume = v;
-    fader->setValue(v);
+    fader->setValue(v * 0.5f);
+    repaint();
 }
 
 void MixerStrip::setPan(float p) {
@@ -408,30 +411,12 @@ void MixerStrip::setSolo(bool s) {
     soloButton->setToggled(s);
 }
 
-void MixerStrip::setLevels(float left, float right) {
-    meter->setLevels(left, right);
-}
-
-void MixerStrip::setSendLevel(int sendIndex, float level) {
-    if (sendIndex >= 0 && sendIndex < static_cast<int>(sendLevels.size())) {
-        sendLevels[sendIndex] = level;
-    }
-}
-
-float MixerStrip::getSendLevel(int sendIndex) const {
-    if (sendIndex >= 0 && sendIndex < static_cast<int>(sendLevels.size())) {
-        return sendLevels[sendIndex];
-    }
-    return 0.0f;
+void MixerStrip::pollMeter(const StereoMeter& source) {
+    meter->poll(source);
 }
 
 void MixerStrip::setSelected(bool s) {
     selected = s;
-    repaint();
-}
-
-void MixerStrip::setStripType(StripType type) {
-    stripType = type;
     repaint();
 }
 

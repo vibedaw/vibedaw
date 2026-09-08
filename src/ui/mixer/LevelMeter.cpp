@@ -62,8 +62,8 @@ void LevelMeter::paint(juce::Graphics& g) {
                     false
                 );
                 
-                gradient.addColour((1.0f - yellowZone) * meterHeight / levelHeight, midColour);
-                gradient.addColour((1.0f - greenZone) * meterHeight / levelHeight, lowColour);
+                gradient.addColour(juce::jlimit(0.0f, 1.0f, (1.0f - yellowZone) * meterHeight / levelHeight), midColour);
+                gradient.addColour(juce::jlimit(0.0f, 1.0f, (1.0f - greenZone) * meterHeight / levelHeight), lowColour);
                 
                 g.setGradientFill(gradient);
                 g.fillRect(x, gradientStart, meterWidth, levelHeight);
@@ -121,15 +121,17 @@ void LevelMeter::setLevels(float leftLevel, float rightLevel) {
     float leftLinear = juce::jlimit(0.0f, 1.0f, leftLevel);
     float rightLinear = juce::jlimit(0.0f, 1.0f, rightLevel);
     
-    if (leftLinear > leftPeak) {
-        leftPeak = leftLinear;
-    }
-    if (rightLinear > rightPeak) {
-        rightPeak = rightLinear;
-    }
-    
     this->leftLevel = leftLinear;
     this->rightLevel = rightLinear;
+}
+
+void LevelMeter::poll(const StereoMeter& source) {
+    const auto revision = source.getRevision();
+    if (!hasSource || revision != lastRevision) {
+        setLevels(source.getLeft(), source.getRight());
+        lastRevision = revision;
+        hasSource = true;
+    }
 }
 
 void LevelMeter::setLevelsDecibels(float leftDb, float rightDb) {
@@ -146,34 +148,14 @@ void LevelMeter::timerCallback() {
     double deltaTime = (currentTime - lastTime) / 1000.0;
     lastTime = currentTime;
     
-    float newLeft = leftLevel.load();
-    float newRight = rightLevel.load();
-    
-    leftDisplayLevel = decayLevel(newLeft);
-    rightDisplayLevel = decayLevel(newRight);
-    
-    float leftPeakVal = leftPeak.load();
-    float rightPeakVal = rightPeak.load();
-    
-    float decayAmount = decayRate * deltaTime / 60.0f;
-    
-    if (leftPeakVal > leftDisplayLevel) {
-        leftPeakVal = std::max(leftDisplayLevel, leftPeakVal - decayAmount);
-        leftPeak = leftPeakVal;
-    }
-    leftPeakDisplay = leftPeakVal;
-    
-    if (rightPeakVal > rightDisplayLevel) {
-        rightPeakVal = std::max(rightDisplayLevel, rightPeakVal - decayAmount);
-        rightPeak = rightPeakVal;
-    }
-    rightPeakDisplay = rightPeakVal;
+    // If audio stops publishing (device stop or quiescence), do not pin stale peaks.
+    const float decay = static_cast<float>(std::pow(10.0, -decayRate * deltaTime / 20.0));
+    leftDisplayLevel = std::max(leftLevel.exchange(0), leftDisplayLevel * decay);
+    rightDisplayLevel = std::max(rightLevel.exchange(0), rightDisplayLevel * decay);
+    leftPeakDisplay = leftDisplayLevel;
+    rightPeakDisplay = rightDisplayLevel;
     
     repaint();
-}
-
-float LevelMeter::decayLevel(float currentLevel) {
-    return currentLevel;
 }
 
 } // namespace vibedaw

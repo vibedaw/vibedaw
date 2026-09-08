@@ -6,10 +6,12 @@
 namespace vibedaw {
 
 Project::Project() {
+    channelList.addListener(this);
     LOG_INFO("Project: Created");
 }
 
 Project::~Project() {
+    channelList.removeListener(this);
     shutdown();
     LOG_INFO("Project: Destroyed");
 }
@@ -60,6 +62,7 @@ bool Project::loadPlugin(const juce::String& pluginPath) {
     }
     
     auto* channel = channelList.addChannel(pluginHost->getPluginName(), Channel::Type::Instrument);
+    if (!channel) return false;
     channel->setPlugin(std::move(pluginHost));
     
     settings.pluginPath = pluginPath;
@@ -71,21 +74,15 @@ bool Project::loadPlugin(const juce::String& pluginPath) {
 }
 
 void Project::setActiveChannel(int index) {
-    if (activeChannelIndex_ == index) {
-        return;
-    }
-    
-    if (index >= channelList.getNumChannels()) {
-        index = channelList.getNumChannels() - 1;
-    }
-    
-    if (index < 0 && channelList.getNumChannels() > 0) {
-        index = 0;
-    }
-    
-    activeChannelIndex_ = index;
-    notifyActiveChannelChanged(index);
+    auto* channel = channelList.getChannel(index);
+    activeChannelId_ = channel ? channel->getId() : InvalidChannelId;
+    notifyActiveChannelChanged(getActiveChannel());
     LOG_INFO("Project: Active channel set to " + juce::String(index));
+}
+
+void Project::channelListChanged() {
+    if (!channelList.getChannelById(activeChannelId_)) activeChannelId_ = InvalidChannelId;
+    notifyActiveChannelChanged(getActiveChannel());
 }
 
 void Project::addListener(Listener* listener) {

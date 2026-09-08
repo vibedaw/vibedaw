@@ -26,6 +26,7 @@ public:
     
     int getKeyHeight() const { return keyHeight_; }
     void setKeyHeight(int height);
+    void setScrollOffset(int pixels) { scrollOffset_ = pixels; repaint(); }
     
     int getKeyForY(int y) const;
     int getYForKey(int noteNumber) const;
@@ -44,6 +45,7 @@ public:
 private:
     Listener* listener_ = nullptr;
     int lowestNote_ = 36;
+    int scrollOffset_ = 0;
     int numKeys_ = 128;
     int keyHeight_ = defaultKeyHeight;
     int keyWidth_ = defaultKeyWidth;

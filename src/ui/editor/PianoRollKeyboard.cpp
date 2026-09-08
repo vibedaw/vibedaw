@@ -24,13 +24,11 @@ void PianoRollKeyboard::setKeyHeight(int height) {
 }
 
 int PianoRollKeyboard::getKeyForY(int y) const {
-    int noteIndex = (getHeight() - y) / keyHeight_;
-    return lowestNote_ + noteIndex;
+    return 127 - (y + scrollOffset_) / keyHeight_;
 }
 
 int PianoRollKeyboard::getYForKey(int noteNumber) const {
-    int noteIndex = noteNumber - lowestNote_;
-    return getHeight() - (noteIndex + 1) * keyHeight_;
+    return (127 - noteNumber) * keyHeight_ - scrollOffset_;
 }
 
 void PianoRollKeyboard::setHeldNote(int pitch, bool held) {

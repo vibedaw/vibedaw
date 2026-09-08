@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Sidebar.h"
 #include "project/ChannelList.h"
+#include "project/Project.h"
 #include <vector>
 
 namespace vibedaw {
@@ -66,6 +67,7 @@ private:
 };
 
 class ChannelRackContent : public juce::Component,
+                           private Project::Listener,
                            public ChannelRow::Listener,
                            public ChannelList::Listener {
 public:
@@ -96,6 +98,7 @@ public:
     void sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) override;
     
 private:
+    void activeChannelChanged(int index) override { selectChannel(index); }
     Project& project_;
     Listener* channelListener_ = nullptr;
     

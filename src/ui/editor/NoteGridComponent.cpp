@@ -2,6 +2,7 @@
 #include "project/Clip.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace vibedaw {
 
@@ -10,10 +11,22 @@ NoteGridComponent::NoteGridComponent() {
     setWantsKeyboardFocus(true);
 }
 
-NoteGridComponent::~NoteGridComponent() = default;
+NoteGridComponent::~NoteGridComponent() {
+    if (midiClip_) midiClip_->removeListener(this);
+}
+
+void NoteGridComponent::notesInvalidated() {
+    selectedNotes_.clear();
+    hoveredNote_ = nullptr;
+    dragState_ = {};
+    repaint();
+}
 
 void NoteGridComponent::setMidiClip(MidiClip* clip) {
+    if (midiClip_) midiClip_->removeListener(this);
+    notesInvalidated();
     midiClip_ = clip;
+    if (midiClip_) midiClip_->addListener(this);
     repaint();
 }
 
@@ -51,7 +64,7 @@ void NoteGridComponent::setScrollOffset(int offsetY) {
     repaint();
 }
 
-void NoteGridComponent::selectNote(Note* note) {
+void NoteGridComponent::selectNote(const Note* note) {
     if (note == nullptr) return;
     auto it = std::find(selectedNotes_.begin(), selectedNotes_.end(), note);
     if (it == selectedNotes_.end()) {
@@ -65,18 +78,18 @@ void NoteGridComponent::clearSelection() {
     repaint();
 }
 
-std::vector<Note*> NoteGridComponent::getSelectedNotes() {
+std::vector<const Note*> NoteGridComponent::getSelectedNotes() {
     return selectedNotes_;
 }
 
 double NoteGridComponent::snapToGrid(double time) const {
-    double gridSize = 1.0 / static_cast<double>(gridResolution_);
-    return std::round(time / gridSize) * gridSize;
+    double gridSize = 4.0 / static_cast<double>(gridResolution_);
+    return juce::jmax(0.0, std::round(time / gridSize) * gridSize);
 }
 
 int NoteGridComponent::pitchFromY(int y) const {
     int adjustedY = y + scrollOffsetY_;
-    int noteIndex = (getHeight() - adjustedY) / keyHeight_;
+    int noteIndex = (getHeight() - 1 - adjustedY) / keyHeight_;
     return lowestNote_ + noteIndex;
 }
 
@@ -90,22 +103,28 @@ double NoteGridComponent::timeFromX(int x) const {
 }
 
 int NoteGridComponent::xFromTime(double time) const {
-    return static_cast<int>((time - timeOffset_) * pixelsPerBeat_);
+    return static_cast<int>(juce::jlimit(static_cast<double>(std::numeric_limits<int>::min()),
+                                       static_cast<double>(std::numeric_limits<int>::max()),
+                                       (time - timeOffset_) * pixelsPerBeat_));
 }
 
-Note* NoteGridComponent::findNoteAt(int x, int y) {
+const Note* NoteGridComponent::findNoteAt(int x, int y) {
     if (!midiClip_) return nullptr;
     
     int pitch = pitchFromY(y);
+    if (pitch < 0 || pitch > 127) return nullptr;
     double time = timeFromX(x);
     
     return midiClip_->findNoteAt(time, pitch);
 }
 
 void NoteGridComponent::drawNote(juce::Graphics& g, const Note& note, bool isSelected, bool isHovered) {
-    int x = xFromTime(note.getStartTime());
+    const double left = (note.getStartTime() - timeOffset_) * pixelsPerBeat_;
+    const double right = (note.getEndTime() - timeOffset_) * pixelsPerBeat_;
+    if (right < 0.0 || left >= getWidth()) return;
+    int x = static_cast<int>(juce::jmax(0.0, left));
     int y = yFromPitch(note.getPitch());
-    int width = static_cast<int>(note.getDuration() * pixelsPerBeat_);
+    int width = juce::jmax(3, static_cast<int>(juce::jmin(static_cast<double>(getWidth()), right)) - x);
     
     juce::Colour noteColour;
     if (isSelected) {
@@ -124,8 +143,7 @@ void NoteGridComponent::drawNote(juce::Graphics& g, const Note& note, bool isSel
 }
 
 void NoteGridComponent::drawGridLines(juce::Graphics& g) {
-    double gridSize = 1.0 / static_cast<double>(gridResolution_);
-    int gridPixels = static_cast<int>(gridSize * pixelsPerBeat_);
+    double gridSize = 4.0 / static_cast<double>(gridResolution_);
     
     g.setColour(juce::Colour(0xff404040));
     
@@ -133,8 +151,9 @@ void NoteGridComponent::drawGridLines(juce::Graphics& g) {
         g.drawHorizontalLine(y, 0.0f, static_cast<float>(getWidth()));
     }
     
-    for (int x = 0; x < getWidth(); x += gridPixels) {
-        double time = timeFromX(x);
+    for (double time = std::ceil(timeOffset_ / gridSize) * gridSize;
+         time < timeFromX(getWidth()); time += gridSize) {
+        int x = xFromTime(time);
         bool isBeat = std::fmod(time, 1.0) < 0.001;
         
         if (isBeat) {
@@ -145,11 +164,11 @@ void NoteGridComponent::drawGridLines(juce::Graphics& g) {
         g.drawVerticalLine(x, 0.0f, static_cast<float>(getHeight()));
     }
     
-    for (int beat = 0; beat * pixelsPerBeat_ < getWidth(); ++beat) {
+    for (int beat = static_cast<int>(std::ceil(timeOffset_)); xFromTime(beat) < getWidth(); ++beat) {
         bool isMeasure = beat % 4 == 0;
         if (isMeasure) {
             g.setColour(juce::Colour(0xff606060));
-            g.drawVerticalLine(beat * pixelsPerBeat_, 0.0f, static_cast<float>(getHeight()));
+            g.drawVerticalLine(xFromTime(beat), 0.0f, static_cast<float>(getHeight()));
         }
     }
 }
@@ -172,13 +191,14 @@ void NoteGridComponent::paint(juce::Graphics& g) {
 void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
     if (!midiClip_) return;
     
-    Note* existingNote = findNoteAt(e.x, e.y);
+    const Note* existingNote = findNoteAt(e.x, e.y);
     
     if (e.mods.isRightButtonDown()) {
         if (existingNote) {
+            Note removed = *existingNote;
             midiClip_->removeNote(existingNote);
             if (listener_) {
-                listener_->noteRemoved(*existingNote);
+                listener_->noteRemoved(removed);
             }
         }
         repaint();
@@ -199,8 +219,8 @@ void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
             dragState_.note = existingNote;
             dragState_.originalDuration = existingNote->getDuration();
             dragState_.originalStart = existingNote->getStartTime();
-        } else if (e.x > existingNote->getStartTime() * pixelsPerBeat_ && 
-                   e.x < existingNote->getStartTime() * pixelsPerBeat_ + edgeThreshold) {
+        } else if (e.x > xFromTime(existingNote->getStartTime()) &&
+                   e.x < xFromTime(existingNote->getStartTime()) + edgeThreshold) {
             dragState_.mode = DragState::Mode::ResizeStart;
             dragState_.note = existingNote;
             dragState_.originalStart = existingNote->getStartTime();
@@ -217,11 +237,11 @@ void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
         selectNote(existingNote);
     } else {
         int pitch = pitchFromY(e.y);
+        if (pitch < 0 || pitch > 127) return;
         double time = snapToGrid(timeFromX(e.x));
         
-        auto& notes = midiClip_->getNotes();
-        notes.emplace_back(pitch, time, 1.0 / static_cast<double>(gridResolution_));
-        dragState_.note = &notes.back();
+        dragState_.note = midiClip_->addNote(Note(pitch, time, 4.0 / static_cast<double>(gridResolution_)));
+        if (!dragState_.note) return;
         dragState_.mode = DragState::Mode::Create;
         dragState_.startX = e.x;
         dragState_.originalStart = time;
@@ -242,36 +262,37 @@ void NoteGridComponent::mouseDrag(const juce::MouseEvent& e) {
     
     int deltaY = e.y - dragState_.startY;
     int deltaX = e.x - dragState_.startX;
+    Note edited = *dragState_.note;
     
     switch (dragState_.mode) {
         case DragState::Mode::Create:
         case DragState::Mode::ResizeEnd: {
             double endTime = snapToGrid(timeFromX(e.x));
             double startTime = dragState_.note->getStartTime();
-            double duration = juce::jmax(1.0 / static_cast<double>(gridResolution_), endTime - startTime);
-            dragState_.note->setDuration(duration);
+            double duration = juce::jmax(4.0 / static_cast<double>(gridResolution_), endTime - startTime);
+            edited.setDuration(duration);
             break;
         }
         case DragState::Mode::ResizeStart: {
             double newStart = snapToGrid(timeFromX(e.x));
             double endTime = dragState_.note->getStartTime() + dragState_.note->getDuration();
             if (newStart < endTime - 0.01) {
-                dragState_.note->setStartTime(newStart);
-                dragState_.note->setDuration(endTime - newStart);
+                edited.setStartTime(newStart);
+                edited.setDuration(endTime - newStart);
             }
             break;
         }
         case DragState::Mode::Move: {
             double newStart = snapToGrid(dragState_.originalStart + deltaX / static_cast<double>(pixelsPerBeat_));
             int newPitch = juce::jlimit(0, 127, dragState_.originalPitch - deltaY / keyHeight_);
-            dragState_.note->setStartTime(newStart);
-            dragState_.note->setPitch(newPitch);
+            edited.setStartTime(newStart);
+            edited.setPitch(newPitch);
             break;
         }
         default:
             break;
     }
-    
+    midiClip_->updateNote(dragState_.note, edited);
     repaint();
 }
 
@@ -285,7 +306,7 @@ void NoteGridComponent::mouseUp(const juce::MouseEvent& e) {
 }
 
 void NoteGridComponent::mouseMove(const juce::MouseEvent& e) {
-    Note* note = findNoteAt(e.x, e.y);
+    const Note* note = findNoteAt(e.x, e.y);
     if (note != hoveredNote_) {
         hoveredNote_ = note;
         repaint();
@@ -293,15 +314,13 @@ void NoteGridComponent::mouseMove(const juce::MouseEvent& e) {
 }
 
 void NoteGridComponent::mouseDoubleClick(const juce::MouseEvent& e) {
-    Note* note = findNoteAt(e.x, e.y);
+    const Note* note = findNoteAt(e.x, e.y);
     if (note && midiClip_) {
+        Note removed = *note;
         midiClip_->removeNote(note);
         if (listener_) {
-            listener_->noteRemoved(*note);
+            listener_->noteRemoved(removed);
         }
-        selectedNotes_.erase(
-            std::remove(selectedNotes_.begin(), selectedNotes_.end(), note),
-            selectedNotes_.end());
         repaint();
     }
 }

@@ -5,6 +5,8 @@
 #include "ProcessorBase.h"
 #include "project/ChannelList.h"
 #include <atomic>
+#include "ArrangementSnapshot.h"
+#include "TransportState.h"
 
 namespace vibedaw {
 
@@ -12,11 +14,11 @@ class Channel;
 
 class ChannelMixer : public juce::AudioProcessor, public ChannelList::Listener {
 public:
-    ChannelMixer(ChannelList& channelList);
+    ChannelMixer(ChannelList&, TrackList&, ClipPool&, TransportState&);
     ~ChannelMixer() override;
     
     void setActiveChannel(int index);
-    int getActiveChannel() const { return activeChannelIndex.load(); }
+    ChannelId getActiveChannelId() const { return activeChannelId.load(); }
     
     const juce::String getName() const override { return "ChannelMixer"; }
     
@@ -45,13 +47,35 @@ public:
     void channelRemoved(int index) override;
     void channelChanged(Channel* channel) override;
     void channelListChanged() override;
+    unsigned getOverflowCount() const { return overflowCount.load(); }
+    bool arrangementOverflowed() const { return arrangement.hasOverflow(); }
 
 private:
     ChannelList& channelList;
-    std::atomic<int> activeChannelIndex{-1};
+    ArrangementPublisher arrangement;
+    TransportState& transport;
+    TransportClock clock;
+    juce::AudioBuffer<float> scratch;
+    juce::MidiBuffer channelMidi;
+    struct ScheduledEvent {
+        int sample = 0, size = 0;
+        unsigned token = 0;
+        unsigned char data[3]{};
+        unsigned order = 0;
+        int previousAttack = -1;
+    };
+    std::array<ScheduledEvent, Channel::maxLiveEvents> scheduled{};
+    std::array<ScheduledEvent, Channel::maxLiveEvents> merged{};
+    // Snapshot-relative indices only; reset on revision/discontinuity, never borrowed pointers.
+    std::array<size_t, ChannelList::maxChannels> nextArrangementEvent{};
+    ChannelId previousActive = InvalidChannelId;
+    unsigned lastRevision = 0;
+    std::atomic<unsigned> overflowCount{0};
+    std::atomic<ChannelId> activeChannelId{InvalidChannelId};
     double currentSampleRate{44100.0};
     int currentBlockSize{512};
     bool isPrepared{false};
+    bool clockInterrupted = true; // Lifecycle writes require quiescence, like preparation.
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelMixer)
 };

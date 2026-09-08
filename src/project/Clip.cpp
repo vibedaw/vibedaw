@@ -1,6 +1,7 @@
 #include "Clip.h"
 #include "Note.h"
 #include <algorithm>
+#include <cmath>
 
 namespace vibedaw {
 
@@ -12,19 +13,25 @@ Clip::Clip(Type type, double start, double dur)
 }
 
 void Clip::setStartTime(double time) {
+    if (!std::isfinite(time) || time < 0.0 || !std::isfinite(time + duration)) return;
     startTime = time;
+    notifyChanged();
 }
 
 void Clip::setDuration(double dur) {
+    if (!std::isfinite(dur) || dur <= 0.0 || !std::isfinite(startTime + dur)) return;
     duration = dur;
+    notifyChanged();
 }
 
 void Clip::setName(const juce::String& n) {
     name = n;
+    notifyChanged();
 }
 
 void Clip::setColour(const juce::Colour& c) {
     colour = c;
+    notifyChanged();
 }
 
 void Clip::setSelected(bool sel) {
@@ -33,6 +40,7 @@ void Clip::setSelected(bool sel) {
 
 void Clip::setMuted(bool m) {
     muted = m;
+    notifyChanged();
 }
 
 bool Clip::overlaps(double time) const {
@@ -77,14 +85,32 @@ MidiClip::MidiClip(double startTime, double duration)
     name = "MIDI";
 }
 
-void MidiClip::addNote(const Note& note) {
+const Note* MidiClip::addNote(const Note& note) {
+    if (!std::isfinite(note.getStartTime()) || note.getStartTime() < 0.0 ||
+        !std::isfinite(note.getDuration()) || note.getDuration() <= 0.0 || !std::isfinite(note.getEndTime())) return nullptr;
+    invalidateNotes();
     notes_.push_back(note);
-    std::sort(notes_.begin(), notes_.end(), Note::compareByTime);
+    notifyChanged();
+    return &notes_.back();
+}
+
+void MidiClip::updateNote(const Note* note, const Note& replacement) {
+    if (!std::isfinite(replacement.getStartTime()) || replacement.getStartTime() < 0.0 ||
+        !std::isfinite(replacement.getDuration()) || replacement.getDuration() <= 0.0 || !std::isfinite(replacement.getEndTime())) return;
+    for (auto& current : notes_) {
+        if (&current == note) {
+            current = replacement;
+            notifyChanged();
+            return;
+        }
+    }
 }
 
 void MidiClip::removeNote(int index) {
     if (index >= 0 && index < static_cast<int>(notes_.size())) {
+        invalidateNotes();
         notes_.erase(notes_.begin() + index);
+        notifyChanged();
     }
 }
 
@@ -93,16 +119,20 @@ void MidiClip::removeNote(const Note* note) {
     auto it = std::find_if(notes_.begin(), notes_.end(),
         [note](const Note& n) { return &n == note; });
     if (it != notes_.end()) {
+        invalidateNotes();
         notes_.erase(it);
+        notifyChanged();
     }
 }
 
 void MidiClip::clearNotes() {
+    invalidateNotes();
     notes_.clear();
+    notifyChanged();
 }
 
-Note* MidiClip::findNoteAt(double time, int pitch) {
-    for (auto& note : notes_) {
+const Note* MidiClip::findNoteAt(double time, int pitch) const {
+    for (const auto& note : notes_) {
         if (note.getPitch() == pitch && note.containsTime(time)) {
             return &note;
         }

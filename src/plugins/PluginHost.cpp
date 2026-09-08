@@ -1,4 +1,6 @@
 #include "PluginHost.h"
+#include "PluginWindow.h"
+#include "core/AudioBoundary.h"
 #include "utils/Logger.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -9,12 +11,20 @@ PluginHost::PluginHost() {
     LOG_INFO("PluginHost: Constructed with " + juce::String(formatManager.getNumFormats()) + " plugin formats");
 }
 
+PluginHost::PluginHost(std::unique_ptr<juce::AudioPluginInstance> instance)
+    : pluginInstance(std::move(instance)) {}
+
 PluginHost::~PluginHost() {
+    AudioQuiescence::Edit edit;
+    closeWindows();
     releaseResources();
+    pluginInstance.reset();
     LOG_INFO("PluginHost: Destroyed");
 }
 
 bool PluginHost::loadPlugin(const juce::String& pluginPath) {
+    AudioQuiescence::Edit edit;
+    closeWindows();
     LOG_INFO("PluginHost: Loading plugin from: " + pluginPath);
     
     releaseResources();
@@ -63,11 +73,17 @@ bool PluginHost::loadPlugin(const juce::String& pluginPath) {
     LOG_INFO("PluginHost: Successfully loaded plugin: " + pluginInstance->getName());
     LOG_INFO("PluginHost: Plugin has " + juce::String(pluginInstance->getTotalNumInputChannels()) + " inputs, " 
              + juce::String(pluginInstance->getTotalNumOutputChannels()) + " outputs");
+    if (pluginInstance->getTotalNumInputChannels() > 2 || pluginInstance->getTotalNumOutputChannels() > 2) {
+        LOG_ERROR("PluginHost: Only mono/stereo plugins are supported by the bounded audio path");
+        pluginInstance.reset();
+        return false;
+    }
     
     return true;
 }
 
 void PluginHost::prepareToPlay(double sampleRate, int blockSize) {
+    AudioQuiescence::Edit edit;
     if (pluginInstance == nullptr) {
         LOG_WARN("PluginHost: Cannot prepare - no plugin loaded");
         return;
@@ -91,10 +107,24 @@ void PluginHost::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&
 }
 
 void PluginHost::releaseResources() {
+    AudioQuiescence::Edit edit;
     if (pluginInstance != nullptr) {
         pluginInstance->releaseResources();
         LOG_INFO("PluginHost: Released plugin resources");
     }
+}
+
+void PluginHost::resetVoices() {
+    AudioQuiescence::Edit edit;
+    if (pluginInstance) pluginInstance->reset();
+}
+
+void PluginHost::registerWindow(PluginWindow* window) { windows.push_back(window); }
+void PluginHost::unregisterWindow(PluginWindow* window) {
+    windows.erase(std::remove(windows.begin(), windows.end(), window), windows.end());
+}
+void PluginHost::closeWindows() {
+    while (!windows.empty()) delete windows.back();
 }
 
 const juce::String PluginHost::getName() const {
@@ -102,24 +132,13 @@ const juce::String PluginHost::getName() const {
 }
 
 bool PluginHost::hasEditor() const {
-    if (pluginInstance == nullptr) return false;
-    return pluginInstance->hasEditor();
+    return false;
 }
 
 std::unique_ptr<juce::AudioProcessorEditor> PluginHost::createEditor() {
-    if (pluginInstance == nullptr) {
-        LOG_ERROR("PluginHost: Cannot create editor - no plugin loaded");
-        return nullptr;
-    }
-    
-    auto* editor = pluginInstance->createEditor();
-    if (editor == nullptr) {
-        LOG_ERROR("PluginHost: Plugin returned null editor");
-        return nullptr;
-    }
-    
-    LOG_INFO("PluginHost: Created plugin editor");
-    return std::unique_ptr<juce::AudioProcessorEditor>(editor);
+    // Editor-originated JUCE VST3 restarts bypass our lifecycle guard. Until that
+    // asynchronous path is integrated, never call into a hosted editor, even here.
+    return nullptr;
 }
 
 juce::String PluginHost::getPluginName() const {

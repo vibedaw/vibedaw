@@ -132,19 +132,24 @@ ChannelRackContent::ChannelRackContent(Project& project)
     : project_(project)
 {
     addChannelButton_.setButtonText("+ Add Channel");
+    addChannelButton_.setTooltip("Maximum 128 channels. Structural edits briefly silence audio while callbacks are quiesced.");
     addChannelButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a3a));
     addChannelButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     addChannelButton_.onClick = [this]() {
-        auto* channel = project_.getChannelList().addChannel();
+        if (!project_.getChannelList().addChannel())
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Channel not added",
+                "The channel limit has been reached.");
         rebuildChannelRows();
     };
     addAndMakeVisible(addChannelButton_);
     
     project_.getChannelList().addListener(this);
+    project_.addListener(this);
     rebuildChannelRows();
 }
 
 ChannelRackContent::~ChannelRackContent() {
+    project_.removeListener(this);
     project_.getChannelList().removeListener(this);
 }
 
@@ -196,19 +201,20 @@ void ChannelRackContent::pluginDroppedOnChannel(Channel* channel, const juce::St
     auto pluginHost = std::make_unique<PluginHost>();
     if (pluginHost->loadPlugin(pluginPath)) {
         channel->setPlugin(std::move(pluginHost));
-        rebuildChannelRows();
     } else {
         LOG_ERROR("ChannelRack: Failed to load plugin: " + pluginPath);
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin not loaded",
+            "Loading failed. Only mono/stereo plugins are supported. The existing plugin is unchanged.");
     }
 }
 
 void ChannelRackContent::sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) {
     LOG_INFO("ChannelRack: Sample '" + sampleFile.getFileName() + "' dropped on channel");
     channel->setSampleFile(sampleFile);
-    rebuildChannelRows();
 }
 
 void ChannelRackContent::rebuildChannelRows() {
+    selectedChannelIndex_ = project_.getActiveChannel();
     for (auto& row : channelRows_) {
         removeChildComponent(row.get());
     }
@@ -216,6 +222,7 @@ void ChannelRackContent::rebuildChannelRows() {
     
     auto& channelList = project_.getChannelList();
     int numChannels = channelList.getNumChannels();
+    addChannelButton_.setEnabled(numChannels < ChannelList::maxChannels);
     
     for (int i = 0; i < numChannels; ++i) {
         auto* channel = channelList.getChannel(i);

@@ -6,6 +6,7 @@ namespace vibedaw {
 
 class Note {
 public:
+    // Start/duration are clip-local quarter-note beats, independent of tempo.
     Note();
     Note(int pitch, double startTime, double duration, int velocity = 100);
     ~Note() = default;

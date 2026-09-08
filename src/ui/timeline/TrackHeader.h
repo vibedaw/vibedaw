@@ -14,6 +14,7 @@ public:
     
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent& event) override;
     
     void setTrackName(const juce::String& name);
     void setTrackColour(const juce::Colour& colour);

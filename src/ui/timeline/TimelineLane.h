@@ -2,11 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "project/Clip.h"
+#include <functional>
 
 namespace vibedaw {
 
 class Track;
 class ClipPool;
+class ChannelList;
 
 class TimelineLane : public juce::Component {
 public:
@@ -15,8 +17,11 @@ public:
     
     void paint(juce::Graphics& g) override;
     
-    void setPixelsPerSecond(double pps);
-    double getPixelsPerSecond() const { return pixelsPerSecond; }
+    void setPixelsPerBeat(double value);
+    double getPixelsPerBeat() const { return pixelsPerBeat; }
+    void mouseDown(const juce::MouseEvent& e) override;
+    std::function<void(int, int)> onPlacementSelected;
+    void setChannelList(ChannelList* list) { channels = list; }
     
     void setScrollOffset(double offset);
     double getScrollOffset() const { return scrollOffset; }
@@ -30,12 +35,12 @@ public:
     
 private:
     void drawClips(juce::Graphics& g);
-    void drawClip(juce::Graphics& g, const Clip* clip, int x, int width);
     
     Track* track = nullptr;
     ClipPool* clipPool = nullptr;
+    ChannelList* channels = nullptr;
     int trackIndex = 0;
-    double pixelsPerSecond = 50.0;
+    double pixelsPerBeat = 50.0;
     double scrollOffset = 0.0;
     bool selected = false;
     

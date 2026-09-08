@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "AudioBoundary.h"
 
 namespace vibedaw {
 
@@ -26,6 +27,7 @@ struct TimeSignature {
 };
 
 struct LoopRegion {
+    // Half-open [startBeats, endBeats), in quarter-note beats regardless of meter.
     bool enabled = false;
     double startBeats = 0.0;
     double endBeats = 4.0;
@@ -33,6 +35,28 @@ struct LoopRegion {
 
 class TransportState {
 public:
+    struct RenderControl {
+        bool playing = false, recording = false, metronome = false;
+        double positionBeats = 0, tempo = 120;
+        TimeSignature meter;
+        LoopRegion loop;
+        unsigned stopGeneration = 0, seekGeneration = 0;
+    };
+    // Only audio calls acquireControl. UI APIs/listeners below remain message-only.
+    const RenderControl& acquireControl() noexcept { return control.acquire(); }
+    bool consumePanic() noexcept { return panicRequested.exchange(false); }
+    struct RenderPosition {
+        double beats = 0, tempo = 120, sampleRate = 0;
+        TimeSignature meter;
+        bool playing = false;
+        unsigned revision = 0, seekGeneration = 0;
+    };
+    // Audio publishes; only the message thread polls/notifies listeners.
+    void publishRenderPosition(RenderPosition value) noexcept { positionFeedback.publish(value); }
+    const RenderPosition& acquireRenderPosition() noexcept { return positionFeedback.acquire(); }
+    void pollRenderPosition();
+    static constexpr double maxPositionBeats = 1.0e9;
+    static juce::String formatBarsBeatsTicks(double beats, TimeSignature meter);
     TransportState();
     ~TransportState();
     
@@ -50,7 +74,7 @@ public:
     
     void setPosition(double positionInSeconds);
     void setPositionInBeats(double beats);
-    double getPosition() const { return positionInSeconds_; }
+    double getPosition() const { return positionInBeats_ * 60.0 / tempo_; }
     double getPositionInBeats() const;
     
     void setTempo(double tempo);
@@ -69,30 +93,49 @@ public:
     
     void tapTempo();
     
-    void processBlock(int numSamples, double sampleRate);
     void reset();
     
 private:
+    void publishControl();
+    LatestState<RenderControl> control;
+    LatestState<RenderPosition> positionFeedback;
+    std::atomic<bool> panicRequested{false};
+    unsigned stopGeneration = 0, seekGeneration = 0;
     juce::ListenerList<TransportListener> listeners_;
     
     bool playing_ = false;
     bool recording_ = false;
-    double positionInSeconds_ = 0.0;
+    double positionInBeats_ = 0.0;
+    double seekPositionBeats_ = 0.0;
     double tempo_ = 120.0;
     TimeSignature timeSignature_;
     LoopRegion loop_;
     bool metronomeEnabled_ = false;
     
-    double samplesSinceLastBeat_ = 0.0;
-    double samplesPerBeat_ = 0.0;
     
     juce::int64 lastTapTime_ = 0;
     juce::Array<double> tapTempoHistory_;
     
-    void updateSamplesPerBeat(double sampleRate);
-    void checkLoop();
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TransportState)
+};
+
+// Owned by the engine's mixer, accessed only by the admitted render thread.
+// beginBlock -> cleanup/schedule/process using this immutable value -> endBlock.
+class TransportClock {
+public:
+    struct Block {
+        double startBeats = 0, endBeats = 0, sampleRate = 0, tempo = 120;
+        TimeSignature meter;
+        int numSamples = 0;
+        bool playing = false, discontinuity = false;
+        unsigned revision = 0, seekGeneration = 0;
+    };
+    Block beginBlock(TransportState& transport, int samples, double rate, bool interrupted = false) noexcept;
+    void endBlock(TransportState& transport, const Block& block) noexcept;
+private:
+    double beats = 0, correction = 0, lastRate = 0;
+    unsigned lastSeek = 0, lastStop = 0, revision = 0;
 };
 
 } // namespace vibedaw

@@ -13,11 +13,12 @@ namespace vibedaw {
 
 MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& manager, Project& proj)
     : midiManager_(manager),
-      project_(proj)
+      project_(proj), transportState_(proj.getTransportState())
 {
     setOpaque(true);
     
     project_.addListener(this);
+    project_.getClipPool().addListener(this);
     
     transport_ = std::make_unique<TransportComponent>(transportState_);
     addAndMakeVisible(*transport_);
@@ -56,13 +57,15 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     timelinePanel_ = new TimelinePanel(project_);
     panelContainer_->addPanel(timelinePanel_);
     
-    mixerPanel_ = new MixerPanel();
+    mixerPanel_ = new MixerPanel(project_);
     panelContainer_->addPanel(mixerPanel_);
     
     pianoPanel_ = new PianoPanel(keyboardState, &midiManager_);
     panelContainer_->addPanel(pianoPanel_);
     
-    pluginButton_.setButtonText("Plugin");
+    pluginButton_.setButtonText("No Editor");
+    pluginButton_.setEnabled(false);
+    pluginButton_.setTooltip("Plugin editors are temporarily disabled: VST3 editor restarts bypass the safe audio boundary.");
     pluginButton_.onClick = [this]() {
         openPluginWindow();
     };
@@ -99,28 +102,20 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     setWantsKeyboardFocus(true);
     
     startTimerHz(30);
-    lastUpdateTime_ = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     
     LOG_INFO("MainContent: Created with transport bar and sidebars");
 }
 
 MainContent::~MainContent() {
     stopTimer();
+    while (!openClipEditors_.empty()) openClipEditors_.back()->closeButtonPressed();
+    project_.getClipPool().removeListener(this);
     project_.removeListener(this);
     LOG_INFO("MainContent: Destroyed");
 }
 
 void MainContent::timerCallback() {
-    if (transportState_.isPlaying()) {
-        double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
-        double elapsed = now - lastUpdateTime_;
-        lastUpdateTime_ = now;
-        
-        double newPos = transportState_.getPosition() + elapsed;
-        transportState_.setPosition(newPos);
-    } else {
-        lastUpdateTime_ = juce::Time::getMillisecondCounterHiRes() / 1000.0;
-    }
+    transportState_.pollRenderPosition();
 }
 
 void MainContent::paint(juce::Graphics& g) {
@@ -270,24 +265,8 @@ void MainContent::handlePanelFocusHotkey(int panelIndex, double currentTime) {
 }
 
 void MainContent::openPluginWindow() {
-    int activeIndex = project_.getActiveChannel();
-    if (activeIndex < 0) {
-        LOG_WARN("MainContent: No active channel selected");
-        return;
-    }
-    
-    auto& channels = project_.getChannelList();
-    auto* channel = channels.getChannel(activeIndex);
-    if (channel && channel->hasPlugin()) {
-        auto* pluginHost = channel->getPlugin();
-        if (pluginHost->hasEditor()) {
-            new PluginWindow(pluginHost, pluginHost->getPluginName());
-        } else {
-            LOG_WARN("MainContent: Plugin has no editor");
-        }
-    } else {
-        LOG_WARN("MainContent: No plugin on active channel");
-    }
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin editors disabled",
+        "Editor-triggered VST3 lifecycle changes cannot yet be safely applied during audio processing.");
 }
 
 void MainContent::updateStatusLabel() {
@@ -308,6 +287,7 @@ void MainContent::updateStatusLabel() {
     }
     
     status += " | MIDI: " + (midiManager_.isConnected() ? midiManager_.getCurrentDeviceName() : "Not connected");
+    status += " | Graph edits briefly silence audio; plugin editors disabled";
     
     statusLabel_.setText(status, juce::dontSendNotification);
 }
@@ -317,6 +297,9 @@ void MainContent::pluginSelectedForLoad(const juce::String& pluginPath) {
     
     if (project_.loadPlugin(pluginPath)) {
         updateStatusLabel();
+    } else {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin not loaded",
+            "Loading failed. The audio boundary supports at most 128 channels and mono/stereo plugins.");
     }
 }
 
@@ -334,10 +317,12 @@ void MainContent::activeChannelChanged(int newActiveIndex) {
 }
 
 void MainContent::clipCreated(ClipId clipId, Clip* clip) {
+    clipSelected(clipId, clip);
     clipOpened(clipId, clip);
 }
 
 void MainContent::clipOpened(ClipId clipId, Clip* clip) {
+    clipSelected(clipId, clip);
     if (clip && clip->getType() == Clip::Type::Midi) {
         auto* midiClip = dynamic_cast<MidiClip*>(clip);
         if (midiClip) {
@@ -346,6 +331,16 @@ void MainContent::clipOpened(ClipId clipId, Clip* clip) {
             openClipEditors_.push_back(window);
         }
     }
+}
+
+void MainContent::clipSelected(ClipId clipId, Clip*) {
+    if (timelinePanel_) timelinePanel_->setSelectedClip(clipId);
+}
+
+void MainContent::clipWillBeRemoved(ClipId id) {
+    // Close while the source is still alive so grids can detach their listeners.
+    for (int i = static_cast<int>(openClipEditors_.size()) - 1; i >= 0; --i)
+        if (openClipEditors_[i]->getClipId() == id) openClipEditors_[i]->closeButtonPressed();
 }
 
 void MainContent::clipEditorClosed(ClipEditorWindow* window) {

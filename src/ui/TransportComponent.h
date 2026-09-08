@@ -11,7 +11,7 @@ public:
     ~TimeDisplay() override = default;
     
     void paint(juce::Graphics& g) override;
-    void setPosition(double positionInSeconds, double tempo);
+    void setPosition(double positionInBeats, double tempo);
     void setTimeSignature(int numerator, int denominator);
     void setDisplayMode(int mode);
     

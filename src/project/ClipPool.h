@@ -8,7 +8,7 @@
 
 namespace vibedaw {
 
-class ClipPool {
+class ClipPool : private Clip::Listener {
 public:
     class Listener {
     public:
@@ -16,6 +16,7 @@ public:
         virtual void clipAdded(ClipId clipId, Clip* clip) = 0;
         virtual void clipRemoved(ClipId clipId) = 0;
         virtual void clipChanged(ClipId clipId, Clip* clip) = 0;
+        virtual void clipWillBeRemoved(ClipId) {}
     };
     
     ClipPool();
@@ -34,6 +35,7 @@ public:
     void removeListener(Listener* listener);
     
 private:
+    void clipChanged() override;
     std::vector<std::pair<ClipId, std::unique_ptr<Clip>>> clips_;
     ClipId nextId_ = 0;
     juce::ListenerList<Listener> listeners_;

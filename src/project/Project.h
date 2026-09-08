@@ -10,12 +10,13 @@
 #include "ClipPool.h"
 #include "core/AudioEngine.h"
 #include "core/MidiManager.h"
+#include "core/TransportState.h"
 
 namespace vibedaw {
 
 class ChannelMixer;
 
-class Project {
+class Project : private ChannelList::Listener {
 public:
     class Listener {
     public:
@@ -30,7 +31,8 @@ public:
     void shutdown();
     
     void setActiveChannel(int index);
-    int getActiveChannel() const { return activeChannelIndex_; }
+    int getActiveChannel() const { return channelList.indexOfChannel(channelList.getChannelById(activeChannelId_)); }
+    ChannelId getActiveChannelId() const { return activeChannelId_; }
     
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
@@ -40,6 +42,7 @@ public:
     
     ChannelList& getChannelList() { return channelList; }
     const ChannelList& getChannelList() const { return channelList; }
+    MasterBus& getMasterBus() { return channelList.getMasterBus(); }
     
     ClipPool& getClipPool() { return clipPool; }
     const ClipPool& getClipPool() const { return clipPool; }
@@ -51,14 +54,22 @@ public:
     void saveSettings();
     
     bool loadPlugin(const juce::String& pluginPath);
+    TransportState& getTransportState() { return transport; }
     
 private:
+    TransportState transport;
     TrackList trackList;
     ChannelList channelList;
     ClipPool clipPool;
     Settings settings;
     
-    int activeChannelIndex_ = -1;
+    ChannelId activeChannelId_ = InvalidChannelId;
+    void channelAdded(Channel*) override { channelListChanged(); }
+    void channelRemoved(int) override { channelListChanged(); }
+    void channelChanged(Channel* channel) override {
+        if (channel->getId() == activeChannelId_) notifyActiveChannelChanged(getActiveChannel());
+    }
+    void channelListChanged() override;
     juce::ListenerList<Listener> listeners_;
     
     void notifyActiveChannelChanged(int newIndex);

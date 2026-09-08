@@ -1,10 +1,11 @@
 #include "TransportState.h"
 #include "utils/Logger.h"
+#include <cmath>
+#include <juce_events/juce_events.h>
 
 namespace vibedaw {
 
 TransportState::TransportState() {
-    updateSamplesPerBeat(44100.0);
     LOG_INFO("TransportState: Created");
 }
 
@@ -21,16 +22,21 @@ void TransportState::removeListener(TransportListener* listener) {
 }
 
 void TransportState::setPlaying(bool playing) {
+    if (!playing) { ++stopGeneration; panicRequested.store(true); }
     if (playing_ != playing) {
         playing_ = playing;
+        publishControl();
         listeners_.call([&](TransportListener& l) { l.transportPlayingChanged(playing_); });
         LOG_INFO("TransportState: Playing = " + juce::String(playing_ ? "true" : "false"));
     }
+    publishControl();
 }
 
 void TransportState::setRecording(bool recording) {
+    recording = false; // Recording is unavailable until the recording task.
     if (recording_ != recording) {
         recording_ = recording;
+        publishControl();
         listeners_.call([&](TransportListener& l) { l.transportRecordingChanged(recording_); });
         LOG_INFO("TransportState: Recording = " + juce::String(recording_ ? "true" : "false"));
     }
@@ -50,28 +56,30 @@ void TransportState::stop() {
 }
 
 void TransportState::setPosition(double positionInSeconds) {
-    if (positionInSeconds_ != positionInSeconds) {
-        positionInSeconds_ = positionInSeconds;
-        listeners_.call([&](TransportListener& l) { l.transportPositionChanged(positionInSeconds_); });
-    }
+    if (!std::isfinite(positionInSeconds) || positionInSeconds < 0.0) return;
+    setPositionInBeats(positionInSeconds * (tempo_ / 60.0));
 }
 
 void TransportState::setPositionInBeats(double beats) {
-    double secondsPerBeat = 60.0 / tempo_;
-    setPosition(beats * secondsPerBeat);
+    if (!std::isfinite(beats) || beats < 0.0 || beats > maxPositionBeats) return;
+    positionInBeats_ = seekPositionBeats_ = beats;
+    ++seekGeneration; // Even seeking to the displayed position is a discontinuity.
+    publishControl();
+    listeners_.call([&](TransportListener& l) { l.transportPositionChanged(getPosition()); });
 }
 
 double TransportState::getPositionInBeats() const {
-    double secondsPerBeat = 60.0 / tempo_;
-    return positionInSeconds_ / secondsPerBeat;
+    return positionInBeats_;
 }
 
 void TransportState::setTempo(double tempo) {
+    if (!std::isfinite(tempo)) return;
     if (tempo < 20.0) tempo = 20.0;
     if (tempo > 300.0) tempo = 300.0;
     
     if (!juce::approximatelyEqual(tempo_, tempo)) {
         tempo_ = tempo;
+        publishControl();
         listeners_.call([&](TransportListener& l) { l.transportTempoChanged(tempo_); });
         LOG_INFO("TransportState: Tempo = " + juce::String(tempo_, 1) + " BPM");
     }
@@ -86,6 +94,7 @@ void TransportState::setTimeSignature(int numerator, int denominator) {
     
     if (timeSignature_.numerator != numerator || timeSignature_.denominator != denominator) {
         timeSignature_ = TimeSignature(numerator, denominator);
+        publishControl();
         listeners_.call([&](TransportListener& l) { 
             l.transportTimeSignatureChanged(timeSignature_.numerator, timeSignature_.denominator); 
         });
@@ -95,6 +104,7 @@ void TransportState::setTimeSignature(int numerator, int denominator) {
 void TransportState::setLoopEnabled(bool enabled) {
     if (loop_.enabled != enabled) {
         loop_.enabled = enabled;
+        publishControl();
         listeners_.call([&](TransportListener& l) { 
             l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats); 
         });
@@ -102,8 +112,10 @@ void TransportState::setLoopEnabled(bool enabled) {
 }
 
 void TransportState::setLoopRegion(double startBeats, double endBeats) {
+    if (!std::isfinite(startBeats) || !std::isfinite(endBeats) || startBeats < 0.0 || endBeats <= startBeats) return;
     loop_.startBeats = startBeats;
     loop_.endBeats = endBeats;
+    publishControl();
     listeners_.call([&](TransportListener& l) { 
         l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats); 
     });
@@ -112,6 +124,7 @@ void TransportState::setLoopRegion(double startBeats, double endBeats) {
 void TransportState::setMetronomeEnabled(bool enabled) {
     if (metronomeEnabled_ != enabled) {
         metronomeEnabled_ = enabled;
+        publishControl();
         listeners_.call([&](TransportListener& l) { l.transportMetronomeChanged(metronomeEnabled_); });
     }
 }
@@ -144,39 +157,58 @@ void TransportState::tapTempo() {
     lastTapTime_ = now;
 }
 
-void TransportState::processBlock(int numSamples, double sampleRate) {
-    if (!playing_) return;
-    
-    updateSamplesPerBeat(sampleRate);
-    
-    samplesSinceLastBeat_ += numSamples;
-    
-    if (samplesSinceLastBeat_ >= samplesPerBeat_) {
-        samplesSinceLastBeat_ -= samplesPerBeat_;
-    }
-    
-    positionInSeconds_ += static_cast<double>(numSamples) / sampleRate;
-    
-    checkLoop();
-}
-
 void TransportState::reset() {
-    positionInSeconds_ = 0.0;
-    samplesSinceLastBeat_ = 0.0;
-    listeners_.call([&](TransportListener& l) { l.transportPositionChanged(0.0); });
+    setPositionInBeats(0.0);
 }
 
-void TransportState::updateSamplesPerBeat(double sampleRate) {
-    samplesPerBeat_ = (60.0 / tempo_) * sampleRate;
+void TransportState::publishControl() {
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    control.publish({playing_, recording_, metronomeEnabled_, seekPositionBeats_, tempo_,
+                     timeSignature_, loop_, stopGeneration, seekGeneration});
 }
 
-void TransportState::checkLoop() {
-    if (!loop_.enabled) return;
-    
-    double currentBeat = getPositionInBeats();
-    if (currentBeat >= loop_.endBeats) {
-        setPositionInBeats(loop_.startBeats);
+void TransportState::pollRenderPosition() {
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    const auto& value = acquireRenderPosition();
+    if (value.seekGeneration != seekGeneration || value.beats == positionInBeats_) return;
+    positionInBeats_ = value.beats;
+    listeners_.call([&](TransportListener& l) { l.transportPositionChanged(getPosition()); });
+}
+
+juce::String TransportState::formatBarsBeatsTicks(double beats, TimeSignature meter) {
+    const double units = beats * meter.denominator / 4.0;
+    const auto whole = static_cast<juce::int64>(std::floor(units));
+    return juce::String(whole / meter.numerator + 1) + ":" +
+        juce::String(whole % meter.numerator + 1) + ":" +
+        juce::String(static_cast<int>((units - whole) * 960.0)).paddedLeft('0', 3);
+}
+
+TransportClock::Block TransportClock::beginBlock(TransportState& transport, int samples, double rate, bool interrupted) noexcept {
+    const auto& control = transport.acquireControl();
+    const bool panic = transport.consumePanic();
+    const bool seek = control.seekGeneration != lastSeek;
+    const bool changed = interrupted || panic || seek || control.stopGeneration != lastStop || rate != lastRate;
+    if (seek) { beats = control.positionBeats; correction = 0; }
+    lastSeek = control.seekGeneration;
+    lastStop = control.stopGeneration;
+    lastRate = rate;
+    if (changed) ++revision;
+    Block block{beats, beats, rate, control.tempo, control.meter, samples,
+                control.playing, changed, revision, lastSeek};
+    if (control.playing && samples > 0 && std::isfinite(rate) && rate > 0) {
+        // Compensated summation retains fractional beats across arbitrary block sizes.
+        const double delta = samples * (control.tempo / 60.0) / rate - correction;
+        block.endBeats = juce::jmin(TransportState::maxPositionBeats, beats + delta);
+        correction = (block.endBeats - beats) - delta;
+        if (block.endBeats == TransportState::maxPositionBeats) correction = 0;
     }
+    return block;
+}
+
+void TransportClock::endBlock(TransportState& transport, const Block& block) noexcept {
+    beats = block.endBeats;
+    transport.publishRenderPosition({beats, block.tempo, block.sampleRate, block.meter,
+                                     block.playing, block.revision, block.seekGeneration});
 }
 
 } // namespace vibedaw

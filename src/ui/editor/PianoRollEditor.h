@@ -66,7 +66,8 @@ private:
     std::unique_ptr<TimeRulerComponent> timeRuler_;
     std::unique_ptr<PianoRollKeyboard> keyboard_;
     std::unique_ptr<NoteGridComponent> noteGrid_;
-    std::unique_ptr<juce::Viewport> viewport_;
+    class GridViewport;
+    std::unique_ptr<GridViewport> viewport_;
     
     double zoomLevel_ = 1.0;
     int pixelsPerBeat_ = 80;

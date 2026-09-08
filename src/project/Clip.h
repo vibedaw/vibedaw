@@ -11,6 +11,15 @@ namespace vibedaw {
 
 class Clip {
 public:
+    // MIDI times are quarter-note beats; AudioClip times remain seconds.
+    class Listener {
+    public:
+        virtual ~Listener() = default;
+        virtual void clipChanged() = 0;
+        virtual void notesInvalidated() {}
+    };
+    void addListener(Listener* listener) { listeners_.add(listener); }
+    void removeListener(Listener* listener) { listeners_.remove(listener); }
     enum class Type {
         Audio,
         Midi,
@@ -48,6 +57,9 @@ public:
     virtual std::unique_ptr<Clip> clone() const = 0;
     
 protected:
+    void notifyChanged() { listeners_.call([](Listener& l) { l.clipChanged(); }); }
+    void invalidateNotes() { listeners_.call([](Listener& l) { l.notesInvalidated(); }); }
+    juce::ListenerList<Listener> listeners_;
     Type clipType;
     double startTime = 0.0;
     double duration = 1.0;
@@ -83,21 +95,25 @@ private:
 
 class MidiClip : public Clip {
 public:
+    // Notes use local beat zero, not Clip::startTime. Only ClipInstance positions
+    // a pooled source in the arrangement; this source's duration is its length.
     MidiClip(double startTime = 0.0, double duration = 1.0);
     ~MidiClip() override = default;
     
-    void setLoopEnabled(bool loop) { loopEnabled = loop; }
+    // Reserved for future clip-local repetition, not transport looping. M1 plays once.
+    void setLoopEnabled(bool loop) { loopEnabled = loop; notifyChanged(); }
     bool isLoopEnabled() const { return loopEnabled; }
     
     const std::vector<Note>& getNotes() const { return notes_; }
-    std::vector<Note>& getNotes() { return notes_; }
+    // Insertion order, not time-sorted. Borrowed pointers expire at notesInvalidated.
     
-    void addNote(const Note& note);
+    const Note* addNote(const Note& note);
+    void updateNote(const Note* note, const Note& replacement);
     void removeNote(int index);
     void removeNote(const Note* note);
     void clearNotes();
     int getNumNotes() const { return static_cast<int>(notes_.size()); }
-    Note* findNoteAt(double time, int pitch);
+    const Note* findNoteAt(double time, int pitch) const;
     
     std::unique_ptr<Clip> clone() const override;
     

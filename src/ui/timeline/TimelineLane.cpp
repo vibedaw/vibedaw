@@ -1,160 +1,94 @@
 #include "TimelineLane.h"
 #include "project/Track.h"
 #include "project/ClipPool.h"
-#include "project/Clip.h"
+#include "project/ChannelList.h"
+#include <cmath>
 
 namespace vibedaw {
 
-TimelineLane::TimelineLane(Track* track, int index)
-    : track(track)
-    , trackIndex(index)
-{
+TimelineLane::TimelineLane(Track* owner, int index)
+    : track(owner), trackIndex(index) {
     setOpaque(true);
 }
 
 void TimelineLane::paint(juce::Graphics& g) {
-    auto bounds = getLocalBounds();
-    
-    if (selected) {
-        g.fillAll(juce::Colour(0xff2a2a3a));
-    } else {
-        g.fillAll(juce::Colour(0xff1e1e1e));
+    g.fillAll(juce::Colour(selected ? 0xff2a2a3a : 0xff1e1e1e));
+    double firstBeat = std::ceil(scrollOffset / pixelsPerBeat);
+    double endBeat = (scrollOffset + getWidth()) / pixelsPerBeat;
+    for (double beat = firstBeat; beat <= endBeat; ++beat) {
+        g.setColour(juce::Colour(std::fmod(beat, 4.0) == 0.0 ? 0xff484848 : 0xff333333));
+        g.drawVerticalLine(static_cast<int>(beat * pixelsPerBeat - scrollOffset), 0.0f, static_cast<float>(getHeight()));
     }
-    
-    g.setColour(juce::Colour(0xff333333));
-    
-    double minorInterval = 1.0;
-    if (pixelsPerSecond < 10.0) {
-        minorInterval = 10.0;
-    } else if (pixelsPerSecond < 30.0) {
-        minorInterval = 5.0;
-    } else if (pixelsPerSecond < 100.0) {
-        minorInterval = 1.0;
-    } else {
-        minorInterval = 0.5;
-    }
-    
-    double startTime = scrollOffset / pixelsPerSecond;
-    double endTime = startTime + (bounds.getWidth() / pixelsPerSecond);
-    double firstTick = std::floor(startTime / minorInterval) * minorInterval + minorInterval;
-    
-    for (double t = firstTick; t <= endTime; t += minorInterval) {
-        int x = static_cast<int>((t * pixelsPerSecond) - scrollOffset);
-        if (x >= 0 && x < bounds.getWidth()) {
-            g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
-        }
-    }
-    
     g.setColour(juce::Colour(0xff505050));
-    g.drawHorizontalLine(bounds.getBottom() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
-    
+    g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(getWidth()));
     drawClips(g);
 }
 
-void TimelineLane::setPixelsPerSecond(double pps) {
-    pixelsPerSecond = pps;
+void TimelineLane::setPixelsPerBeat(double value) {
+    if (std::isfinite(value) && value >= 1.0) pixelsPerBeat = value;
     repaint();
 }
 
-void TimelineLane::setScrollOffset(double offset) {
-    scrollOffset = offset;
-    repaint();
-}
+void TimelineLane::setScrollOffset(double offset) { scrollOffset = offset; repaint(); }
+void TimelineLane::setSelected(bool value) { selected = value; repaint(); }
+void TimelineLane::setClipPool(ClipPool* pool) { clipPool = pool; repaint(); }
 
-void TimelineLane::setSelected(bool sel) {
-    selected = sel;
-    repaint();
-}
-
-void TimelineLane::setClipPool(ClipPool* pool) {
-    clipPool = pool;
+void TimelineLane::mouseDown(const juce::MouseEvent& e) {
+    if (!track) return;
+    const double beat = (e.x + scrollOffset) / pixelsPerBeat;
+    int hit = -1;
+    for (int i = track->getNumClipInstances() - 1; i >= 0; --i) {
+        if (track->getClipInstance(i)->containsTime(beat)) { hit = i; break; }
+    }
+    if (onPlacementSelected) onPlacementSelected(trackIndex, hit);
 }
 
 void TimelineLane::drawClips(juce::Graphics& g) {
     if (!track) return;
-    
-    const auto& instances = track->getClipInstances();
-    for (const auto& instance : instances) {
+    for (const auto& instance : track->getClipInstances()) {
         if (!instance || !instance->isValid()) continue;
-        
-        double clipStart = instance->getStartTime();
-        double clipDuration = instance->getDuration();
-        
-        int x = static_cast<int>((clipStart * pixelsPerSecond) - scrollOffset);
-        int width = static_cast<int>(clipDuration * pixelsPerSecond);
-        
-        if (x + width < 0 || x >= getWidth()) continue;
-        
-        if (clipPool) {
-            if (auto* clip = clipPool->getClip(instance->getClipId())) {
-                drawClip(g, clip, x, width);
+        const double left = instance->getStartTime() * pixelsPerBeat - scrollOffset;
+        const double right = instance->getEndTime() * pixelsPerBeat - scrollOffset;
+        if (right < 0.0 || left >= getWidth()) continue;
+        // Clip in floating point before integer conversion, including very distant placements.
+        const int x = static_cast<int>(juce::jmax(0.0, left));
+        const int width = juce::jmax(1, static_cast<int>(juce::jmin(static_cast<double>(getWidth()), right)) - x);
+        juce::Rectangle<int> bounds(x, 2, width, getHeight() - 4);
+        auto* clip = clipPool ? clipPool->getClip(instance->getClipId()) : nullptr;
+        auto* channel = channels ? channels->getChannelById(instance->getChannelId()) : nullptr;
+        const bool unresolved = !clip || clip->getType() != Clip::Type::Midi ||
+                                !channel || channel->getType() != Channel::Type::Instrument;
+        const bool muted = instance->isMuted() || (clip && clip->isMuted()) || (channel && channel->isMuted());
+        auto colour = unresolved ? juce::Colour(0xffad6464) : clip->getColour();
+        if (muted) colour = colour.withMultipliedBrightness(0.45f);
+        g.setColour(colour);
+        g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
+        g.setColour(instance->isSelected() ? juce::Colours::white : colour.darker(0.4f));
+        g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), 4.0f, instance->isSelected() ? 2.0f : 1.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(12.0f);
+        auto text = bounds.reduced(5, 3);
+        auto name = clip ? clip->getName() : "Missing source #" + juce::String(instance->getClipId());
+        if (muted) name += " [Muted]";
+        g.drawText(name, text.removeFromTop(18), juce::Justification::centredLeft, true);
+        const auto destination = channel ? channel->getName() + " (#" + juce::String(channel->getId()) + ")"
+                                         : "Missing destination #" + juce::String(instance->getChannelId());
+        g.drawText(destination, text.removeFromTop(18), juce::Justification::centredLeft, true);
+        if (unresolved) g.drawText("Unresolved: silent", text, juce::Justification::centredLeft, true);
+        else if (auto* midi = dynamic_cast<const MidiClip*>(clip)) {
+            const double sourceEnd = juce::jmin(instance->getDuration(), midi->getDuration());
+            for (const auto& note : midi->getNotes()) {
+                const double end = juce::jmin(note.getEndTime(), sourceEnd);
+                if (note.getStartTime() >= end) continue;
+                const double noteLeft = (instance->getStartTime() + note.getStartTime()) * pixelsPerBeat - scrollOffset;
+                const double noteRight = (instance->getStartTime() + end) * pixelsPerBeat - scrollOffset;
+                if (noteRight <= x || noteLeft >= x + width) continue;
+                const int nx = static_cast<int>(juce::jmax(static_cast<double>(x), noteLeft));
+                const int nr = static_cast<int>(juce::jmin(static_cast<double>(x + width), noteRight));
+                const int ny = text.getBottom() - 2 - note.getPitch() * juce::jmax(0, text.getHeight() - 2) / 128;
+                g.setColour(juce::Colours::white.withAlpha(note.isMuted() ? 0.2f : 0.7f));
+                g.fillRect(nx, ny, juce::jmax(1, nr - nx), 2);
             }
-        }
-    }
-}
-
-void TimelineLane::drawClip(juce::Graphics& g, const Clip* clip, int x, int width) {
-    if (width < 4) width = 4;
-    
-    auto bounds = getLocalBounds();
-    int clipHeight = bounds.getHeight() - 4;
-    int clipY = 2;
-    
-    juce::Rectangle<int> clipBounds(x, clipY, width, clipHeight);
-    
-    auto clipColour = clip->getColour();
-    if (clip->isMuted()) {
-        clipColour = clipColour.withAlpha(0.5f);
-    }
-    
-    if (clip->isSelected()) {
-        g.setColour(clipColour.brighter(0.3f));
-    } else {
-        g.setColour(clipColour);
-    }
-    
-    g.fillRoundedRectangle(clipBounds.toFloat(), 4.0f);
-    
-    g.setColour(clipColour.darker(0.3f));
-    g.drawRoundedRectangle(clipBounds.toFloat(), 4.0f, 1.0f);
-    
-    g.setColour(juce::Colour(0xff000000).withAlpha(0.3f));
-    g.setFont(juce::Font(10.0f));
-    
-    auto textBounds = clipBounds.reduced(4, 2);
-    if (textBounds.getWidth() > 20) {
-        g.drawText(clip->getName(), textBounds, juce::Justification::topLeft);
-    }
-    
-    switch (clip->getType()) {
-        case Clip::Type::Audio: {
-            g.setColour(juce::Colour(0xff000000).withAlpha(0.2f));
-            for (int i = 0; i < std::min(width - 8, 50); i += 3) {
-                float h = static_cast<float>(clipHeight * 0.3f + (std::sin(i * 0.5f) + 1.0f) * clipHeight * 0.2f);
-                int lineY = clipY + static_cast<int>((clipHeight - h) / 2);
-                g.drawVerticalLine(x + 4 + i, static_cast<float>(lineY), static_cast<float>(lineY + h));
-            }
-            break;
-        }
-        case Clip::Type::Midi: {
-            g.setColour(juce::Colour(0xff000000).withAlpha(0.2f));
-            for (int row = 0; row < 4; ++row) {
-                int noteY = clipY + 4 + row * (clipHeight - 8) / 4;
-                for (int i = 0; i < std::min(width - 8, 40); i += 8) {
-                    int noteWidth = 4 + (i % 12);
-                    g.fillRect(x + 4 + i, noteY, noteWidth, 3);
-                }
-            }
-            break;
-        }
-        case Clip::Type::Pattern: {
-            g.setColour(juce::Colour(0xff000000).withAlpha(0.2f));
-            int patternCount = width / 20;
-            for (int i = 0; i < patternCount; ++i) {
-                int patternX = x + 4 + i * 16;
-                g.drawVerticalLine(patternX, static_cast<float>(clipY + 4), static_cast<float>(clipY + clipHeight - 4));
-            }
-            break;
         }
     }
 }

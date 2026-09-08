@@ -2,18 +2,19 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "LevelMeter.h"
+#include "project/ClipInstance.h"
 #include <functional>
-#include <array>
 
 namespace vibedaw {
 
 class MixerStrip : public juce::Component {
 public:
-    MixerStrip(int stripIndex);
+    MixerStrip(ChannelId channelId);
     ~MixerStrip() override;
     
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
     
     void setTrackName(const juce::String& name);
     juce::String getTrackName() const { return trackName; }
@@ -33,34 +34,18 @@ public:
     void setSolo(bool solo);
     bool isSolo() const { return solo; }
     
-    void setLevels(float left, float right);
-    
-    void setSendLevel(int sendIndex, float level);
-    float getSendLevel(int sendIndex) const;
+    void pollMeter(const StereoMeter& source);
     
     void setSelected(bool selected);
     bool isSelected() const { return selected; }
     
-    int getStripIndex() const { return stripIndex; }
+    ChannelId getChannelId() const { return channelId; }
     
     std::function<void(float)> onVolumeChanged;
     std::function<void(float)> onPanChanged;
     std::function<void(bool)> onMuteToggled;
     std::function<void(bool)> onSoloToggled;
-    std::function<void(int, float)> onSendLevelChanged;
     std::function<void()> onStripSelected;
-    std::function<void()> onFxButtonClicked;
-    
-    enum class StripType {
-        Channel,
-        Send,
-        Master
-    };
-    
-    void setStripType(StripType type);
-    StripType getStripType() const { return stripType; }
-    
-    void setShowSends(bool show) { showSends = show; }
     
 private:
     class FaderComponent;
@@ -69,16 +54,14 @@ private:
     
     void updateComponentPositions();
     
-    int stripIndex;
+    const ChannelId channelId;
     juce::String trackName;
     juce::Colour trackColour{0xff888888};
-    float volume = 0.8f;
+    float volume = 1.0f;
     float pan = 0.0f;
     bool muted = false;
     bool solo = false;
     bool selected = false;
-    bool showSends = true;
-    StripType stripType = StripType::Channel;
     
     std::unique_ptr<LevelMeter> meter;
     std::unique_ptr<FaderComponent> fader;
@@ -86,8 +69,6 @@ private:
     std::unique_ptr<SmallButton> muteButton;
     std::unique_ptr<SmallButton> soloButton;
     std::unique_ptr<SmallButton> fxButton;
-    
-    std::array<float, 4> sendLevels{{0.0f, 0.0f, 0.0f, 0.0f}};
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixerStrip)
 };

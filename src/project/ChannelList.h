@@ -3,11 +3,14 @@
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "Channel.h"
+#include "core/MixerState.h"
 #include <vector>
 
 namespace vibedaw {
 
-class ChannelList {
+// Collection mutations/subscriptions are message-thread-only. channelChanged is
+// forwarded from Channel's coalesced message-thread callback, never from audio.
+class ChannelList : private juce::ChangeListener {
 public:
     class Listener {
     public:
@@ -19,6 +22,7 @@ public:
     };
     
     ChannelList();
+    static constexpr int maxChannels = 128;
     ~ChannelList();
     
     Channel* addChannel(const juce::String& name = {}, Channel::Type type = Channel::Type::Instrument);
@@ -27,7 +31,9 @@ public:
     
     int getNumChannels() const { return static_cast<int>(channels.size()); }
     Channel* getChannel(int index) const;
+    Channel* getChannelById(ChannelId id) const;
     const std::vector<std::unique_ptr<Channel>>& getChannels() const { return channels; }
+    MasterBus& getMasterBus() { return masterBus; }
     
     void moveChannel(int fromIndex, int toIndex);
     
@@ -37,6 +43,9 @@ public:
     void removeListener(Listener* listener);
     
 private:
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    ChannelId nextId_ = 0;
+    MasterBus masterBus;
     std::vector<std::unique_ptr<Channel>> channels;
     juce::ListenerList<Listener> listeners;
     

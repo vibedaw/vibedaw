@@ -29,15 +29,18 @@ public:
         midiManager = std::make_unique<vibedaw::MidiManager>();
         project = std::make_unique<vibedaw::Project>();
         keyboardState = std::make_unique<juce::MidiKeyboardState>();
+        midiManager->setAudioDestination(*audioEngine, *keyboardState);
         
         audioEngine->initialise();
         
-        keyboardState->addListener(&audioEngine->getMidiMessageCollector());
+        keyboardState->addListener(audioEngine.get());
         
         project->addListener(this);
         project->initialise(*audioEngine, *midiManager);
         
-        channelMixer = std::make_unique<vibedaw::ChannelMixer>(project->getChannelList());
+        channelMixer = std::make_unique<vibedaw::ChannelMixer>(project->getChannelList(),
+            project->getTrackList(), project->getClipPool(), project->getTransportState());
+        channelMixer->setActiveChannel(project->getActiveChannel());
         audioEngine->setProcessor(channelMixer.get());
         
         mainWindow = std::make_unique<vibedaw::MainWindow>(
@@ -50,6 +53,8 @@ public:
         LOG_INFO("VibeDAW: Shutting down application");
         
         mainWindow.reset();
+        midiManager->disconnect();
+        keyboardState->removeListener(audioEngine.get());
         audioEngine->clearProcessor();
         channelMixer.reset();
         project->shutdown();

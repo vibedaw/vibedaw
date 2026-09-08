@@ -52,6 +52,7 @@ public:
     public:
         virtual ~Listener() = default;
         virtual void clipCreated(ClipId clipId, Clip* clip) = 0;
+        virtual void clipSelected(ClipId clipId, Clip* clip) = 0;
         virtual void clipOpened(ClipId clipId, Clip* clip) = 0;
     };
     
@@ -78,8 +79,9 @@ private:
     
     std::vector<std::unique_ptr<ClipRow>> clipRows_;
     juce::TextButton addClipButton_;
+    juce::TextButton deleteClipButton_{"Delete Source"};
     
-    int selectedClipIndex_ = -1;
+    ClipId selectedClipId_ = InvalidClipId;
     
     void rebuildClipRows();
     void selectClip(int index);

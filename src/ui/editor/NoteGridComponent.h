@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include "project/Note.h"
+#include "project/Clip.h"
 #include <vector>
 #include <functional>
 
@@ -23,6 +23,7 @@ enum class GridResolution {
 };
 
 class NoteGridComponent : public juce::Component,
+                          private Clip::Listener,
                           public juce::ScrollBar::Listener {
 public:
     class Listener {
@@ -60,9 +61,9 @@ public:
     void setScrollOffset(int offsetY);
     int getScrollOffset() const { return scrollOffsetY_; }
     
-    void selectNote(Note* note);
+    void selectNote(const Note* note);
     void clearSelection();
-    std::vector<Note*> getSelectedNotes();
+    std::vector<const Note*> getSelectedNotes();
     
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -77,6 +78,8 @@ public:
     static constexpr int defaultKeyHeight = 12;
     
 private:
+    void clipChanged() override { repaint(); }
+    void notesInvalidated() override;
     MidiClip* midiClip_ = nullptr;
     Listener* listener_ = nullptr;
     
@@ -91,7 +94,7 @@ private:
     struct DragState {
         enum class Mode { None, Create, Move, ResizeStart, ResizeEnd };
         Mode mode = Mode::None;
-        Note* note = nullptr;
+        const Note* note = nullptr;
         int startX = 0;
         int startY = 0;
         double originalStart = 0.0;
@@ -100,8 +103,8 @@ private:
         bool isExisting = false;
     } dragState_;
     
-    std::vector<Note*> selectedNotes_;
-    Note* hoveredNote_ = nullptr;
+    std::vector<const Note*> selectedNotes_;
+    const Note* hoveredNote_ = nullptr;
     
     double snapToGrid(double time) const;
     int pitchFromY(int y) const;
@@ -109,7 +112,7 @@ private:
     double timeFromX(int x) const;
     int xFromTime(double time) const;
     
-    Note* findNoteAt(int x, int y);
+    const Note* findNoteAt(int x, int y);
     void drawNote(juce::Graphics& g, const Note& note, bool isSelected, bool isHovered);
     void drawGridLines(juce::Graphics& g);
     

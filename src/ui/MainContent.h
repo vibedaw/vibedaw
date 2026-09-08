@@ -23,6 +23,7 @@ class MainContent : public juce::Component,
                      public BrowserSidebar::Listener,
                      public Project::Listener,
                      public ClipsContent::Listener,
+                     private ClipPool::Listener,
                      public ClipEditorWindow::Listener,
                      public juce::DragAndDropContainer {
 public:
@@ -49,10 +50,15 @@ public:
     void activeChannelChanged(int newActiveIndex) override;
     
     void clipCreated(ClipId clipId, Clip* clip) override;
+    void clipSelected(ClipId clipId, Clip* clip) override;
     void clipOpened(ClipId clipId, Clip* clip) override;
     void clipEditorClosed(ClipEditorWindow* window) override;
     
 private:
+    void clipAdded(ClipId, Clip*) override {}
+    void clipRemoved(ClipId) override {}
+    void clipChanged(ClipId, Clip*) override {}
+    void clipWillBeRemoved(ClipId id) override;
     void timerCallback() override;
     void updateStatusLabel();
     void handlePanelFocusHotkey(int panelIndex, double currentTime);
@@ -62,7 +68,7 @@ private:
     
     MidiManager& midiManager_;
     Project& project_;
-    TransportState transportState_;
+    TransportState& transportState_;
     PluginScanner pluginScanner_;
     
     std::unique_ptr<TransportComponent> transport_;
@@ -83,7 +89,6 @@ private:
     int lastFocusedPanelIndex_ = -1;
     static constexpr double doubleTapIntervalMs_ = 400.0;
     
-    double lastUpdateTime_ = 0.0;
     
     static constexpr int transportBarHeight = 48;
     static constexpr int statusBarHeight = 28;

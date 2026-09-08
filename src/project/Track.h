@@ -10,7 +10,7 @@
 
 namespace vibedaw {
 
-class Track : public ProcessorBase {
+class Track : public ProcessorBase, public juce::ChangeBroadcaster {
 public:
     Track(const juce::String& name = "Track");
     ~Track() override;

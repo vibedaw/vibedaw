@@ -87,19 +87,23 @@ void Track::releaseResources() {
 }
 
 void Track::addClipInstance(std::unique_ptr<ClipInstance> instance) {
-    if (instance) {
+    if (instance && instance->isValid()) {
+        instance->onChange_ = [this] { sendChangeMessage(); };
         clipInstances.push_back(std::move(instance));
+        sendChangeMessage();
     }
 }
 
 void Track::removeClipInstance(int index) {
     if (index >= 0 && index < static_cast<int>(clipInstances.size())) {
         clipInstances.erase(clipInstances.begin() + index);
+        sendChangeMessage();
     }
 }
 
 void Track::clearClipInstances() {
     clipInstances.clear();
+    sendChangeMessage();
 }
 
 ClipInstance* Track::getClipInstance(int index) const {

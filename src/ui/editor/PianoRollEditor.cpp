@@ -4,13 +4,24 @@
 
 namespace vibedaw {
 
+class PianoRollEditor::GridViewport : public juce::Viewport {
+public:
+    std::function<void()> onViewChanged;
+    void visibleAreaChanged(const juce::Rectangle<int>&) override {
+        if (onViewChanged) onViewChanged();
+    }
+};
+
 PianoRollEditor::PianoRollEditor(MidiManager* midiManager)
     : midiManager_(midiManager)
 {
     timeRuler_ = std::make_unique<TimeRulerComponent>();
     keyboard_ = std::make_unique<PianoRollKeyboard>();
     noteGrid_ = std::make_unique<NoteGridComponent>();
-    viewport_ = std::make_unique<juce::Viewport>();
+    viewport_ = std::make_unique<GridViewport>();
+    viewport_->onViewChanged = [this] { syncScrollBetweenKeyboardAndGrid(); };
+    keyboard_->setLowestNote(0);
+    noteGrid_->setLowestNote(0);
     
     keyboard_->setListener(this);
     noteGrid_->setListener(this);
@@ -23,7 +34,10 @@ PianoRollEditor::PianoRollEditor(MidiManager* midiManager)
     addAndMakeVisible(viewport_.get());
 }
 
-PianoRollEditor::~PianoRollEditor() = default;
+PianoRollEditor::~PianoRollEditor() {
+    viewport_->onViewChanged = nullptr;
+    viewport_->setViewedComponent(nullptr, false);
+}
 
 void PianoRollEditor::setMidiClip(MidiClip* clip, ClipId clipId) {
     midiClip_ = clip;
@@ -50,21 +64,19 @@ void PianoRollEditor::setZoomLevel(double zoom) {
 }
 
 void PianoRollEditor::setVerticalScroll(int offset) {
-    keyboard_->setLowestNote(offset / 12);
-    noteGrid_->setScrollOffset(offset);
+    viewport_->setViewPosition(viewport_->getViewPositionX(), offset);
 }
 
 int PianoRollEditor::getVerticalScroll() const {
-    return noteGrid_->getScrollOffset();
+    return viewport_->getViewPositionY();
 }
 
 void PianoRollEditor::setHorizontalScroll(double beats) {
-    noteGrid_->setTimeOffset(beats);
-    timeRuler_->setTimeOffset(beats);
+    viewport_->setViewPosition(static_cast<int>(beats * pixelsPerBeat_), viewport_->getViewPositionY());
 }
 
 double PianoRollEditor::getHorizontalScroll() const {
-    return noteGrid_->getTimeOffset();
+    return static_cast<double>(viewport_->getViewPositionX()) / pixelsPerBeat_;
 }
 
 void PianoRollEditor::paint(juce::Graphics& g) {
@@ -124,11 +136,16 @@ void PianoRollEditor::updateLayout() {
                           bounds.getWidth() - kbWidth, bounds.getHeight() - timeRulerHeight);
     
     int gridWidth = static_cast<int>(8.0 * pixelsPerBeat_);
-    noteGrid_->setSize(gridWidth, bounds.getHeight() * 4);
     noteGrid_->setKeyHeight(keyboard_->getKeyHeight());
+    const bool firstLayout = noteGrid_->getHeight() == 0;
+    noteGrid_->setSize(gridWidth, 128 * keyboard_->getKeyHeight());
+    if (firstLayout) viewport_->setViewPosition(0, 48 * keyboard_->getKeyHeight());
+    syncScrollBetweenKeyboardAndGrid();
 }
 
 void PianoRollEditor::syncScrollBetweenKeyboardAndGrid() {
+    keyboard_->setScrollOffset(viewport_->getViewPositionY());
+    timeRuler_->setTimeOffset(getHorizontalScroll());
 }
 
 } // namespace vibedaw

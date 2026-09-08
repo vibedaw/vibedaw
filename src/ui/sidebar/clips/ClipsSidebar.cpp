@@ -75,11 +75,17 @@ ClipsContent::ClipsContent(Project& project)
         newClip->setName("Clip " + juce::String(project_.getClipPool().getNumClips() + 1));
         auto* clipPtr = newClip.get();
         auto clipId = project_.getClipPool().addClip(std::move(newClip));
+        if (clipId == InvalidClipId) return;
+        clipSelected(clipId, clipPtr);
         if (clipsListener_) {
             clipsListener_->clipCreated(clipId, clipPtr);
         }
     };
     addAndMakeVisible(addClipButton_);
+    deleteClipButton_.setEnabled(false);
+    deleteClipButton_.setTooltip("Delete the selected source. Its placements remain as unresolved placeholders.");
+    deleteClipButton_.onClick = [this] { project_.getClipPool().removeClip(selectedClipId_); };
+    addAndMakeVisible(deleteClipButton_);
     
     project_.getClipPool().addListener(this);
     rebuildClipRows();
@@ -100,7 +106,9 @@ void ClipsContent::paint(juce::Graphics& g) {
 void ClipsContent::resized() {
     auto bounds = getLocalBounds();
     
-    addClipButton_.setBounds(bounds.removeFromBottom(32).reduced(4));
+    auto buttons = bounds.removeFromBottom(32);
+    deleteClipButton_.setBounds(buttons.removeFromRight(buttons.getWidth() / 2).reduced(2));
+    addClipButton_.setBounds(buttons.reduced(2));
     
     int y = 0;
     for (auto& row : clipRows_) {
@@ -114,14 +122,21 @@ void ClipsContent::clipAdded(ClipId clipId, Clip* clip) {
 }
 
 void ClipsContent::clipRemoved(ClipId clipId) {
+    if (selectedClipId_ == clipId) {
+        selectedClipId_ = InvalidClipId;
+        deleteClipButton_.setEnabled(false);
+        if (clipsListener_) clipsListener_->clipSelected(InvalidClipId, nullptr);
+    }
     rebuildClipRows();
 }
 
 void ClipsContent::clipChanged(ClipId clipId, Clip* clip) {
-    rebuildClipRows();
+    juce::ignoreUnused(clipId, clip);
+    for (auto& row : clipRows_) row->repaint();
 }
 
 void ClipsContent::clipSelected(ClipId clipId, Clip* clip) {
+    if (clipsListener_) clipsListener_->clipSelected(clipId, clip);
     auto& clipPool = project_.getClipPool();
     const auto& clips = clipPool.getClips();
     
@@ -153,7 +168,7 @@ void ClipsContent::rebuildClipRows() {
         auto* clip = clips[i].second.get();
         auto row = std::make_unique<ClipRow>(clipId, clip, i);
         row->setListener(this);
-        row->setSelected(i == selectedClipIndex_);
+        row->setSelected(clipId == selectedClipId_);
         addAndMakeVisible(*row);
         clipRows_.push_back(std::move(row));
     }
@@ -162,14 +177,12 @@ void ClipsContent::rebuildClipRows() {
 }
 
 void ClipsContent::selectClip(int index) {
-    if (selectedClipIndex_ == index) {
-        return;
-    }
-    
-    selectedClipIndex_ = index;
+    const auto& clips = project_.getClipPool().getClips();
+    selectedClipId_ = index >= 0 && index < static_cast<int>(clips.size()) ? clips[index].first : InvalidClipId;
+    deleteClipButton_.setEnabled(selectedClipId_ != InvalidClipId);
     
     for (int i = 0; i < static_cast<int>(clipRows_.size()); ++i) {
-        clipRows_[i]->setSelected(i == selectedClipIndex_);
+        clipRows_[i]->setSelected(clipRows_[i]->getClipId() == selectedClipId_);
     }
 }
 

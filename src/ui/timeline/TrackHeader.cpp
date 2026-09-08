@@ -137,6 +137,10 @@ void TrackHeader::resized() {
     muteButton->setBounds(buttonArea.removeFromRight(buttonSize + 4).withSizeKeepingCentre(buttonSize, buttonSize));
 }
 
+void TrackHeader::mouseDown(const juce::MouseEvent& event) {
+    if (event.mods.isLeftButtonDown() && onSelected) onSelected();
+}
+
 void TrackHeader::setTrackName(const juce::String& name) {
     trackName = name;
     repaint();

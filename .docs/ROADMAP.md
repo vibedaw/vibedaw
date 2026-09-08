@@ -37,11 +37,11 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 
 | Order | Task | Milestone | Status | Depends On |
 | --- | --- | --- | --- | --- |
-| 1 | [T03 Routing, Timing, and Placement](tasks/T03-routing-timing-placement.md) | M1 | ready | None |
-| 2 | [T06 Safe Audio Boundary](tasks/T06-safe-audio-boundary.md) | M1 | todo | T03 |
-| 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | todo | T06 |
-| 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | todo | T01, T03, T06 |
-| 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | todo | T02, T06 |
+| 1 | [T03 Routing, Timing, and Placement](tasks/T03-routing-timing-placement.md) | M1 | blocked | None |
+| 2 | [T06 Safe Audio Boundary](tasks/T06-safe-audio-boundary.md) | M1 | blocked | T03 |
+| 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | blocked | T06 |
+| 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | blocked | T01, T03, T06 |
+| 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | blocked | T02, T06 |
 | 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | todo | T01, T02, T04 |
 | 7 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | backlog | M1 |
 | 8 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
@@ -49,7 +49,76 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 
 Recommended single workstream: **T03 -> T06 -> T01 -> T02 -> T04 -> T05 -> T07 -> T08 -> T09**. T08 can be brought forward if piano-roll navigation blocks writing a usable clip. Avoid concurrent edits to shared audio/model files until T06's ownership contract is settled.
 
+T03 implementation is present (2026-09-08), but watcher/manual acceptance is
+unverified. Core model regressions now pass in T06's independent offline target.
+Next action: independently review its completion
+record and run its watcher acceptance checks. User override on 2026-09-08:
+"just go onto the next task" explicitly authorizes T06 despite pending T03 acceptance.
+T03 remains blocked; its intentional uncommitted changes are preserved.
+No application build/launch or commit was performed for T03.
+
+T06 implementation and offline verification are present (2026-09-08). It was marked
+in_progress under the override. Independent review findings have been addressed;
+it remains blocked on watcher/device acceptance, not missing implementation. Hosted
+plugin editors are temporarily disabled because their restart path bypasses the gate. See its
+completion record and `tests/README.md`. No application build/launch or commit was
+performed. User override on 2026-09-08 explicitly authorizes T01 end to end
+despite T03/T06 watcher/runtime blocks. T01 was marked in_progress under this
+override; earlier acceptance states and existing T03/T06 changes remain preserved.
+
+T01 implementation and independent offline verification completed 2026-09-08:
+audio-owned compensated beat clock, bounded command/feedback acknowledgments,
+poll-only UI, ruler seek/playhead and denominator-aware display. CTest 1/1 passed
+with T03/T06 regressions intact. T01 is blocked on watcher UI/device acceptance;
+see its completion contract. No application build/launch or commit. T02 was left
+todo pending acceptance or explicit user authorization, supplied below.
+
+User override 2026-09-08: continue with T02 end to end despite T03/T06/T01
+watcher acceptance blocks. T02 was marked in_progress; all earlier acceptance statuses and
+uncommitted work remain intact. Only the independent offline test target may be
+built/run; no application build/launch or commit is authorized.
+
+T02 implementation and independent offline verification completed 2026-09-08:
+compiled stable-destination event ranges, sample-accurate half-open scheduling,
+unioned same-pitch arrangement lifetimes and live-priority collisions, process-once
+merging, bounded all-or-cleanup rejection and lifecycle/reset recovery. CTest 1/1
+passed with exact timestamp regressions and all T03/T06/T01 cases intact. See T02
+for rounding, overlap and the shared 976 normal / 1072 cleanup event budget.
+T02 is blocked on unobserved watcher/audible acceptance; no application build/launch
+or commit. Next: independent review and watcher workflow checks. T04 remains todo
+pending acceptance or explicit authorization. Earlier acceptance states are unchanged.
+
+T02 independent-review corrections: shared monotonic event indices prevent lost
+boundary releases across compensated-clock/tempo changes; note-capacity preflight
+now checks only destination-local final merged MIDI, not raw live input. Exact
+reported values/nextafter/tempo/partition regressions and 1024-held arrangement/live
+replacement tests with an unaffected second destination pass with the full offline
+suite (CTest 1/1). See T02's revised timing contract and review record. No app
+build/launch or acceptance-status change; watcher/manual checks remain pending.
+
+User override 2026-09-08: "next" explicitly authorizes T04 end to end despite
+T03/T06/T01/T02 runtime blocks. T04 was marked in_progress; cumulative uncommitted changes
+and earlier statuses are preserved. Only the independent offline_tests target may
+be built/run. No application build/launch, staging or commit.
+
+T04 implementation and offline verification completed 2026-09-08. Real stable-ID
+channel strips, gain/balance/mute/additive solo, destination-local cleanup, actual
+post-sum master gain/mute, atomic sample-peak envelopes and message-thread polling.
+Mixer/cosmetic controls no longer trigger arrangement-wide snapshot panic. CTest
+1/1 passed with synthetic audio, decay, suppression/reset/capacity and component
+binding tests, all previous regressions intact, and assertion/leak diagnostics
+treated as failures. See T04 for exact pan, no-chase and master output-gate policies.
+Independent review's P2 pop-out resize finding is fixed: externally owned mixer
+viewport bounds survive structural strip rebuilds; regression reproduces before
+the fix and passes after it, including dock return without a native window. Full
+offline CTest 1/1 passed. Blocked on unobserved watcher/audible acceptance; next
+manual checks, including native pop-out behavior. Earlier statuses remain unchanged;
+T05 remains todo. No app build/
+launch, staging or commit.
+
 ## Verified Starting Point
+
+Historical baseline below, before T03 implementation. See the T03 task for current contracts.
 
 - Audio output currently runs through `AudioEngine -> AudioProcessorPlayer -> ChannelMixer -> Channel -> PluginHost`. Live MIDI is routed to the active channel.
 - Tracks hold clip instances; each instance already has a destination `channelId`. Tracks and instruments are intentionally separate concepts, not necessarily competing models.
