@@ -1,5 +1,6 @@
 #include "SidebarContainer.h"
 #include "SidebarTab.h"
+#include <algorithm>
 
 namespace vibedaw {
 
@@ -14,11 +15,11 @@ SidebarContainer::~SidebarContainer() = default;
 
 void SidebarContainer::addSidebar(Sidebar* sidebar) {
     if (sidebar == nullptr) return;
-    
+
     sidebar->setListener(this);
     sidebars_.push_back(sidebar);
     addAndMakeVisible(sidebar);
-    
+
     updateLayout();
 }
 
@@ -28,25 +29,25 @@ void SidebarContainer::insertSidebar(int index, Sidebar* sidebar) {
         addSidebar(sidebar);
         return;
     }
-    
+
     sidebar->setListener(this);
     sidebars_.insert(sidebars_.begin() + index, sidebar);
     addAndMakeVisible(sidebar, index);
-    
+
     updateLayout();
 }
 
 void SidebarContainer::removeSidebar(Sidebar* sidebar) {
     if (sidebar == nullptr) return;
-    
+
     sidebar->setListener(nullptr);
     removeChildComponent(sidebar);
-    
+
     auto it = std::find(sidebars_.begin(), sidebars_.end(), sidebar);
     if (it != sidebars_.end()) {
         sidebars_.erase(it);
     }
-    
+
     updateLayout();
 }
 
@@ -80,16 +81,63 @@ Sidebar* SidebarContainer::getSidebarById(int id) const {
     return nullptr;
 }
 
-int SidebarContainer::getTotalWidth() const {
+SidebarTab* SidebarContainer::getTab(int index) const {
+    if (index >= 0 && index < static_cast<int>(tabs_.size())) {
+        return tabs_[index].get();
+    }
+    return nullptr;
+}
+
+bool SidebarContainer::hasCollapsedSidebars() const {
+    for (auto* sidebar : sidebars_) {
+        if (sidebar->isCollapsed()) return true;
+    }
+    return false;
+}
+
+int SidebarContainer::expandedTotalWidth() const {
     int total = 0;
     for (auto* sidebar : sidebars_) {
         if (sidebar->isExpanded()) {
             total += sidebar->getSidebarWidth();
-        } else {
-            total += Sidebar::collapseTabWidth;
         }
     }
     return total;
+}
+
+int SidebarContainer::railWidth() const {
+    return hasCollapsedSidebars() ? Sidebar::collapseTabWidth : 0;
+}
+
+int SidebarContainer::getTotalWidth() const {
+    return expandedTotalWidth() + railWidth();
+}
+
+int SidebarContainer::displayedSidebarWidth(Sidebar* sidebar, int budget, int expandedTotal) const {
+    if (!sidebar->isExpanded()) return 0;
+    if (expandedTotal <= 0 || expandedTotal <= budget) {
+        return sidebar->getSidebarWidth();
+    }
+    return static_cast<int>((static_cast<long long>(sidebar->getSidebarWidth()) * budget) / expandedTotal);
+}
+
+int SidebarContainer::getDisplayedWidth() const {
+    int rail = railWidth();
+    int expandedTotal = expandedTotalWidth();
+    int budget = expandedTotal;
+    if (constrainedAvailable_ >= 0) {
+        budget = std::min(expandedTotal, std::max(constrainedAvailable_ - rail, 0));
+    }
+    int displayed = rail;
+    for (auto* sidebar : sidebars_) {
+        displayed += displayedSidebarWidth(sidebar, budget, expandedTotal);
+    }
+    return displayed;
+}
+
+void SidebarContainer::constrainTo(int availableWidth) {
+    constrainedAvailable_ = availableWidth;
+    updateLayout();
 }
 
 int SidebarContainer::getExpandedCount() const {
@@ -117,7 +165,7 @@ void SidebarContainer::resized() {
 void SidebarContainer::sidebarToggled(Sidebar* sidebar, bool expanded) {
     juce::ignoreUnused(sidebar, expanded);
     updateLayout();
-    
+
     if (containerListener_) {
         containerListener_->sidebarContainerChanged(this);
     }
@@ -126,7 +174,7 @@ void SidebarContainer::sidebarToggled(Sidebar* sidebar, bool expanded) {
 void SidebarContainer::sidebarResized(Sidebar* sidebar, int newWidth) {
     juce::ignoreUnused(sidebar, newWidth);
     updateLayout();
-    
+
     if (containerListener_) {
         containerListener_->sidebarContainerChanged(this);
     }
@@ -134,89 +182,78 @@ void SidebarContainer::sidebarResized(Sidebar* sidebar, int newWidth) {
 
 void SidebarContainer::updateLayout() {
     if (sidebars_.empty()) {
+        tabs_.clear();
         setSize(0, getHeight());
         return;
     }
-    
+
     updateTabs();
-    
-    int totalWidth = getTotalWidth();
-    setSize(totalWidth, getHeight());
-    
-    auto bounds = getLocalBounds();
+
+    setSize(getDisplayedWidth(), getHeight());
+
+    int rail = railWidth();
+    auto contentBounds = getLocalBounds();
+    if (side_ == Side::Left) {
+        contentBounds.removeFromLeft(rail);
+    } else {
+        contentBounds.removeFromRight(rail);
+    }
+
+    int expandedTotal = expandedTotalWidth();
+    int budget = expandedTotal;
+    if (constrainedAvailable_ >= 0) {
+        budget = std::min(expandedTotal, std::max(constrainedAvailable_ - rail, 0));
+    }
     int currentX = 0;
-    
+
     for (auto* sidebar : sidebars_) {
         if (sidebar->isExpanded()) {
+            int width = displayedSidebarWidth(sidebar, budget, expandedTotal);
             sidebar->setVisible(true);
-            sidebar->setBounds(currentX, 0, sidebar->getSidebarWidth(), getHeight());
-            currentX += sidebar->getSidebarWidth();
+            sidebar->setBounds(contentBounds.getX() + currentX, 0, width, getHeight());
+            currentX += width;
         } else {
             sidebar->setVisible(false);
-            currentX += Sidebar::collapseTabWidth;
         }
     }
-    
-    int tabIndex = 0;
-    int tabX = 0;
-    
-    for (size_t i = 0; i < sidebars_.size(); ++i) {
-        if (sidebars_[i]->isCollapsed()) {
-            if (tabIndex < static_cast<int>(tabs_.size())) {
-                auto* tab = tabs_[tabIndex].get();
-                tab->setVisible(true);
-                
-                if (side_ == Side::Left) {
-                    tab->setBounds(tabX, tabIndex * Sidebar::collapseTabWidth, 
-                                   Sidebar::collapseTabWidth, Sidebar::collapseTabWidth);
-                } else {
-                    tab->setBounds(tabX + sidebars_[i]->getSidebarWidth() - Sidebar::collapseTabWidth, 
-                                   tabIndex * Sidebar::collapseTabWidth,
-                                   Sidebar::collapseTabWidth, Sidebar::collapseTabWidth);
-                }
-            }
-            tabIndex++;
-        }
-        tabX += sidebars_[i]->isExpanded() ? sidebars_[i]->getSidebarWidth() : Sidebar::collapseTabWidth;
-    }
-    
-    for (int i = tabIndex; i < static_cast<int>(tabs_.size()); ++i) {
-        tabs_[i]->setVisible(false);
+
+    int tabX = (side_ == Side::Left) ? 0 : getWidth() - Sidebar::collapseTabWidth;
+    int tabY = 0;
+    for (auto& tab : tabs_) {
+        tab->setVisible(true);
+        tab->setBounds(tabX, tabY, Sidebar::collapseTabWidth, Sidebar::collapseTabWidth);
+        tabY += Sidebar::collapseTabWidth;
     }
 }
 
 void SidebarContainer::updateTabs() {
-    int collapsedCount = 0;
+    std::vector<Sidebar*> collapsed;
     for (auto* sidebar : sidebars_) {
         if (sidebar->isCollapsed()) {
-            collapsedCount++;
+            collapsed.push_back(sidebar);
         }
     }
-    
-    while (static_cast<int>(tabs_.size()) < collapsedCount) {
-        Sidebar* collapsedSidebar = nullptr;
-        int collapsedIndex = 0;
-        for (auto* s : sidebars_) {
-            if (s->isCollapsed()) {
-                if (collapsedIndex == static_cast<int>(tabs_.size())) {
-                    collapsedSidebar = s;
-                    break;
-                }
-                collapsedIndex++;
+
+    std::vector<std::unique_ptr<SidebarTab>> rebound;
+    rebound.reserve(collapsed.size());
+    for (auto* sidebar : collapsed) {
+        SidebarTab* reused = nullptr;
+        for (auto& tab : tabs_) {
+            if (tab && &tab->sidebar() == sidebar) {
+                reused = tab.release();
+                break;
             }
         }
-        
-        if (collapsedSidebar) {
-            auto tab = std::make_unique<SidebarTab>(*collapsedSidebar);
-            addAndMakeVisible(tab.get());
-            tabs_.push_back(std::move(tab));
+        if (reused != nullptr) {
+            rebound.emplace_back(reused);
         } else {
-            break;
+            rebound.push_back(std::make_unique<SidebarTab>(*sidebar));
         }
     }
-    
-    while (static_cast<int>(tabs_.size()) > collapsedCount) {
-        tabs_.pop_back();
+
+    tabs_ = std::move(rebound);
+    for (auto& tab : tabs_) {
+        addAndMakeVisible(tab.get());
     }
 }
 

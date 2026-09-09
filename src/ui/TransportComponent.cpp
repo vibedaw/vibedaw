@@ -4,6 +4,24 @@
 
 namespace vibedaw {
 
+namespace {
+
+IconId iconForType(TransportButton::Type type) {
+    switch (type) {
+        case TransportButton::Type::ReturnToStart: return IconId::returnToStart;
+        case TransportButton::Type::Rewind: return IconId::rewind;
+        case TransportButton::Type::Stop: return IconId::stop;
+        case TransportButton::Type::Play: return IconId::play;
+        case TransportButton::Type::Record: return IconId::record;
+        case TransportButton::Type::FastForward: return IconId::fastForward;
+        case TransportButton::Type::Loop: return IconId::loop;
+        case TransportButton::Type::Metronome: return IconId::metronome;
+    }
+    return IconId::play;
+}
+
+} // namespace
+
 TimeDisplay::TimeDisplay() {
     setInterceptsMouseClicks(true, false);
 }
@@ -101,68 +119,24 @@ void TransportButton::paint(juce::Graphics& g) {
     
     g.setColour(iconColour);
     auto iconBounds = bounds.reduced(4.0f);
-    auto iconPath = createIcon();
-    g.fillPath(iconPath, iconPath.getTransformToScaleToFit(iconBounds, true));
+    Icons::draw(g, iconForType(type_), iconColour, iconBounds);
 }
 
-juce::Path TransportButton::createIcon() {
-    juce::Path path;
-    
-    switch (type_) {
-        case Type::ReturnToStart:
-            path.addTriangle(0.2f, 0.5f, 0.6f, 0.2f, 0.6f, 0.8f);
-            path.addRectangle(0.1f, 0.2f, 0.15f, 0.6f);
-            break;
-            
-        case Type::Rewind:
-            path.addTriangle(0.5f, 0.5f, 0.9f, 0.1f, 0.9f, 0.9f);
-            path.addTriangle(0.1f, 0.5f, 0.5f, 0.1f, 0.5f, 0.9f);
-            break;
-            
-        case Type::Stop:
-            path.addRectangle(0.15f, 0.15f, 0.7f, 0.7f);
-            break;
-            
-        case Type::Play:
-            path.addTriangle(0.2f, 0.1f, 0.2f, 0.9f, 0.9f, 0.5f);
-            break;
-            
-        case Type::Record:
-            path.addEllipse(0.15f, 0.15f, 0.7f, 0.7f);
-            break;
-            
-        case Type::FastForward:
-            path.addTriangle(0.1f, 0.1f, 0.1f, 0.9f, 0.5f, 0.5f);
-            path.addTriangle(0.5f, 0.1f, 0.5f, 0.9f, 0.9f, 0.5f);
-            break;
-            
-        case Type::Loop:
-            path.addRectangle(0.15f, 0.15f, 0.7f, 0.3f);
-            path.addRectangle(0.15f, 0.55f, 0.7f, 0.3f);
-            path.addTriangle(0.75f, 0.3f, 0.85f, 0.3f, 0.8f, 0.5f);
-            path.addTriangle(0.25f, 0.7f, 0.15f, 0.7f, 0.2f, 0.5f);
-            break;
-            
-        case Type::Metronome:
-            path.addEllipse(0.35f, 0.15f, 0.3f, 0.3f);
-            path.addRectangle(0.45f, 0.45f, 0.1f, 0.4f);
-            path.addRectangle(0.25f, 0.8f, 0.5f, 0.1f);
-            break;
-    }
-    
-    return path;
-}
-
-void TransportButton::mouseDown(const juce::MouseEvent&) {
+void TransportButton::mouseDown(const juce::MouseEvent& e) {
     if (!isEnabled()) return;
+    if (e.mods.isRightButtonDown() || e.mods.isPopupMenu()) {
+        if (onContextMenu) onContextMenu(e);
+        return;
+    }
     pressed_ = true;
     repaint();
 }
 
-void TransportButton::mouseUp(const juce::MouseEvent&) {
+void TransportButton::mouseUp(const juce::MouseEvent& e) {
+    if (!pressed_) return;
     pressed_ = false;
     repaint();
-    if (isEnabled() && onClick) onClick();
+    if (isEnabled() && !e.mods.isRightButtonDown() && !e.mods.isPopupMenu() && onClick) onClick();
 }
 
 void TransportButton::setActive(bool active) {
@@ -300,34 +274,8 @@ TransportComponent::TransportComponent(TransportState& state)
     addAndMakeVisible(*loopBtn_);
     addAndMakeVisible(*metronomeBtn_);
     
-    setupButtons();
-    loopLabel_.setText("Loop start (qn, 0-based)", juce::dontSendNotification);
-    loopEndLabel_.setText("End (qn)", juce::dontSendNotification);
-    for (auto* component : std::initializer_list<juce::Component*>{&loopLabel_, &loopEndLabel_,
-            &loopStart_, &loopEnd_, &applyLoop_, &loopValidation_}) addAndMakeVisible(component);
-    loopStart_.setComponentID("loopStart");
-    loopEnd_.setComponentID("loopEnd");
-    applyLoop_.setComponentID("applyLoop");
-    loopValidation_.setComponentID("loopValidation");
-    applyLoop_.onClick = [this] {
-        const auto parse = [](const juce::String& text, double& value) {
-            const auto trimmed = text.trim();
-            const char* start = trimmed.toRawUTF8();
-            char* end = nullptr;
-            value = std::strtod(start, &end);
-            return end != start && *end == '\0';
-        };
-        double start = 0, end = 0;
-        if (!parse(loopStart_.getText(), start) || !parse(loopEnd_.getText(), end) ||
-            !TransportState::validLoopRegion(start, end)) {
-            loopValidation_.setColour(juce::Label::textColourId, juce::Colour(0xffff8888));
-            loopValidation_.setText("Invalid: 0 <= start; end <= 1e9; length >= 1/64 qn", juce::dontSendNotification);
-            return;
-        }
-        transportState_.setLoopRegion(start, end);
-    };
-    loopStart_.onReturnKey = loopEnd_.onReturnKey = applyLoop_.onClick;
-    
+setupButtons();
+
     transportState_.addListener(this);
     updateButtonStates();
     transportPositionChanged(transportState_.getPosition());
@@ -366,7 +314,7 @@ void TransportComponent::setupButtons() {
     recordBtn_->setAlpha(0.35f);
     recordBtn_->setTitle("Recording unavailable");
     recordBtn_->setDescription("Recording is not implemented.");
-    loopBtn_->setTitle("Enable loop playback");
+    loopBtn_->setTitle("Loop: click to toggle, right-click for options");
     loopBtn_->setComponentID("loopToggle");
     metronomeBtn_->setTitle("Enable audible metronome");
     metronomeBtn_->setComponentID("metronomeToggle");
@@ -392,6 +340,8 @@ void TransportComponent::setupButtons() {
     loopBtn_->onClick = [this]() {
         transportState_.setLoopEnabled(!transportState_.isLoopEnabled());
     };
+
+    loopBtn_->onContextMenu = [this](const juce::MouseEvent&) { showLoopMenu(); };
     
     metronomeBtn_->onClick = [this]() {
         transportState_.setMetronomeEnabled(!transportState_.isMetronomeEnabled());
@@ -410,13 +360,6 @@ void TransportComponent::paint(juce::Graphics& g) {
 
 void TransportComponent::resized() {
     auto bounds = getLocalBounds().reduced(10, 5);
-    loopValidation_.setBounds(bounds.removeFromBottom(20));
-    auto loopRow = bounds.removeFromBottom(32);
-    loopLabel_.setBounds(loopRow.removeFromLeft(160));
-    loopStart_.setBounds(loopRow.removeFromLeft(90).reduced(2));
-    loopEndLabel_.setBounds(loopRow.removeFromLeft(65));
-    loopEnd_.setBounds(loopRow.removeFromLeft(90).reduced(2));
-    applyLoop_.setBounds(loopRow.removeFromLeft(90).reduced(2));
     auto rightSection = bounds.removeFromRight(250);
     const bool compact = getWidth() < 800;
     timeDisplay_->setBounds(bounds.removeFromLeft(compact ? 130 : 180).withTrimmedTop(2).withTrimmedBottom(2));
@@ -484,15 +427,121 @@ void TransportComponent::transportTimeSignatureChanged(int numerator, int denomi
 }
 
 void TransportComponent::transportLoopChanged(bool enabled, double start, double end) {
+    juce::ignoreUnused(start, end);
     loopBtn_->setActive(enabled);
-    loopStart_.setText(juce::String(start, 9), false);
-    loopEnd_.setText(juce::String(end, 9), false);
-    loopValidation_.setColour(juce::Label::textColourId, juce::Colour(0xffbbbbbb));
-    loopValidation_.setText("Quarter notes; min 1/64. Enter or Apply.", juce::dontSendNotification);
+    if (openPopover_) openPopover_->refreshFromState();
 }
 
 void TransportComponent::transportMetronomeChanged(bool enabled) {
     metronomeBtn_->setActive(enabled);
+}
+
+void TransportComponent::showLoopMenu() {
+    juce::PopupMenu menu;
+    const bool enabled = transportState_.isLoopEnabled();
+    menu.addItem(1, enabled ? "Disable Loop" : "Enable Loop", true, enabled);
+    menu.addSeparator();
+    menu.addItem(2, "Edit Loop...", true, false);
+    menu.addItem(3, "Clear Loop", true, false);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(loopBtn_.get()),
+        [this](int result) {
+            if (result > 0) handleLoopMenuAction(result);
+        });
+}
+
+void TransportComponent::handleLoopMenuAction(int action) {
+    switch (action) {
+        case 1: transportState_.setLoopEnabled(!transportState_.isLoopEnabled()); break;
+        case 2: openLoopEditor(); break;
+        case 3: transportState_.clearLoop(); break; // Gone from the model and the ruler.
+        default: break;
+    }
+}
+
+std::unique_ptr<LoopEditorPopover> TransportComponent::createLoopEditor() {
+    auto popover = std::make_unique<LoopEditorPopover>(transportState_);
+    openPopover_ = popover.get(); // External loop updates refresh it, as when launched.
+    return popover;
+}
+
+void TransportComponent::openLoopEditor() {
+    if (openLoopEditorOverride) {
+        openLoopEditorOverride();
+        return;
+    }
+    if (openPopover_) return; // One popover at a time.
+    auto popover = std::make_unique<LoopEditorPopover>(transportState_);
+    openPopover_ = popover.get();
+    // Desktop-level (null parent): a parented box is a child of the transport
+    // bar, which later-added panels paint over. Without a parent the area is
+    // in screen coordinates and the box floats above every panel.
+    juce::CallOutBox::launchAsynchronously(std::move(popover), loopBtn_->getScreenBounds(), nullptr);
+}
+
+LoopEditorPopover::LoopEditorPopover(TransportState& state)
+    : transportState_(state)
+{
+    for (auto* editor : {&start_, &end_}) {
+        addAndMakeVisible(editor);
+        editor->setSelectAllWhenFocused(true);
+        editor->setTextToShowWhenEmpty(editor == &start_ ? "Start (qn)" : "End (qn)",
+                                      juce::Colour(0xff777777));
+    }
+    start_.setComponentID("loopStart");
+    end_.setComponentID("loopEnd");
+    apply_.setComponentID("applyLoop");
+    validation_.setComponentID("loopValidation");
+    addAndMakeVisible(apply_);
+    addAndMakeVisible(validation_);
+    validation_.setFont(juce::Font(11.0f));
+    apply_.onClick = [this] { commit(); };
+    start_.onReturnKey = end_.onReturnKey = [this] { commit(); };
+    setSize(240, 60);
+    refreshFromState();
+}
+
+void LoopEditorPopover::refreshFromState() {
+    if (start_.hasKeyboardFocus(true) || end_.hasKeyboardFocus(true)) return;
+    const auto loop = transportState_.getLoopRegion();
+    start_.setText(juce::String(loop.startBeats, 9), false);
+    end_.setText(juce::String(loop.endBeats, 9), false);
+    validation_.setColour(juce::Label::textColourId, juce::Colour(0xffbbbbbb));
+    validation_.setText("Quarter notes; min 1/64. Enter or Apply.", juce::dontSendNotification);
+}
+
+void LoopEditorPopover::commit() {
+    const auto parse = [](const juce::String& text, double& value) {
+        const auto trimmed = text.trim();
+        const char* start = trimmed.toRawUTF8();
+        char* end = nullptr;
+        value = std::strtod(start, &end);
+        return end != start && *end == '\0';
+    };
+    double start = 0, end = 0;
+    if (!parse(start_.getText(), start) || !parse(end_.getText(), end) ||
+        !TransportState::validLoopRegion(start, end)) {
+        validation_.setColour(juce::Label::textColourId, juce::Colour(0xffff8888));
+        validation_.setText("Invalid: 0 <= start; end <= 1e9; length >= 1/64 qn", juce::dontSendNotification);
+        return;
+    }
+    transportState_.setLoopRegion(start, end);
+    transportState_.setLoopEnabled(true);
+    if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
+}
+
+void LoopEditorPopover::paint(juce::Graphics& g) {
+    g.fillAll(juce::Colour(0xff252525));
+}
+
+void LoopEditorPopover::resized() {
+    auto bounds = getLocalBounds().reduced(8);
+    validation_.setBounds(bounds.removeFromBottom(14));
+    auto row = bounds.removeFromTop(26);
+    start_.setBounds(row.removeFromLeft(72).reduced(1));
+    row.removeFromLeft(6);
+    end_.setBounds(row.removeFromLeft(72).reduced(1));
+    row.removeFromLeft(6);
+    apply_.setBounds(row.removeFromLeft(64).reduced(1));
 }
 
 } // namespace vibedaw

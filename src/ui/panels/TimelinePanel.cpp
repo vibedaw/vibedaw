@@ -1,7 +1,6 @@
 #include "TimelinePanel.h"
 #include "project/Clip.h"
 #include <cmath>
-#include <cstdlib>
 
 namespace vibedaw {
 
@@ -99,50 +98,16 @@ TimelinePanel::TimelinePanel(Project& proj)
     };
     content->onPlacementSelected = [this](int track, int placement) { selectPlacement(track, placement); };
     content->onExtentChanged = [this] { layoutContent(); };
+    content->activeDestination = [this] { return project.getActiveChannelId(); };
+    content->onEditSource = [this](ClipId id) { if (onEditSource) onEditSource(id); };
+    content->selectedClipSource = [this] { return selectedClip; };
+    content->onAutoScroll = [this](int dx, int dy) {
+        horizontalScrollBar->setCurrentRangeStart(horizontalScrollBar->getCurrentRangeStart() + dx, juce::dontSendNotification);
+        verticalScrollBar->setCurrentRangeStart(verticalScrollBar->getCurrentRangeStart() + dy, juce::dontSendNotification);
+        syncVerticalScroll();
+    };
 
-    startLabel.setText("Start beat", juce::dontSendNotification);
-    startBeat.setText("0", false);
-    startBeat.onTextChange = [this] { refreshPlacementControls(); };
-    placeButton.setTooltip("Place the selected pooled MIDI source on the selected track, routed to the active instrument.");
-    moveButton.setTooltip("Move the selected placement to Start beat (quarter-note beats, zero-based).");
-    routeButton.setTooltip("Assign the selected placement to the active instrument. Other placements are unchanged.");
-    placeButton.onClick = [this] {
-        double beat;
-        auto* source = project.getClipPool().getClip(selectedClip);
-        auto* track = trackList.getTrack(selectedTrack);
-        auto* channel = project.getChannelList().getChannelById(project.getActiveChannelId());
-        if (!readStartBeat(beat) || !track || !source || source->getType() != Clip::Type::Midi ||
-            !channel || channel->getType() != Channel::Type::Instrument ||
-            !std::isfinite(source->getDuration()) || source->getDuration() <= 0.0 ||
-            !std::isfinite(beat + source->getDuration())) return;
-        track->addClipInstance(std::make_unique<ClipInstance>(selectedClip, channel->getId(), beat, source->getDuration()));
-        selectPlacement(selectedTrack, track->getNumClipInstances() - 1);
-    };
-    moveButton.onClick = [this] {
-        double beat;
-        if (auto* instance = selectedPlacement())
-            if (readStartBeat(beat)) instance->setStartTime(beat);
-        refreshPlacementControls();
-    };
-    deleteButton.onClick = [this] {
-        if (auto* track = trackList.getTrack(selectedTrack)) {
-            for (int i = track->getNumClipInstances() - 1; i >= 0; --i)
-                if (track->getClipInstance(i)->isSelected()) track->removeClipInstance(i);
-        }
-        refreshPlacementControls();
-    };
-    routeButton.onClick = [this] {
-        auto* channel = project.getChannelList().getChannelById(project.getActiveChannelId());
-        if (auto* instance = selectedPlacement())
-            if (channel && channel->getType() == Channel::Type::Instrument) instance->setChannelId(channel->getId());
-        refreshPlacementControls();
-    };
-    muteButton.onClick = [this] {
-        if (auto* instance = selectedPlacement()) instance->setMuted(muteButton.getToggleState());
-        refreshPlacementControls();
-    };
-    juce::Component* controls[] = { &placementStatus, &startLabel, &startBeat, &placeButton,
-                                   &moveButton, &deleteButton, &routeButton, &muteButton };
+    juce::Component* controls[] = { &placementStatus };
     for (auto* component : controls)
         addAndMakeVisible(*component);
     project.getClipPool().addListener(this);
@@ -166,14 +131,6 @@ void TimelinePanel::setSelectedClip(ClipId id) {
     refreshPlacementControls();
 }
 
-bool TimelinePanel::readStartBeat(double& beat) const {
-    auto text = startBeat.getText().trim();
-    const auto* begin = text.toRawUTF8();
-    char* end = nullptr;
-    beat = std::strtod(begin, &end);
-    return end != begin && *end == '\0' && std::isfinite(beat) && beat >= 0.0;
-}
-
 ClipInstance* TimelinePanel::selectedPlacement() const {
     if (auto* track = trackList.getTrack(selectedTrack))
         for (const auto& instance : track->getClipInstances())
@@ -188,7 +145,6 @@ void TimelinePanel::selectPlacement(int trackIndex, int instanceIndex) {
         for (int i = 0; i < track->getNumClipInstances(); ++i)
             track->getClipInstance(i)->setSelected(t == trackIndex && i == instanceIndex);
     }
-    if (auto* instance = selectedPlacement()) startBeat.setText(juce::String(instance->getStartTime(), 6), false);
     refreshPlacementControls();
 }
 
@@ -196,27 +152,16 @@ void TimelinePanel::refreshPlacementControls() {
     auto* source = project.getClipPool().getClip(selectedClip);
     auto* track = trackList.getTrack(selectedTrack);
     auto* channel = project.getChannelList().getChannelById(project.getActiveChannelId());
-    auto* instance = selectedPlacement();
-    double beat;
-    const bool validBeat = readStartBeat(beat);
-    const bool validSource = source && source->getType() == Clip::Type::Midi &&
-                             std::isfinite(source->getDuration()) && source->getDuration() > 0.0;
     const bool validChannel = channel && channel->getType() == Channel::Type::Instrument;
-    const bool canPlace = validSource && track && validChannel && validBeat && std::isfinite(beat + source->getDuration());
-    placeButton.setEnabled(canPlace);
-    moveButton.setEnabled(instance && validBeat && std::isfinite(beat + instance->getDuration()));
-    deleteButton.setEnabled(instance != nullptr);
-    routeButton.setEnabled(instance && validChannel);
-    muteButton.setEnabled(instance != nullptr);
-    muteButton.setToggleState(instance && instance->isMuted(), juce::dontSendNotification);
     juce::String status = (source ? source->getName() : "Select a MIDI source in Clips") + juce::String(" | ") +
         (track ? track->getName() : "Select a track") + " | " +
         (validChannel ? "To: " + channel->getName() + " (#" + juce::String(channel->getId()) + ")" : "Select an instrument in Channel Rack");
-    if (!validBeat) status += " | Start must be a finite, non-negative beat";
-    else if (source && !validSource) status += " | Requires a MIDI source with positive length";
     if (validChannel && !channel->hasPlugin()) status += " | Destination has no plugin";
     placementStatus.setText(status, juce::dontSendNotification);
-    placementStatus.setTooltip(status);
+    placementStatus.setTooltip(status +
+        "\nDrag Clips onto the timeline to place; drag placements to move. Snap: 1/16 note, Alt bypasses."
+        "\nDouble-click a placement to edit its shared source. Right-click placements, tracks, or empty space for actions."
+        "\nDelete removes the selected placement; Ctrl+E edits its shared source.");
     content->refresh();
     layoutContent();
 }
@@ -257,20 +202,11 @@ void TimelinePanel::layoutContent() {
     auto bounds = getLocalBounds();
     bounds.removeFromTop(getTitleBarHeight());
     placementStatus.setBounds(bounds.removeFromTop(24));
-    auto controls = bounds.removeFromTop(30).reduced(2);
-    const int unit = juce::jmax(1, controls.getWidth() / 8);
-    startLabel.setBounds(controls.removeFromLeft(unit));
-    startBeat.setBounds(controls.removeFromLeft(unit));
-    placeButton.setBounds(controls.removeFromLeft(unit));
-    moveButton.setBounds(controls.removeFromLeft(unit));
-    deleteButton.setBounds(controls.removeFromLeft(unit));
-    routeButton.setBounds(controls.removeFromLeft(unit));
-    muteButton.setBounds(controls);
-    
+
     int availableWidth = juce::jmax(0, bounds.getWidth() - scrollBarWidth);
     int availableHeight = juce::jmax(0, bounds.getHeight() - scrollBarWidth);
     
-    int totalHeight = headerList->getScrollableHeight();
+    int totalHeight = content->getScrollableHeight();
     int visibleHeight = juce::jmax(0, availableHeight - TimeRuler::rulerHeight);
     
     double totalWidth = content->getTotalWidth();

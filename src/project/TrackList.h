@@ -23,6 +23,12 @@ public:
     ~TrackList();
     
     Track* addTrack(const juce::String& name = {});
+    Track* getTrackById(const juce::String& id) const;
+    // Message thread only. Empty target creates a lane; empty source requires a
+    // candidate whose source/routing the caller has validated. Moves allow placeholders.
+    ClipInstance* commitPlacement(const juce::String& targetId, double beat,
+                                 const juce::String& sourceTrackId, const juce::String& instanceId,
+                                 std::unique_ptr<ClipInstance> candidate = {});
     void removeTrack(int index);
     void clearTracks();
     

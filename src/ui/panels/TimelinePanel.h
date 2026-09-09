@@ -22,12 +22,12 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void setSelectedClip(ClipId id);
+    std::function<void(ClipId)> onEditSource;
     
 private:
     void refreshPlacementControls();
     void selectPlacement(int trackIndex, int instanceIndex);
     ClipInstance* selectedPlacement() const;
-    bool readStartBeat(double& beat) const;
     void clipAdded(ClipId, Clip*) override { refreshPlacementControls(); }
     void clipRemoved(ClipId) override { refreshPlacementControls(); }
     void clipChanged(ClipId, Clip*) override { refreshPlacementControls(); }
@@ -52,13 +52,6 @@ private:
     ClipId selectedClip = InvalidClipId;
     int selectedTrack = -1;
     juce::Label placementStatus;
-    juce::Label startLabel;
-    juce::TextEditor startBeat;
-    juce::TextButton placeButton{"Place"};
-    juce::TextButton moveButton{"Move"};
-    juce::TextButton deleteButton{"Delete"};
-    juce::TextButton routeButton{"Assign"};
-    juce::ToggleButton muteButton{"Mute"};
     
     std::unique_ptr<TrackHeaderList> headerList;
     std::unique_ptr<TimelineContent> content;

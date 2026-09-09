@@ -1,5 +1,6 @@
 #include "PluginWindow.h"
 #include "PluginHost.h"
+#include "core/AudioBoundary.h"
 #include "utils/Logger.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -17,10 +18,10 @@ PluginWindow::PluginWindow(PluginHost* host, const juce::String& title)
         if (editor != nullptr) {
             setContentOwned(editor.release(), true);
         }
-    } else {
-        // Also make the restriction visible to any direct window-construction caller.
+    }
+    if (getContentComponent() == nullptr) {
         auto warning = std::make_unique<juce::Label>();
-        warning->setText("Plugin editors are disabled until VST3 restart callbacks can be safely guarded.",
+        warning->setText("This plugin could not create an editor.",
                          juce::dontSendNotification);
         warning->setSize(420, 80);
         setContentOwned(warning.release(), true);
@@ -35,12 +36,16 @@ PluginWindow::PluginWindow(PluginHost* host, const juce::String& title)
 }
 
 PluginWindow::~PluginWindow() {
+    AudioQuiescence::Edit edit;
+    if (auto* editor = dynamic_cast<juce::AudioProcessorEditor*>(getContentComponent()))
+        editor->getAudioProcessor()->editorBeingDeleted(editor);
     clearContentComponent();
     if (pluginHost) pluginHost->unregisterWindow(this);
     LOG_INFO("PluginWindow: Destroyed");
 }
 
 void PluginWindow::closeButtonPressed() {
+    AudioQuiescence::Edit edit;
     LOG_INFO("PluginWindow: Close button pressed");
     delete this;
 }

@@ -1,4 +1,5 @@
 #include "TrackHeaderList.h"
+#include "ui/components/TextPrompt.h"
 
 namespace vibedaw {
 
@@ -11,6 +12,7 @@ TrackHeaderList::TrackHeaderList(TrackList& list)
 }
 
 TrackHeaderList::~TrackHeaderList() {
+    for (const auto& track : trackList.getTracks()) track->removeChangeListener(this);
     trackList.removeListener(this);
 }
 
@@ -64,7 +66,8 @@ void TrackHeaderList::setSelectedTrack(int index) {
     }
 }
 
-void TrackHeaderList::trackAdded(Track*) {
+void TrackHeaderList::trackAdded(Track* track) {
+    if (track) track->addChangeListener(this);
     rebuildHeaders();
 }
 
@@ -80,12 +83,48 @@ void TrackHeaderList::trackListChanged() {
     rebuildHeaders();
 }
 
+void TrackHeaderList::changeListenerCallback(juce::ChangeBroadcaster* source) {
+    if (auto* track = dynamic_cast<Track*>(source))
+        for (const auto& header : headers)
+            if (header->getTrack() == track) header->setTrackName(track->getName());
+}
+
+void TrackHeaderList::renameTrackById(const juce::String& trackId, const juce::String& name) {
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty()) return;
+    if (auto* track = trackList.getTrackById(trackId)) {
+        track->setName(trimmed);
+        track->sendChangeMessage(); // Refresh this list and other track listeners.
+    }
+}
+
+void TrackHeaderList::removeTrackById(const juce::String& trackId) {
+    if (auto* track = trackList.getTrackById(trackId)) {
+        const int index = trackList.indexOfTrack(track);
+        if (index >= 0) trackList.removeTrack(index);
+    }
+}
+
+void TrackHeaderList::removeTrackWithConfirmation(const juce::String& trackId) {
+    auto* track = trackList.getTrackById(trackId);
+    if (!track) return;
+    const auto name = track->getName();
+    const int placements = track->getNumClipInstances();
+    confirmAsync("Remove Track",
+        "Track \"" + name + "\" contains " + juce::String(placements) + " placement(s). "
+            "Removing it permanently deletes those placements; the pooled MIDI source stays in Clips.",
+        "Remove Track", this, [safe = juce::Component::SafePointer<TrackHeaderList>(this), trackId] {
+            if (safe != nullptr) safe->removeTrackById(trackId);
+        });
+}
+
 void TrackHeaderList::rebuildHeaders() {
     headers.clear();
     
     const auto& tracks = trackList.getTracks();
     for (size_t i = 0; i < tracks.size(); ++i) {
-        auto header = std::make_unique<TrackHeader>(tracks[i].get(), static_cast<int>(i));
+        auto* track = tracks[i].get();
+        auto header = std::make_unique<TrackHeader>(track, static_cast<int>(i));
         
         int index = static_cast<int>(i);
         header->onSelected = [this, index] {
@@ -97,6 +136,18 @@ void TrackHeaderList::rebuildHeaders() {
         };
         header->onSoloToggled = [this, index](bool solo) {
             if (onTrackSoloToggled) onTrackSoloToggled(index, solo);
+        };
+        header->onRenameRequested = [safe = juce::Component::SafePointer<TrackHeaderList>(this), id = track->getId()] {
+            if (safe == nullptr) return;
+            auto* target = safe->trackList.getTrackById(id);
+            if (!target) return;
+            showTextPrompt("Rename Track", "New track name:", target->getName(), safe.getComponent(),
+                [safe, id](const juce::String& name) {
+                    if (safe != nullptr && name.isNotEmpty()) safe->renameTrackById(id, name);
+                });
+        };
+        header->onRemoveRequested = [safe = juce::Component::SafePointer<TrackHeaderList>(this), id = track->getId()] {
+            if (safe != nullptr) safe->removeTrackWithConfirmation(id);
         };
         
         if (static_cast<int>(i) == selectedTrackIndex) {

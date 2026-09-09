@@ -5,6 +5,16 @@
 #include "ui/panels/MixerPanel.h"
 #include "ui/TransportComponent.h"
 #include "ui/panels/TimelinePanel.h"
+#include "ui/timeline/TimelineGeometry.h"
+#include "ui/editor/NoteGridComponent.h"
+#include "ui/components/PluginButton.h"
+#include "ui/components/TextPrompt.h"
+#include "ui/sidebar/channel/ChannelRackSidebar.h"
+#include "ui/sidebar/clips/ClipsSidebar.h"
+#include "ui/sidebar/browser/PluginSection.h"
+#include "ui/sidebar/browser/BrowserSidebar.h"
+#include "ui/sidebar/SidebarContainer.h"
+#include "ui/sidebar/SidebarTab.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -26,9 +36,32 @@ void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
 void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
 
 using namespace vibedaw;
-#define CHECK(x) do { if (!(x)) throw std::runtime_error(#x); } while (false)
+#define CHECK(x) do { if (!(x)) throw std::runtime_error(std::string(__FILE__) + ":" + std::to_string(__LINE__) + ": " #x); } while (false)
 
 namespace vibedaw {
+struct ProjectTestAccess {
+    static void loader(Project& project, std::function<std::unique_ptr<PluginHost>(const juce::String&)> load) {
+        project.pluginLoader_ = std::move(load);
+    }
+};
+struct TimelineContentTestAccess {
+    static void tick(TimelineContent& content) { content.timerCallback(); }
+    static juce::PopupMenu placementMenu(TimelineContent& content, Track& track, ClipInstance& instance) {
+        return content.createPlacementMenu(track, instance);
+    }
+    static juce::PopupMenu emptySpaceMenu(TimelineContent& content, const juce::String& targetId,
+                                          bool newTrack, double beat) {
+        return content.createEmptySpaceMenu(targetId, newTrack, beat);
+    }
+};
+struct ClipRowTestAccess {
+    static void starter(ClipRow& row, std::function<void(const juce::var&, bool)> start) {
+        row.dragStarter_ = std::move(start);
+    }
+};
+struct ClipsContentTestAccess {
+    static void clickDeleteSource(ClipsContent& clips) { clips.deleteClipButton_.triggerClick(); }
+};
 struct AudioEngineTestAccess {
     static void prepare(AudioEngine& engine, double rate, int samples) { engine.prepare(rate, samples); }
     static void render(AudioEngine& engine, juce::AudioBuffer<float>& buffer) {
@@ -137,10 +170,11 @@ struct Probe {
     std::vector<Event> events;
     long long samples = 0;
     int blocks = 0, notes = 0, noteOffs = 0, sounding = 0, destroyed = 0, resets = 0;
-    int lastInputCount = 0, lastOffSample = -1, editorCalls = 0;
+    int lastInputCount = 0, lastOffSample = -1, editorCalls = 0, editorQueries = 0;
+    bool destroyedQuiescent = false;
     bool invalidInputOffset = false;
     bool destroyedOnAudio = false, resetOnAudio = false, resetQuiescent = false, sustain = false;
-    bool prepared = false;
+    bool prepared = false, editorAvailable = true;
     bool constantOutput = false;
     float leftOutput = 0.25f, rightOutput = 0.25f;
     int resetsWhileUnprepared = 0;
@@ -150,7 +184,12 @@ struct Probe {
 class OfflineInstrument : public juce::AudioPluginInstance {
 public:
     explicit OfflineInstrument(Probe& p) : probe(p) {}
-    ~OfflineInstrument() override { ++probe.destroyed; probe.destroyedOnAudio = rendering; }
+    ~OfflineInstrument() override {
+        ++probe.destroyed; probe.destroyedOnAudio = rendering;
+        const bool admitted = AudioQuiescence::instance().enter();
+        probe.destroyedQuiescent = !admitted;
+        if (admitted) AudioQuiescence::instance().leave();
+    }
     const juce::String getName() const override { return "Offline instrument"; }
     void fillInPluginDescription(juce::PluginDescription&) const override {}
     void prepareToPlay(double, int) override { probe.prepared = true; }
@@ -204,7 +243,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     juce::AudioProcessorEditor* createEditor() override { ++probe.editorCalls; return nullptr; }
-    bool hasEditor() const override { return true; }
+    bool hasEditor() const override { ++probe.editorQueries; return probe.editorAvailable; }
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -215,6 +254,874 @@ public:
 private:
     Probe& probe;
 };
+
+class EditorInstrument : public OfflineInstrument {
+public:
+    explicit EditorInstrument(Probe& p) : OfflineInstrument(p) {}
+    bool editorDestroyedSafely = false;
+    juce::AudioProcessorEditor* createEditor() override {
+        CHECK(!AudioQuiescence::instance().enter());
+        struct Editor : juce::AudioProcessorEditor {
+            explicit Editor(EditorInstrument& p) : AudioProcessorEditor(p), owner(p) { setSize(100, 100); }
+            ~Editor() override { owner.editorDestroyedSafely = !rendering && !AudioQuiescence::instance().enter(); }
+            EditorInstrument& owner;
+        };
+        return new Editor(*this);
+    }
+};
+
+static void pluginEditorCreationTests() {
+    Probe probe;
+    Project project;
+    auto* channel = project.getChannelList().addChannel("Editor");
+    auto instance = std::make_unique<EditorInstrument>(probe);
+    auto* instrument = instance.get();
+    channel->setPlugin(std::make_unique<PluginHost>(std::move(instance)));
+    project.setActiveChannel(0);
+    PluginButton button(project);
+    CHECK(button.isEnabled());
+    ChannelRow row(channel, 0);
+    auto menu = row.createContextMenu();
+    juce::PopupMenu::MenuItemIterator items(menu);
+    CHECK(items.next() && items.getItem().isEnabled);
+    CHECK(channel->getPlugin()->hasEditor());
+    {
+        AudioQuiescence::Edit edit;
+        auto editor = channel->getPlugin()->createEditor();
+        CHECK(editor != nullptr);
+        CHECK(!channel->getPlugin()->createEditor()); // No second owner of active editor.
+        instrument->editorBeingDeleted(editor.get());
+    }
+    CHECK(instrument->editorDestroyedSafely);
+    channel->setPlugin(nullptr);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    CHECK(probe.destroyed == 1 && probe.destroyedQuiescent);
+}
+
+static void rackDropAndClipCreationTests() {
+    Probe first, replacement;
+    Project project;
+    ChannelRackContent rack(project);
+    rack.setSize(250, 240);
+    rack.setVisible(true); // Component hit testing requires visibility, but no native peer.
+    int loads = 0;
+    ProjectTestAccess::loader(project, [&](const juce::String& path) -> std::unique_ptr<PluginHost> {
+        ++loads;
+        CHECK(!AudioQuiescence::instance().enter());
+        if (path == "fail") return nullptr;
+        if (path == "unloaded") return std::make_unique<PluginHost>();
+        auto instrument = std::make_unique<OfflineInstrument>(loads == 1 ? first : replacement);
+        if (path == "surround") instrument->setPlayConfigDetails(0, 4, 44100.0, 512);
+        return std::make_unique<PluginHost>(std::move(instrument));
+    });
+    PluginTreeItem plugin("Test", "/offline/test-plugin", true);
+    auto payload = plugin.getDragSourceDescription();
+    CHECK(DragDropInfo::fromDragDescription(payload).type == DragSourceType::Plugin);
+    CHECK(DragDropInfo::fromDragDescription(payload).path == "/offline/test-plugin");
+    using Details = juce::DragAndDropTarget::SourceDetails;
+    Details empty(payload, nullptr, {20, 80});
+    juce::Component browserSource;
+    const Details sourceDetails(payload, &browserSource, {900, 700});
+    juce::DragAndDropTarget* currentTarget = nullptr;
+    // Match JUCE findTarget/updateLocation: discovery sees source coordinates,
+    // then events (including the previous target's exit check) see new-target coordinates.
+    auto dispatchMove = [&](juce::Point<int> rackPosition) {
+        auto details = sourceDetails;
+        juce::DragAndDropTarget* target = nullptr;
+        juce::Point<int> localPosition;
+        for (auto* hit = rack.getComponentAt(rackPosition); hit; hit = hit->getParentComponent()) {
+            auto* candidate = dynamic_cast<juce::DragAndDropTarget*>(hit);
+            if (candidate && candidate->isInterestedInDragSource(sourceDetails)) {
+                target = candidate;
+                localPosition = hit->getLocalPoint(&rack, rackPosition);
+                break;
+            }
+        }
+        details.localPosition = localPosition;
+        if (target != currentTarget) {
+            if (currentTarget && currentTarget->isInterestedInDragSource(details))
+                currentTarget->itemDragExit(details);
+            currentTarget = target;
+            if (target && target->isInterestedInDragSource(details)) target->itemDragEnter(details);
+        }
+        if (target && target->isInterestedInDragSource(details)) target->itemDragMove(details);
+        return target;
+    };
+    auto* clipPayload = new juce::DynamicObject();
+    clipPayload->setProperty("type", "vibedaw.clip");
+    clipPayload->setProperty("clipId", 1);
+    for (auto invalid : {juce::var(), juce::var(42), juce::var("42"), juce::var("/tmp/plugin.vst3"),
+                         juce::var("preset:///tmp/preset"), juce::var(clipPayload), DragDropInfo::plugin(""),
+                         DragDropInfo::plugin("relative-path")}) {
+        Details details(invalid, nullptr, {20, 80});
+        CHECK(!rack.isInterestedInDragSource(details));
+        rack.itemDragEnter(details);
+        rack.itemDropped(details);
+    }
+    CHECK(loads == 0 && project.getActiveChannelId() == InvalidChannelId);
+    CHECK(rack.isInterestedInDragSource(empty));
+    CHECK(dispatchMove({20, 80}) == &rack);
+    juce::Image rackPreview(juce::Image::RGB, 250, 240, true);
+    juce::Graphics rackGraphics(rackPreview);
+    rack.paint(rackGraphics);
+    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff395875));
+    CHECK(dispatchMove({300, 80}) == nullptr); // Cancellation never loads.
+    rack.paint(rackGraphics);
+    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(loads == 0 && project.getChannelList().getNumChannels() == 0);
+    CHECK(dispatchMove({20, 80}) == &rack);
+    auto dropDetails = sourceDetails;
+    dropDetails.localPosition = empty.localPosition;
+    currentTarget = nullptr; // JUCE clears the current target before itemDropped.
+    rack.itemDropped(dropDetails);
+    CHECK(loads == 1 && project.getChannelList().getNumChannels() == 1);
+    auto* original = project.getChannelList().getChannel(0);
+    const auto originalId = original->getId();
+    CHECK(original->hasPlugin() && original->getName() == "Offline instrument");
+    CHECK(original->getType() == Channel::Type::Instrument);
+    CHECK(project.getActiveChannelId() == originalId);
+    Details rowDrop(payload, nullptr, {20, 27});
+    CHECK(rack.isInterestedInDragSource(rowDrop)); // Interest must not interpret these coordinates.
+    rack.itemDropped(rowDrop); // Even direct parent dispatch cannot also create.
+    CHECK(loads == 1);
+    CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {20, 28})));
+    CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {20, 225})));
+    CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {250, 80})));
+    rack.itemDropped(Details(payload, nullptr, {250, 80})); // Commit still excludes outside geometry.
+    CHECK(loads == 1);
+    auto* other = project.getChannelList().addChannel("Other");
+    project.setActiveChannel(1);
+    auto* oldHost = original->getPlugin();
+    CHECK(!project.loadPlugin("fail", originalId));
+    CHECK(original->getPlugin() == oldHost && project.getActiveChannelId() == other->getId());
+    CHECK(!project.loadPlugin("fail"));
+    CHECK(project.getChannelList().getNumChannels() == 2 && project.getActiveChannelId() == other->getId());
+    CHECK(!project.loadPlugin("unloaded"));
+    CHECK(!project.loadPlugin("surround"));
+    CHECK(!project.loadPlugin("surround", originalId));
+    CHECK(original->getPlugin() == oldHost && project.getChannelList().getNumChannels() == 2);
+    auto* row = dynamic_cast<ChannelRow*>(rack.getChildComponent(1));
+    CHECK(row && row->getChannel() == original);
+    CHECK(row->isInterestedInDragSource(rowDrop));
+    CHECK(!row->isInterestedInDragSource(Details("preset:///tmp/no", nullptr, {})));
+    juce::Image preview(juce::Image::RGB, 250, 28, true);
+    juce::Graphics previewGraphics(preview);
+    auto* addButton = dynamic_cast<juce::TextButton*>(rack.getChildComponent(0));
+    CHECK(addButton);
+    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(addButton->getButtonText() == "Create instrument channel");
+    CHECK(dispatchMove({20, 27}) == row); // Accepting child wins over interested parent.
+    rack.paint(rackGraphics);
+    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(addButton->getButtonText() == "+ Add Channel");
+    row->paint(previewGraphics);
+    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff3a5a3a));
+    CHECK(dispatchMove({300, 80}) == nullptr);
+    row->paint(previewGraphics);
+    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff2a2a2a));
+    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(dispatchMove({300, 80}) == nullptr); // Exit recheck uses zero, which overlaps row 0.
+    rack.paint(rackGraphics);
+    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(addButton->getButtonText() == "+ Add Channel");
+    rack.itemDragEnter(empty);
+    rack.itemDragMove(rowDrop); // Defensive geometry check even if sent to the parent directly.
+    CHECK(addButton->getButtonText() == "+ Add Channel");
+    rack.itemDragMove(Details(payload, nullptr, {250, 80}));
+    CHECK(addButton->getButtonText() == "+ Add Channel");
+    row->itemDragEnter(rowDrop);
+    row->paint(previewGraphics);
+    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff3a5a3a));
+    row->itemDragExit(rowDrop);
+    row->itemDragEnter(Details("preset:///tmp/no", nullptr, {}));
+    row->paint(previewGraphics);
+    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff2a2a2a));
+    row->itemDropped(rowDrop);
+    CHECK(original->getPlugin() != oldHost && first.destroyed == 1 && first.destroyedQuiescent);
+    CHECK(project.getActiveChannelId() == other->getId());
+    const auto sampleFile = juce::File::getCurrentWorkingDirectory().getChildFile("CMakeCache.txt");
+    CHECK(sampleFile.existsAsFile());
+    Details sample("sample://" + sampleFile.getFullPathName(), nullptr, {});
+    CHECK(row->isInterestedInDragSource(sample));
+    CHECK(!rack.isInterestedInDragSource(sample));
+    row->itemDropped(sample);
+    CHECK(original->getSampleFile() == sampleFile && original->getPlugin() != nullptr);
+    rack.itemDropped(empty); // Populated unused space creates once, not replacement.
+    CHECK(project.getChannelList().getNumChannels() == 3);
+    CHECK(project.getActiveChannelId() != other->getId());
+    rack.setSize(250, 60); // Rows cannot steal the add-button region in a short rack.
+    rack.itemDragEnter(Details(payload, nullptr, {20, 45}));
+    CHECK(addButton->getButtonText() == "Create instrument channel");
+    rack.itemDragMove(Details(payload, nullptr, {20, 27}));
+    CHECK(addButton->getButtonText() == "+ Add Channel");
+    rack.setSize(250, 240);
+    const auto selected = project.getActiveChannelId();
+    while (project.getChannelList().getNumChannels() < ChannelList::maxChannels)
+        CHECK(project.getChannelList().addChannel());
+    const int before = loads;
+    CHECK(!project.loadPlugin("test-plugin"));
+    CHECK(loads == before && project.getActiveChannelId() == selected);
+    CHECK(!rack.isInterestedInDragSource(empty));
+    rack.itemDropped(empty);
+    CHECK(loads == before);
+    CHECK(project.loadPlugin("test-plugin", originalId)); // Replacement allowed at capacity.
+    project.getChannelList().removeChannel(0);
+    const int beforeMissing = loads;
+    CHECK(!project.loadPlugin("test-plugin", originalId) && loads == beforeMissing);
+
+    struct ClipActions : ClipsContent::Listener {
+        int created = 0, opened = 0;
+        ClipId selected = InvalidClipId;
+        void clipCreated(ClipId id, Clip*) override { ++created; CHECK(selected == id); }
+        void clipSelected(ClipId id, Clip*) override { selected = id; }
+        void clipOpened(ClipId id, Clip*) override { ++opened; CHECK(selected == id); }
+    } actions;
+    auto clips = std::make_unique<ClipsContent>(project);
+    clips->setClipsListener(&actions);
+    auto* button = dynamic_cast<juce::TextButton*>(clips->getChildComponent(0));
+    CHECK(button && button->getButtonText() == "+ New Clip");
+    button->onClick();
+    CHECK(actions.created == 1 && actions.opened == 0 && actions.selected != InvalidClipId);
+    const auto sourceId = actions.selected;
+    CHECK(project.getClipPool().getClip(sourceId)->getDuration() == 4.0);
+    CHECK(project.getTrackList().getNumTracks() == 0);
+    CHECK(project.getActiveChannelId() == selected);
+    auto* clipRow = dynamic_cast<ClipRow*>(clips->getChildComponent(2));
+    CHECK(clipRow && clipRow->isSelected());
+    auto edit = clipRow->editSource;
+    edit();
+    CHECK(actions.opened == 1);
+    const juce::MouseEvent doubleClick(juce::Desktop::getInstance().getMainMouseSource(), {5, 5},
+        juce::ModifierKeys::leftButtonModifier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        clipRow, clipRow, juce::Time::getCurrentTime(), {5, 5}, juce::Time::getCurrentTime(), 2, false);
+    clipRow->mouseDoubleClick(doubleClick);
+    CHECK(actions.opened == 2);
+    auto menu = clipRow->createContextMenu();
+    CHECK(menu.getNumItems() == 3); // Edit, Rename, Delete Source.
+    auto renameAction = clipRow->renameRequested;
+    auto deleteAction = clipRow->deleteSourceRequested;
+    PoolChanges removal(project.getClipPool());
+    project.getClipPool().removeClip(sourceId);
+    CHECK(removal.before == 1 && removal.after == 1);
+    edit(); // Delayed context action resolves ID, not a deleted row/source.
+    CHECK(actions.opened == 2 && actions.selected == InvalidClipId);
+    renameAction(); // Deleted source: harmless no-ops, no stale-pointer access.
+    deleteAction();
+    CHECK(actions.opened == 2);
+    clips.reset();
+    edit();
+    renameAction();
+    deleteAction();
+    CHECK(actions.opened == 2);
+}
+
+static void timelineDragTests() {
+    using G = TimelineGeometry;
+    CHECK(G::beatAt(25, 175, 100) == 2 && G::xAt(2, 175, 100) == 25);
+    CHECK(G::startAt(38, 100, 100, 0.25, false) == 1.25);
+    CHECK(std::abs(G::startAt(38, 100, 100, 0.25, true) - 1.13) < 1e-12);
+    CHECK(G::startAt(-100, 0, 50, 1, false) == 0);
+    CHECK(G::startAt(std::numeric_limits<double>::infinity(), 0, 50, 0, false) == 0);
+    CHECK(G::laneAt(0, 24, 500, 300, 24, 0, 64, 0) == 0);
+    CHECK(G::laneAt(0, 87, 500, 300, 24, 0, 64, 2) == 0);
+    CHECK(G::laneAt(0, 88, 500, 300, 24, 0, 64, 2) == 1);
+    CHECK(G::laneAt(0, 152, 500, 300, 24, 0, 64, 2) == 2);
+    CHECK(G::laneAt(0, 24, 500, 300, 24, 64, 64, 2) == 1);
+    for (auto p : {juce::Point<int>(-1, 30), {500, 30}, {10, 23}, {10, 300}})
+        CHECK(G::laneAt(p.x, p.y, 500, 300, 24, 0, 64, 2) == -1);
+    CHECK(G::edgeDelta(0, 0, 500) == -12 && G::edgeDelta(499, 0, 500) == 12);
+    CHECK(G::edgeDelta(250, 0, 500) == 0 && G::edgeDelta(500, 0, 500) == 0);
+
+    Project project;
+    auto& tracks = project.getTrackList();
+    auto& pool = project.getClipPool();
+    auto& channels = project.getChannelList();
+    auto source = std::make_unique<MidiClip>(0, 4);
+    source->addNote(Note(60, 0, 1));
+    const auto clipId = pool.addClip(std::move(source));
+    ClipRow row(clipId, pool.getClip(clipId), 0);
+    const auto payload = row.getDragDescription();
+    CHECK(DragDropInfo::fromDragDescription(payload).clipId == clipId);
+    CHECK(DragDropInfo::fromDragDescription(payload).type == DragSourceType::Clip);
+    TimelinePanel panel(project); panel.setSize(800, 420); panel.setVisible(true);
+    TimelineContent* content = nullptr;
+    for (auto* child : panel.getChildren()) if (auto* c = dynamic_cast<TimelineContent*>(child)) content = c;
+    CHECK(content);
+    using Details = juce::DragAndDropTarget::SourceDetails;
+    const Details discovery(payload, &row, {900, 700});
+    CHECK(content->isInterestedInDragSource(discovery));
+    for (const auto invalid : {juce::var(clipId), juce::var("0"), DragDropInfo::plugin("/offline/plugin"), DragDropInfo::clip(-1)})
+        CHECK(!content->isInterestedInDragSource(Details(invalid, &row, {})));
+    auto enter = [&](juce::Point<int> point) {
+        // Actual child-first component discovery, with SOURCE coordinates for interest.
+        juce::DragAndDropTarget* target = nullptr;
+        for (auto* hit = content->getComponentAt(point); hit; hit = hit->getParentComponent()) {
+            if (auto* ddt = dynamic_cast<juce::DragAndDropTarget*>(hit))
+                if (ddt->isInterestedInDragSource(discovery)) { target = ddt; break; }
+        }
+        CHECK(target == content);
+        target->itemDragEnter(Details(payload, &row, point));
+    };
+    auto drop = [&](juce::Point<int> point) { content->itemDropped(Details(payload, &row, point)); };
+    enter({100, 40});
+    CHECK(content->getPreview().visible && !content->getPreview().valid);
+    CHECK(content->getPreview().label.contains("Select an instrument"));
+    drop({100, 40}); CHECK(tracks.getNumTracks() == 0);
+    auto* instrument = channels.addChannel("Alpha"); const auto destination = instrument->getId();
+    project.setActiveChannel(0);
+    ArrangementPublisher publisher(tracks, pool, channels);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(25);
+    const auto revision = publisher.acquire().revision;
+    enter({113, 40});
+    CHECK(content->getPreview().newTrack && content->getPreview().valid);
+    CHECK(content->getPreview().beat == 2.25 && content->getPreview().duration == 4);
+    CHECK(content->getPreview().label.contains("Alpha") && content->getPreview().label.contains("no plugin"));
+    juce::Image ghost(juce::Image::RGB, content->getWidth(), content->getHeight(), true);
+    juce::Graphics ghostGraphics(ghost);
+    content->paintOverChildren(ghostGraphics);
+    CHECK(ghost.getPixelAt(2, 24) == juce::Colour(0xff70baff));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
+    CHECK(publisher.acquire().revision == revision && tracks.getNumTracks() == 0);
+    CHECK(content->isInterestedInDragSource(Details(payload, &row, {})));
+    content->itemDragExit(Details(payload, &row, {}));
+    CHECK(!content->getPreview().visible && tracks.getNumTracks() == 0);
+    enter({113, 40}); drop({113, 40});
+    CHECK(tracks.getNumTracks() == 1 && tracks.getTrack(0)->getNumClipInstances() == 1);
+    auto* placement = tracks.getTrack(0)->getClipInstance(0);
+    const auto identity = placement->getId();
+    CHECK(placement->getStartTime() == 2.25 && placement->getChannelId() == destination);
+    CHECK(placement->isSelected());
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+    CHECK(publisher.acquire().notes.size() == 1 && publisher.acquire().notes[0].start == 2.25);
+    enter({10, 24}); CHECK(!content->getPreview().newTrack);
+    drop({10, 23}); CHECK(tracks.getNumTracks() == 1 && tracks.getTrack(0)->getNumClipInstances() == 1);
+    enter({20, 88}); CHECK(content->getPreview().newTrack);
+    drop({20, 88}); CHECK(tracks.getNumTracks() == 2);
+    auto* first = tracks.getTrack(0); auto* second = tracks.getTrack(1);
+    const auto firstId = first->getId(), secondId = second->getId();
+    auto event = [&](juce::Point<float> point, juce::Point<float> down, int modifiers = juce::ModifierKeys::leftButtonModifier) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point, modifiers,
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, content, content, juce::Time::getCurrentTime(),
+            down, juce::Time::getCurrentTime(), 1, point != down);
+    };
+    auto* lane = dynamic_cast<TimelineLane*>(content->getComponentAt(juce::Point<int>(125, 40)));
+    CHECK(lane);
+    auto downOnLane = event({125, 40}, {125, 40}).getEventRelativeTo(lane);
+    lane->mouseDown(downOnLane); // JUCE calls the component, then its registered parent listener.
+    content->mouseDown(downOnLane);
+    content->mouseDrag(event({150, 40}, {125, 40}).getEventRelativeTo(lane));
+    CHECK(content->getPreview().beat == 2.75 && placement->getStartTime() == 2.25);
+    content->mouseUp(event({150, 40}, {125, 40}, 0).getEventRelativeTo(lane));
+    CHECK(first->getClipInstance(0) == placement && placement->getStartTime() == 2.75);
+    content->mouseDown(event({150, 40}, {150, 40}));
+    content->mouseDrag(event({125, 40}, {150, 40}));
+    content->mouseUp(event({125, 40}, {150, 40}, 0));
+    CHECK(placement->getStartTime() == 2.25);
+    placement->setDuration(3.5); placement->setMuted(true);
+    channels.addChannel("Beta"); project.setActiveChannel(1);
+    content->mouseDown(event({125, 40}, {125, 40})); // grab = .25 beats
+    content->mouseDrag(event({128, 40}, {125, 40}));
+    CHECK(!content->getPreview().visible && placement->getStartTime() == 2.25);
+    content->mouseDrag(event({175, 110}, {125, 40}));
+    CHECK(content->getPreview().beat == 3.25 && content->getPreview().trackId == secondId);
+    CHECK(content->getPreview().destination == destination && placement->getStartTime() == 2.25);
+    content->mouseUp(event({175, 110}, {125, 40}, 0));
+    CHECK(first->getNumClipInstances() == 0 && second->getNumClipInstances() == 2);
+    CHECK(second->getClipInstance(1) == placement && placement->getId() == identity);
+    CHECK(placement->getClipId() == clipId && placement->getDuration() == 3.5 && placement->isMuted());
+    CHECK(placement->getChannelId() == destination && placement->getStartTime() == 3.25 && placement->isSelected());
+    int opened = 0;
+    panel.onEditSource = [&](ClipId id) { CHECK(id == clipId); ++opened; };
+    content->mouseDoubleClick(event({175, 110}, {175, 110})); CHECK(opened == 1);
+    content->mouseDown(event({175, 110}, {175, 110}));
+    content->mouseDrag(event({200, 180}, {175, 110}));
+    CHECK(content->getPreview().newTrack);
+    content->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+    content->mouseUp(event({200, 180}, {175, 110}, 0));
+    CHECK(tracks.getNumTracks() == 2 && placement->getStartTime() == 3.25);
+    content->mouseDown(event({175, 110}, {175, 110}));
+    content->mouseDrag(event({200, 180}, {175, 110}));
+    content->mouseUp(event({200, 180}, {175, 110}, 0));
+    CHECK(tracks.getNumTracks() == 3 && tracks.getTrack(2)->getClipInstance(0) == placement);
+    CHECK(placement->getId() == identity && placement->getStartTime() == 3.75);
+    content->setPixelsPerBeat(100); content->setScrollOffset(64, 300);
+    content->mouseDown(event({100, 110}, {100, 110})); // third lane, grab .25
+    content->mouseDrag(event({138, 40}, {100, 110}, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier));
+    CHECK(content->getPreview().trackId == secondId && std::abs(content->getPreview().beat - 4.13) < 1e-12);
+    content->mouseUp(event({138, 40}, {100, 110}, juce::ModifierKeys::altModifier));
+    CHECK(second->getClipInstance(1) == placement && std::abs(placement->getStartTime() - 4.13) < 1e-12);
+    content->setScrollOffset(0, 0); content->setPixelsPerBeat(50);
+    const auto before = placement->getStartTime();
+    content->mouseDown(event({220, 110}, {220, 110}));
+    content->mouseDrag(event({250, 40}, {220, 110}));
+    content->mouseUp(event({-1, 40}, {220, 110}, 0));
+    CHECK(placement->getStartTime() == before && second->getClipInstance(1) == placement);
+    content->mouseDown(event({220, 110}, {220, 110}));
+    content->mouseDrag(event({250, 40}, {220, 110}));
+    pool.removeClip(clipId); // Resolved source vanishes mid-move: reject.
+    content->mouseUp(event({250, 40}, {220, 110}, 0));
+    CHECK(placement->getStartTime() == before && second->getClipInstance(1) == placement);
+    content->mouseDoubleClick(event({220, 110}, {220, 110})); CHECK(opened == 1);
+    content->mouseDown(event({220, 110}, {220, 110})); // Already unresolved can move safely.
+    content->mouseDrag(event({250, 40}, {220, 110}));
+    content->mouseUp(event({250, 40}, {220, 110}, 0));
+    CHECK(first->getClipInstance(0) == placement && placement->getChannelId() == destination);
+    enter({100, 240}); CHECK(!content->getPreview().valid); drop({100, 240});
+    CHECK(tracks.getNumTracks() == 3);
+    CHECK(!tracks.commitPlacement("vanished", 0, firstId, identity));
+    CHECK(!tracks.commitPlacement({}, 0, firstId, "vanished"));
+    CHECK(!tracks.commitPlacement({}, -1, firstId, identity));
+    CHECK(!tracks.commitPlacement({}, std::numeric_limits<double>::infinity(), firstId, identity));
+    CHECK(tracks.getNumTracks() == 3 && first->getClipInstance(0) == placement);
+    const auto finalId = placement->getId();
+    first->removeClipInstance(0);
+    CHECK(!tracks.commitPlacement({}, 0, firstId, finalId) && tracks.getNumTracks() == 3);
+    tracks.removeTrack(0);
+    CHECK(!tracks.getTrackById(firstId));
+    CHECK(!tracks.commitPlacement(firstId, 0, {}, {}, std::make_unique<ClipInstance>(clipId, destination, 0, 4)));
+    CHECK(tracks.getNumTracks() == 2);
+}
+
+static void timelineInvalidationTests() {
+    Project project;
+    auto& tracks = project.getTrackList(); auto& clips = project.getClipPool(); auto& channels = project.getChannelList();
+    const auto id = clips.addClip(std::make_unique<MidiClip>(0, 4));
+    channels.addChannel("Sampler", Channel::Type::Sampler);
+    project.setActiveChannel(0);
+    TimelinePanel panel(project); panel.setSize(800, 420); panel.setVisible(true);
+    TimelineContent* content = nullptr;
+    juce::ScrollBar *horizontal = nullptr, *vertical = nullptr;
+    for (auto* child : panel.getChildren()) {
+        if (auto* c = dynamic_cast<TimelineContent*>(child)) content = c;
+        if (auto* bar = dynamic_cast<juce::ScrollBar*>(child)) (bar->isVertical() ? vertical : horizontal) = bar;
+    }
+    CHECK(content && horizontal && vertical);
+    using Details = juce::DragAndDropTarget::SourceDetails;
+    Details drop(DragDropInfo::clip(id), nullptr, {100, 40});
+    content->itemDragEnter(drop); CHECK(!content->getPreview().valid);
+    content->itemDropped(drop); CHECK(tracks.getNumTracks() == 0);
+    channels.addChannel("Instrument"); project.setActiveChannel(1);
+    content->itemDragEnter(drop); CHECK(content->getPreview().valid);
+    channels.removeChannel(1);
+    content->itemDropped(drop); CHECK(tracks.getNumTracks() == 0);
+    channels.addChannel("Replacement"); project.setActiveChannel(1);
+    for (int i = 0; i < 8; ++i) tracks.addTrack();
+    drop.description = DragDropInfo::clip(id); // A new press after structural edits.
+    const auto staleTrack = tracks.getTrack(0)->getId();
+    content->itemDragEnter(drop); CHECK(content->getPreview().trackId == staleTrack);
+    tracks.removeTrack(0); // Rebuild cancels; do not reinterpret the old y as the next track.
+    CHECK(!content->getPreview().visible);
+    content->itemDropped(drop);
+    for (const auto& track : tracks.getTracks()) CHECK(track->getNumClipInstances() == 0);
+    drop.description = DragDropInfo::clip(id); // The deleted-target gesture stays cancelled.
+    auto edge = drop; edge.localPosition = {content->getWidth() - 1, content->getHeight() - 1};
+    content->itemDragEnter(edge);
+    TimelineContentTestAccess::tick(*content);
+    CHECK(horizontal->getCurrentRangeStart() == 12 && vertical->getCurrentRangeStart() == 12);
+    CHECK(content->getPreview().beat == TimelineGeometry::startAt(edge.localPosition.x, 12, 50, 0, false));
+    for (int i = 0; i < 400; ++i) TimelineContentTestAccess::tick(*content);
+    CHECK(horizontal->getCurrentRangeStart() == horizontal->getMaximumRangeLimit() - horizontal->getCurrentRangeSize());
+    CHECK(vertical->getCurrentRangeStart() == vertical->getMaximumRangeLimit() - vertical->getCurrentRangeSize());
+    CHECK(content->getPreview().newTrack); // The extra scroll row makes below-lanes reachable.
+    const double scroll = horizontal->getCurrentRangeStart();
+    auto outside = edge; outside.localPosition.x = -1;
+    content->itemDragMove(outside); TimelineContentTestAccess::tick(*content);
+    CHECK(!content->getPreview().visible && horizontal->getCurrentRangeStart() == scroll);
+    content->itemDragExit(Details(drop.description, nullptr, {}));
+    TimelineContentTestAccess::tick(*content);
+    CHECK(horizontal->getCurrentRangeStart() == scroll);
+    horizontal->setCurrentRangeStart(0, juce::sendNotificationSync);
+    vertical->setCurrentRangeStart(0, juce::sendNotificationSync);
+    content->itemDragEnter(drop);
+    clips.removeClip(id);
+    content->itemDropped(drop);
+    for (const auto& track : tracks.getTracks()) CHECK(track->getNumClipInstances() == 0);
+    auto vanishedRow = std::make_unique<juce::Component>();
+    content->itemDragEnter(Details(drop.description, vanishedRow.get(), {100, 40}));
+    CHECK(content->getPreview().visible);
+    vanishedRow.reset();
+    TimelineContentTestAccess::tick(*content);
+    CHECK(!content->getPreview().visible);
+}
+
+static void timelineGestureReviewTests() {
+    Project project;
+    auto& tracks = project.getTrackList(); auto& clips = project.getClipPool();
+    const auto id = clips.addClip(std::make_unique<MidiClip>(0, 4));
+    project.getChannelList().addChannel("Alpha");
+    project.getChannelList().addChannel("Beta");
+    project.setActiveChannel(0);
+    ClipRow row(id, clips.getClip(id), 0);
+    TimelineContent docked(tracks, clips, project.getChannelList(), project.getTransportState());
+    TimelineContent detached(tracks, clips, project.getChannelList(), project.getTransportState());
+    for (auto* target : {&docked, &detached}) {
+        target->setSize(500, 300);
+        target->activeDestination = [&] { return project.getActiveChannelId(); };
+    }
+    auto event = [&](float x, int mods = juce::ModifierKeys::leftButtonModifier) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), {x, 4}, mods,
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &row, &row, juce::Time::getCurrentTime(),
+            {4, 4}, juce::Time::getCurrentTime(), 1, x != 4);
+    };
+    int starts = 0;
+    juce::var payload;
+    ClipRowTestAccess::starter(row, [&](const juce::var& description, bool acrossWindows) {
+        CHECK(acrossWindows); // Production forwards true to JUCE startDragging.
+        ++starts; payload = description;
+    });
+    using Details = juce::DragAndDropTarget::SourceDetails;
+    auto details = [&](int y = 40) { return Details(payload, &row, {100, y}); };
+    auto begin = [&] { row.mouseDown(event(4)); row.mouseDrag(event(20)); };
+    auto count = [&] { int total = 0; for (const auto& track : tracks.getTracks()) total += track->getNumClipInstances(); return total; };
+    begin(); CHECK(starts == 1);
+    row.mouseDrag(event(30)); CHECK(starts == 1);
+    // Even if JUCE Escape destroyed its drag image, continued mouseDrag cannot restart it.
+    row.mouseDrag(event(40)); CHECK(starts == 1);
+    docked.itemDragEnter(details());
+    docked.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+    row.mouseDrag(event(45)); CHECK(starts == 1);
+    docked.itemDragExit(details());
+    docked.itemDragEnter(details()); docked.itemDragMove(details());
+    CHECK(!docked.getPreview().visible);
+    docked.itemDropped(details());
+    detached.itemDragEnter(details()); detached.itemDropped(details()); // Same gesture, different target.
+    CHECK(tracks.getNumTracks() == 0 && count() == 0);
+    row.mouseUp(event(45, 0)); row.mouseDrag(event(50)); CHECK(starts == 1);
+    begin(); CHECK(starts == 2);
+    row.mouseUp(event(20, 0)); // Component mouseUp precedes JUCE's listener/drop.
+    detached.itemDropped(details()); // Release-only discovery, empty timeline, no enter/move.
+    CHECK(tracks.getNumTracks() == 1 && count() == 1);
+    CHECK(tracks.getTrack(0)->getClipInstance(0)->getStartTime() == 2);
+    begin(); docked.itemDropped(details()); // Release-only existing lane.
+    CHECK(tracks.getNumTracks() == 1 && count() == 2);
+    begin(); docked.itemDragEnter(details(2));
+    CHECK(!docked.getPreview().visible);
+    docked.itemDropped(details()); // Ruler directly to valid lane on release.
+    CHECK(tracks.getNumTracks() == 1 && count() == 3);
+    begin(); docked.itemDragEnter(details(2)); docked.itemDropped(details(88));
+    CHECK(tracks.getNumTracks() == 2 && count() == 4); // Ruler -> new lane.
+    begin(); docked.itemDragEnter(details()); CHECK(docked.getPreview().valid);
+    project.setActiveChannel(1); docked.itemDropped(details());
+    CHECK(count() == 4); // A genuinely valid preview must not silently change route.
+    begin(); docked.itemDragEnter(details(88));
+    tracks.removeTrack(1); CHECK(count() == 3);
+    docked.itemDragEnter(details(88)); docked.itemDropped(details(88));
+    CHECK(tracks.getNumTracks() == 1 && count() == 3); // Stale-structure cancellation cannot revive.
+    begin(); docked.itemDragEnter(details()); docked.itemDragExit(details(2));
+    docked.itemDropped(details()); // Ordinary exit is not explicit gesture cancellation.
+    CHECK(count() == 4);
+    begin(); docked.itemDragEnter(details());
+    docked.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+    docked.itemDropped(details(88)); // Cancelled release-only new lane is still rejected.
+    CHECK(tracks.getNumTracks() == 1 && count() == 4);
+}
+
+static void timelineCommitTests() {
+    TrackList tracks; ClipPool clips; ChannelList channels;
+    auto* channel = channels.addChannel("Route");
+    auto clip = std::make_unique<MidiClip>(0, 4); clip->addNote(Note(60, 0, 1));
+    const auto id = clips.addClip(std::move(clip));
+    auto* source = tracks.addTrack();
+    source->addClipInstance(std::make_unique<ClipInstance>(id, channel->getId(), 1, 3));
+    auto* instance = source->getClipInstance(0);
+    const auto trackId = source->getId(), instanceId = instance->getId();
+    ArrangementPublisher publisher(tracks, clips, channels);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(25);
+    const auto& old = publisher.acquire();
+    CHECK(old.notes.size() == 1 && old.notes[0].start == 1);
+    struct CommitObserver : TrackList::Listener {
+        TrackList& tracks; ClipPool& clips; ChannelList& channels;
+        int additions = 0;
+        CommitObserver(TrackList& t, ClipPool& p, ChannelList& c) : tracks(t), clips(p), channels(c) { tracks.addListener(this); }
+        ~CommitObserver() override { tracks.removeListener(this); }
+        void trackAdded(Track* track) override {
+            ++additions;
+            CHECK(track->getNumClipInstances() == 1);
+            const auto snapshot = compileArrangement(tracks, clips, channels, 0);
+            CHECK(snapshot.notes.size() == 1 && snapshot.notes[0].start == 5);
+        }
+        void trackRemoved(int) override {}
+        void trackChanged(Track*) override {}
+        void trackListChanged() override {}
+    } observer(tracks, clips, channels);
+    CHECK(!tracks.commitPlacement({}, 5, trackId, "stale"));
+    CHECK(!tracks.commitPlacement({}, 5, {}, instanceId));
+    CHECK(tracks.getNumTracks() == 1 && source->getClipInstance(0) == instance);
+    CHECK(instance->getStartTime() == 1 && observer.additions == 0);
+    CHECK(tracks.commitPlacement({}, 5, trackId, instanceId) == instance);
+    CHECK(observer.additions == 1 && tracks.getNumTracks() == 2);
+    CHECK(source->getNumClipInstances() == 0 && instance->getId() == instanceId);
+    CHECK(old.notes[0].start == 1); // Held audio snapshot never sees partial transfer.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(25);
+    CHECK(publisher.acquire().notes.size() == 1 && publisher.acquire().notes[0].start == 5);
+    CHECK(publisher.acquire().notes[0].destination == channel->getId());
+}
+
+static void sidebarRailTests() {
+    { // Left rail geometry and stable tab bindings.
+        SidebarContainer left(Sidebar::Side::Left);
+        auto browser = std::make_unique<Sidebar>("Browser", Sidebar::Side::Left);
+        auto rack = std::make_unique<Sidebar>("Channel Rack", Sidebar::Side::Left);
+        browser->setSidebarWidth(220);
+        rack->setSidebarWidth(250);
+        left.addSidebar(browser.get());
+        left.addSidebar(rack.get());
+        left.setBounds(0, 0, 470, 600);
+        left.constrainTo(470);
+
+        CHECK(left.getTotalWidth() == 470 && left.getDisplayedWidth() == 470);
+        CHECK(browser->getX() == 0 && browser->getWidth() == 220);
+        CHECK(rack->getX() == 220 && rack->getWidth() == 250);
+
+        browser->setExpanded(false);
+        CHECK(left.getTotalWidth() == 278); // One 28px rail, not 28px per collapsed sidebar.
+        CHECK(left.getWidth() == 278);
+        CHECK(!browser->isVisible() && rack->isVisible());
+        CHECK(rack->getX() == 28);
+        CHECK(left.getTabCount() == 1);
+        auto* tab = left.getTab(0);
+        CHECK(tab && &tab->sidebar() == browser.get());
+        CHECK(tab->getBounds() == juce::Rectangle<int>(0, 0, 28, 28));
+        CHECK(left.getLocalBounds().contains(tab->getBounds()));
+        CHECK(tab->getTooltip() == "Browser");
+
+        rack->setExpanded(false);
+        CHECK(left.getTotalWidth() == 28 && left.getWidth() == 28); // No blank reserved column.
+        CHECK(left.getTabCount() == 2);
+        auto* browserTab = left.getTab(0);
+        auto* rackTab = left.getTab(1);
+        CHECK(&browserTab->sidebar() == browser.get() && &rackTab->sidebar() == rack.get());
+        CHECK(browserTab->getBounds() == juce::Rectangle<int>(0, 0, 28, 28));
+        CHECK(rackTab->getBounds() == juce::Rectangle<int>(0, 28, 28, 28));
+        CHECK(left.getLocalBounds().contains(rackTab->getBounds()));
+        CHECK(rackTab->getTooltip() == "Channel Rack");
+
+        // Equal-count membership changes must rebind tabs, not leave stale bindings.
+        browser->setExpanded(true);
+        CHECK(left.getTabCount() == 1 && &left.getTab(0)->sidebar() == rack.get());
+        rack->setExpanded(true);
+        CHECK(left.getTabCount() == 0 && left.getWidth() == 470);
+        browser->setExpanded(false);
+        rack->setExpanded(false);
+        CHECK(left.getTabCount() == 2);
+        browser->setExpanded(true);
+        rack->setExpanded(false); // One expanded, one collapsed: same tab count, different owner.
+        auto* reboundTab = left.getTab(0);
+        CHECK(&reboundTab->sidebar() == rack.get());
+        reboundTab->activate();
+        CHECK(browser->isExpanded() && rack->isExpanded() && left.getTabCount() == 0);
+
+        // Each tab operates exactly its own panel.
+        browser->setExpanded(false);
+        rack->setExpanded(false);
+        CHECK(left.getTabCount() == 2);
+        left.getTab(1)->activate();
+        CHECK(rack->isExpanded() && !browser->isExpanded());
+        left.getTab(0)->activate();
+        CHECK(browser->isExpanded() && rack->isExpanded());
+    }
+
+    { // Right rail: collapsed tab stays inside the container (expanded-width offset regression).
+        SidebarContainer right(Sidebar::Side::Right);
+        auto clips = std::make_unique<Sidebar>("Clips", Sidebar::Side::Right);
+        clips->setSidebarWidth(250);
+        right.addSidebar(clips.get());
+        right.setBounds(0, 0, 250, 600);
+        clips->setExpanded(false);
+        CHECK(right.getWidth() == 28);
+        auto* tab = right.getTab(0);
+        CHECK(tab && &tab->sidebar() == clips.get());
+        CHECK(tab->getBounds().getX() == 0); // Previously placed at 250 - 28, outside the 28px container.
+        CHECK(right.getLocalBounds().contains(tab->getBounds()));
+        right.getTab(0)->activate();
+        CHECK(clips->isExpanded() && right.getWidth() == 250);
+
+        clips->setExpanded(false);
+        auto extra = std::make_unique<Sidebar>("Extra", Sidebar::Side::Right);
+        extra->setMinWidth(100);
+        extra->setSidebarWidth(120);
+        right.addSidebar(extra.get());
+        CHECK(right.getTotalWidth() == 148 && right.getWidth() == 148);
+        CHECK(extra->getX() == 0 && extra->getWidth() == 120);
+        auto* clipsTab = right.getTab(0);
+        CHECK(clipsTab->getBounds().getX() == 120); // Rail hugs the outer (right) edge.
+        CHECK(right.getLocalBounds().contains(clipsTab->getBounds()));
+    }
+
+    { // Narrow-window arbitration, width memory, notifications, and removal.
+        SidebarContainer left(Sidebar::Side::Left);
+        struct NotifyCounter : SidebarContainerListener {
+            int changes = 0;
+            void sidebarContainerChanged(SidebarContainer*) override { ++changes; }
+        };
+        NotifyCounter counter;
+        left.setContainerListener(&counter);
+        auto browser = std::make_unique<Sidebar>("Browser", Sidebar::Side::Left);
+        auto rack = std::make_unique<Sidebar>("Channel Rack", Sidebar::Side::Left);
+        browser->setSidebarWidth(220);
+        rack->setSidebarWidth(250);
+        left.addSidebar(browser.get());
+        left.addSidebar(rack.get());
+        left.setBounds(0, 0, 470, 600);
+
+        left.constrainTo(300); // Proportional clamp; the center keeps any remainder.
+        CHECK(left.getDisplayedWidth() == 299);
+        CHECK(browser->getWidth() == 140 && rack->getWidth() == 159);
+        CHECK(browser->getSidebarWidth() == 220 && rack->getSidebarWidth() == 250);
+        left.constrainTo(1000);
+        CHECK(left.getDisplayedWidth() == 470 && browser->getWidth() == 220);
+
+        // Reopen controls stay reachable even in an extremely narrow window.
+        browser->setExpanded(false);
+        rack->setExpanded(false);
+        left.constrainTo(10);
+        CHECK(left.getDisplayedWidth() == 28 && left.getWidth() == 28);
+        CHECK(left.getTabCount() == 2);
+        CHECK(left.getLocalBounds().contains(left.getTab(1)->getBounds()));
+
+        // Mixed collapsed/expanded under constraint keeps the rail intact.
+        rack->setExpanded(true);
+        left.constrainTo(200);
+        CHECK(rack->getWidth() == 172);
+        CHECK(left.getDisplayedWidth() == 200);
+        CHECK(rack->getX() == 28);
+        auto* browserTab = left.getTab(0);
+        CHECK(&browserTab->sidebar() == browser.get());
+        CHECK(left.getLocalBounds().contains(browserTab->getBounds()));
+        left.constrainTo(1000);
+
+        // Remembered widths survive repeated toggle cycles.
+        browser->setExpanded(true);
+        browser->setSidebarWidth(300);
+        for (int i = 0; i < 3; ++i) {
+            browser->setExpanded(false);
+            CHECK(browser->getSidebarWidth() == 300);
+            browser->setExpanded(true);
+            CHECK(browser->getSidebarWidth() == 300);
+        }
+        CHECK(left.getTotalWidth() == 550);
+
+        // Resize notifications drive coherent relayout.
+        int before = counter.changes;
+        rack->setSidebarWidth(260);
+        CHECK(counter.changes == before + 1);
+        CHECK(left.getWidth() == 560);
+
+        // Removing a collapsed sidebar drops exactly its tab.
+        rack->setExpanded(false);
+        CHECK(left.getTabCount() == 1 && &left.getTab(0)->sidebar() == rack.get());
+        left.removeSidebar(rack.get());
+        CHECK(left.getTabCount() == 0 && left.getTotalWidth() == 300);
+        CHECK(browser->isVisible());
+    }
+
+    { // Factories wire distinct glyphs; tooltips use the sidebar names.
+        Project project;
+        auto clips = std::unique_ptr<Sidebar>(createClipsSidebar(project));
+        CHECK(clips->getName() == "Clips" && clips->getIconSymbol().isNotEmpty());
+        auto rack = std::unique_ptr<Sidebar>(createChannelRackSidebar(project));
+        CHECK(rack->getName() == "Channel Rack" && rack->getIconSymbol().isNotEmpty());
+        PluginScanner scanner;
+        auto browser = std::unique_ptr<Sidebar>(createBrowserSidebar(scanner));
+        CHECK(browser->getName() == "Browser" && browser->getIconSymbol().isNotEmpty());
+        CHECK(clips->getIconSymbol() != rack->getIconSymbol());
+        CHECK(rack->getIconSymbol() != browser->getIconSymbol());
+        CHECK(browser->getIconSymbol() != clips->getIconSymbol());
+        SidebarTab tab(*clips);
+        CHECK(tab.getTooltip() == "Clips");
+        CHECK(&tab.sidebar() == clips.get());
+    }
+}
+
+static void pluginEditorBindingTests() {
+    Probe first, replacement, last;
+    {
+        Project project;
+        auto& channels = project.getChannelList();
+        auto button = std::make_unique<PluginButton>(project);
+        CHECK(button->getButtonText() == "Plugin" && !button->isEnabled());
+        CHECK(button->getTooltip().contains("Select an instrument"));
+        auto* a = channels.addChannel("Alpha");
+        auto* b = channels.addChannel("Beta");
+        const auto id = a->getId();
+        project.setActiveChannel(0);
+        CHECK(button->getTooltip().contains("Alpha: No plugin"));
+        a->setPlugin(std::make_unique<PluginHost>());
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(button->getTooltip().contains("Alpha: No plugin"));
+        CHECK(!a->getPlugin()->hasEditor() && !a->getPlugin()->createEditor());
+        a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(first)));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(button->getTooltip().contains("Alpha: Offline instrument"));
+        CHECK(button->isEnabled());
+        first.editorAvailable = false;
+        a->setName("No editor");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(!button->isEnabled() && button->getTooltip().contains("No supported editor"));
+        CHECK(!a->getPlugin()->createEditor() && first.editorCalls == 0);
+        first.editorAvailable = true;
+        a->setName("Alpha");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(button->isEnabled());
+        channels.moveChannel(0, 1);
+        CHECK(project.getActiveChannelId() == id);
+        CHECK(button->getTooltip().contains("Alpha:"));
+        project.setActiveChannel(0);
+        CHECK(button->getTooltip().contains("Beta: No plugin"));
+        // A context target is independent of the selected instrument.
+        CHECK(PluginButton::unavailableReason(a).isEmpty());
+        CHECK(PluginButton::unavailableReason(b).contains("Beta: No plugin"));
+        auto row = std::make_unique<ChannelRow>(a, 1);
+        auto menu = row->createContextMenu(); // Construct menu data only, no native popup.
+        CHECK(project.getActiveChannelId() == b->getId());
+        juce::PopupMenu::MenuItemIterator items(menu);
+        CHECK(items.next() && items.getItem().isEnabled && !items.getItem().action); // Targets row a.
+        CHECK(items.next() && items.getItem().isSeparator);
+        CHECK(items.next() && items.getItem().text == "Select for Live Audition & New Placements");
+        CHECK(items.next() && items.getItem().text == "Rename Channel…");
+        CHECK(items.next() && items.getItem().text == "Remove Channel…");
+        CHECK(!items.next());
+        row.reset();
+        project.setActiveChannel(1);
+        project.getTransportState().setPlaying(true);
+        a->prepareToPlay(48000, 64);
+        for (int i = 0; i < 3; ++i) {
+            CHECK(a->getPlugin()->hasEditor());
+        }
+        CHECK(button->isEnabled() && first.editorQueries > 0);
+        // A failed candidate load must not change the installed host or its binding.
+        auto* original = a->getPlugin();
+        auto candidate = std::make_unique<PluginHost>();
+        CHECK(!candidate->loadPlugin(juce::File(VIBEDAW_TEST_HOME).getChildFile("missing.vst3").getFullPathName()));
+        CHECK(a->getPlugin() == original && button->getTooltip().contains("Alpha: Offline instrument"));
+        a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(replacement)));
+        CHECK(first.destroyed == 1 && first.destroyedQuiescent && !first.destroyedOnAudio);
+        a->setName("Renamed");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        CHECK(button->getTooltip().contains("Renamed: Offline instrument"));
+        CHECK(a->getPlugin()->hasEditor());
+        channels.removeChannel(channels.indexOfChannel(a));
+        juce::PopupMenu::MenuItemIterator staleItems(menu);
+        CHECK(staleItems.next() && staleItems.getItem().isEnabled && !staleItems.getItem().action);
+        CHECK(staleItems.next() && staleItems.getItem().isSeparator);
+        CHECK(staleItems.next() && staleItems.getItem().text == "Select for Live Audition & New Placements");
+        CHECK(staleItems.next() && staleItems.getItem().text == "Rename Channel…");
+        CHECK(staleItems.next() && staleItems.getItem().text == "Remove Channel…");
+        CHECK(!staleItems.next());
+        CHECK(replacement.destroyed == 1 && replacement.destroyedQuiescent && !replacement.destroyedOnAudio);
+        CHECK(button->getTooltip().contains("Select an instrument"));
+        b->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(last)));
+        project.setActiveChannel(0);
+        CHECK(button->getTooltip().contains("Beta: Offline instrument"));
+        button.reset();
+        b->setName("After button teardown");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        // Project destruction tears down the last host with no retained UI binding.
+    }
+    CHECK(last.destroyed == 1 && last.destroyedQuiescent && !last.destroyedOnAudio);
+    CHECK(first.editorQueries > 0 && replacement.editorQueries > 0 && last.editorQueries > 0);
+    CHECK(first.editorCalls == 0 && replacement.editorCalls == 0 && last.editorCalls == 0);
+}
 
 static void renderTests() {
     Probe first, second;
@@ -309,8 +1216,7 @@ static void reviewRegressionTests() {
     TransportState transport;
     auto* channel = channels.addChannel();
     channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
-    CHECK(!channel->getPlugin()->hasEditor());
-    CHECK(!channel->getPlugin()->createEditor() && probe.editorCalls == 0);
+    CHECK(channel->getPlugin()->hasEditor());
     ChannelMixer mixer(channels, tracks, clips, transport);
     mixer.setActiveChannel(0);
     AudioEngine engine;
@@ -431,7 +1337,7 @@ static void reviewRegressionTests() {
     deviceRender(); ChannelTestAccess::resetVoices(*channel);
     CHECK(probe.resets == 3 && !channel->isVoiceResetPending());
 
-    // New instance clears the conservative pedal latch; editor creation is still denied.
+    // New instance clears the conservative pedal latch.
     channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
     probe.sustain = false;
     juce::MidiKeyboardState keyboard;
@@ -1781,30 +2687,88 @@ static void clickMasterAndOverflowTests() {
     CHECK(renderAllocations == 0 && renderDeletions == 0);
 }
 
+static void iconTests() {
+    for (int i = 0; i < 8; ++i) {
+        const auto id = static_cast<IconId>(i);
+        const auto& path = Icons::path(id);
+        CHECK(path.getBounds().getWidth() > 0 && path.getBounds().getHeight() > 0);
+        juce::Image image(juce::Image::ARGB, 36, 28, true);
+        {
+            juce::Graphics graphics(image);
+            Icons::draw(graphics, id, juce::Colour(0xff00ff88), {0.0f, 0.0f, 36.0f, 28.0f});
+        }
+        int lit = 0;
+        for (int y = 0; y < 28; ++y)
+            for (int x = 0; x < 36; ++x)
+                if (image.getPixelAt(x, y).getAlpha() > 0) ++lit;
+        CHECK(lit > 40); // Visible glyph, neither empty nor clipped to nothing.
+    }
+}
+
 static void loopUiTests() {
     TransportState state;
-    TransportComponent ui(state); ui.setSize(1000, 104);
-    auto* start = dynamic_cast<juce::TextEditor*>(ui.findChildWithID("loopStart"));
-    auto* end = dynamic_cast<juce::TextEditor*>(ui.findChildWithID("loopEnd"));
-    auto* apply = dynamic_cast<juce::TextButton*>(ui.findChildWithID("applyLoop"));
+    TransportComponent ui(state); ui.setSize(1000, 64);
     auto* loop = dynamic_cast<TransportButton*>(ui.findChildWithID("loopToggle"));
     auto* click = dynamic_cast<TransportButton*>(ui.findChildWithID("metronomeToggle"));
-    auto* validation = dynamic_cast<juce::Label*>(ui.findChildWithID("loopValidation"));
-    CHECK(start && end && apply && loop && click && validation);
-    for (const auto invalid : {"", "abc", "1foo", "nan", "inf", "-1"}) {
-        start->setText(invalid); apply->onClick();
-        CHECK(state.getLoopRegion().startBeats == 0 && validation->getText().startsWith("Invalid"));
-    }
-    start->setText("2.5"); end->setText("6.5"); start->onReturnKey();
-    CHECK(state.getLoopRegion().startBeats == 2.5 && state.getLoopRegion().endBeats == 6.5);
+    CHECK(loop && click);
+    CHECK(!ui.findChildWithID("record")->isEnabled());
+    CHECK(!ui.findChildWithID("loopStart")); // Numeric editing moved to the popover.
     loop->onClick(); click->onClick();
     CHECK(state.isLoopEnabled() && state.isMetronomeEnabled() && loop->isActive() && click->isActive());
-    CHECK(!ui.findChildWithID("record")->isEnabled());
-    state.setLoopRegion(1, 3); CHECK(start->getText().getDoubleValue() == 1 && end->getText().getDoubleValue() == 3);
-    CHECK(ui.getLocalBounds().contains(start->getBounds()) && ui.getLocalBounds().contains(end->getBounds()));
-    ui.setSize(600, 104);
+    // Right-click dispatches the context menu request without toggling.
+    bool menuRequested = false;
+    loop->onContextMenu = [&](const juce::MouseEvent&) { menuRequested = true; };
+    auto buttonEvent = [&](juce::Point<float> point, juce::Point<float> down, int modifiers) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point, modifiers,
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, loop, loop, juce::Time::getCurrentTime(),
+            down, juce::Time::getCurrentTime(), 1, point != down);
+    };
+    const bool enabledBefore = state.isLoopEnabled();
+    loop->mouseDown(buttonEvent({2, 2}, {2, 2},
+        juce::ModifierKeys::rightButtonModifier | juce::ModifierKeys::ctrlModifier));
+    CHECK(menuRequested);
+    loop->mouseUp(buttonEvent({2, 2}, {2, 2}, 0));
+    CHECK(state.isLoopEnabled() == enabledBefore);
+    // Menu actions mirror the bar controls they replaced.
+    ui.handleLoopMenuAction(1);
+    CHECK(!state.isLoopEnabled() && !loop->isActive());
+    ui.handleLoopMenuAction(1);
+    CHECK(state.isLoopEnabled());
+    ui.handleLoopMenuAction(3); // Clear: gone from the model and the ruler.
+    CHECK(!state.isLoopEnabled() && !state.isLoopRegionSet() &&
+          state.getLoopRegion().startBeats == 0 && state.getLoopRegion().endBeats == 4.0);
+    loop->onClick(); // No region: the button materializes the default loop, enabled.
+    CHECK(state.isLoopEnabled() && state.isLoopRegionSet() &&
+          state.getLoopRegion().startBeats == 0 && state.getLoopRegion().endBeats == 4.0);
+    bool editOpened = false;
+    ui.openLoopEditorOverride = [&] { editOpened = true; };
+    ui.handleLoopMenuAction(2);
+    CHECK(editOpened);
+    {
+        // The popover is the relocated numeric editor; Apply enables looping.
+        auto popover = ui.createLoopEditor();
+        popover->setSize(240, 60);
+        auto* start = dynamic_cast<juce::TextEditor*>(popover->findChildWithID("loopStart"));
+        auto* end = dynamic_cast<juce::TextEditor*>(popover->findChildWithID("loopEnd"));
+        auto* apply = dynamic_cast<juce::TextButton*>(popover->findChildWithID("applyLoop"));
+        auto* validation = dynamic_cast<juce::Label*>(popover->findChildWithID("loopValidation"));
+        CHECK(start && end && apply && validation);
+        CHECK(popover->getLocalBounds().contains(start->getBounds()) &&
+              popover->getLocalBounds().contains(end->getBounds()));
+        for (const auto invalid : {"", "abc", "1foo", "nan", "inf", "-1"}) {
+            start->setText(invalid); apply->onClick();
+            CHECK(state.getLoopRegion().startBeats == 0 && validation->getText().startsWith("Invalid"));
+        }
+        start->setText("2.5"); end->setText("6.5"); start->onReturnKey();
+        CHECK(state.getLoopRegion().startBeats == 2.5 && state.getLoopRegion().endBeats == 6.5);
+        CHECK(state.isLoopEnabled()); // Commit enables looping.
+        CHECK(validation->getText().startsWith("Quarter notes"));
+        state.setLoopRegion(1, 3); // External updates refresh the fields.
+        CHECK(start->getText().getDoubleValue() == 1 && end->getText().getDoubleValue() == 3);
+    }
+    CHECK(ui.getLocalBounds().getWidth() > 0);
+    ui.setSize(600, 64);
     for (auto* child : ui.getChildren()) if (child->isVisible()) CHECK(ui.getLocalBounds().contains(child->getBounds()));
-    CHECK(validation->getWidth() == 580 && validation->getHeight() == 20);
     Project project;
     TimelinePanel timeline(project); timeline.setSize(800, 400);
     TimelineContent* content = nullptr;
@@ -1826,6 +2790,143 @@ static void loopUiTests() {
     juce::Graphics graphics(image); ruler->paint(graphics);
     CHECK(image.getPixelAt(25, 1) == juce::Colour(0xff66aaff));
     CHECK(image.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a));
+    // Ruler gestures: a click seeks; a drag previews locally and commits once.
+    auto& transportState = project.getTransportState();
+    auto rulerEvent = [&](juce::Point<float> point, juce::Point<float> down, int modifiers = juce::ModifierKeys::leftButtonModifier) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point, modifiers,
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, ruler, ruler, juce::Time::getCurrentTime(),
+            down, juce::Time::getCurrentTime(), 1, point != down);
+    };
+    ruler->mouseDown(rulerEvent({100, 12}, {100, 12}));
+    ruler->mouseUp(rulerEvent({100, 12}, {100, 12}, 0));
+    CHECK(transportState.getPositionInBeats() == 102.0); // (100 + 5000) / 50
+    CHECK(!ruler->isDraggingLoop());
+    transportState.setPositionInBeats(0);
+    ruler->mouseDown(rulerEvent({300, 12}, {300, 12}));
+    ruler->mouseDrag(rulerEvent({303, 12}, {300, 12})); // Below the threshold: still a click.
+    CHECK(!ruler->isDraggingLoop());
+    ruler->mouseUp(rulerEvent({303, 12}, {300, 12}, 0));
+    CHECK(transportState.getPositionInBeats() == 106.0);
+    CHECK(transportState.getLoopRegion().endBeats == 104.0);
+    // Create on empty space: snapped preview, single commit on mouseUp, auto-enable.
+    ruler->mouseDown(rulerEvent({275, 12}, {275, 12})); // beat 105.5
+    ruler->mouseDrag(rulerEvent({279, 12}, {275, 12}));
+    CHECK(!ruler->isDraggingLoop());
+    CHECK(transportState.getLoopRegion().startBeats == 100.0);
+    ruler->mouseDrag(rulerEvent({362, 12}, {275, 12})); // beat 107.24 -> snaps to 107.25
+    CHECK(ruler->isDraggingLoop());
+    CHECK(ruler->getLoopPreview().startBeats == 105.5 && ruler->getLoopPreview().endBeats == 107.25);
+    CHECK(transportState.getLoopRegion().startBeats == 100.0); // Nothing published during drag.
+    ruler->mouseUp(rulerEvent({362, 12}, {275, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 105.5 && transportState.getLoopRegion().endBeats == 107.25);
+    CHECK(transportState.isLoopEnabled());
+    ruler->setScrollOffset(100 * 50); // Committing grows the extent; the panel resyncs to the viewport (0).
+    // Shift+drag inside the body moves; length preserved.
+    const int shiftDrag = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier;
+    ruler->mouseDown(rulerEvent({300, 12}, {300, 12}, shiftDrag)); // beat 106, inside [105.5, 107.25)
+    ruler->mouseDrag(rulerEvent({350, 12}, {300, 12}, shiftDrag)); // beat 107 -> delta 1
+    CHECK(ruler->getLoopPreview().startBeats == 106.5 && ruler->getLoopPreview().endBeats == 108.25);
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::DraggingHandCursor);
+    ruler->mouseUp(rulerEvent({350, 12}, {300, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 106.5 && transportState.getLoopRegion().endBeats == 108.25);
+    ruler->setScrollOffset(100 * 50);
+    // Plain drag inside the body creates a replacement region.
+    ruler->mouseDown(rulerEvent({350, 12}, {350, 12})); // beat 107, interior of [106.5, 108.25)
+    ruler->mouseDrag(rulerEvent({375, 12}, {350, 12})); // beat 107.5
+    CHECK(ruler->getLoopPreview().startBeats == 107.0 && ruler->getLoopPreview().endBeats == 107.5);
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
+    ruler->mouseUp(rulerEvent({375, 12}, {350, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 107.0 && transportState.getLoopRegion().endBeats == 107.5);
+    ruler->setScrollOffset(100 * 50);
+    // Cursor affordances preview the pending action under the mouse.
+    ruler->mouseMove(rulerEvent({362.5f, 12}, {362.5f, 12}, 0)); // interior -> create
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
+    ruler->mouseMove(rulerEvent({362.5f, 12}, {362.5f, 12}, juce::ModifierKeys::shiftModifier)); // shift interior -> move
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::DraggingHandCursor);
+    ruler->mouseMove(rulerEvent({378, 12}, {378, 12}, 0)); // near end edge 107.5 -> resize
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::LeftRightResizeCursor);
+    ruler->mouseMove(rulerEvent({353, 12}, {353, 12}, 0)); // near start edge 107 -> resize
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::LeftRightResizeCursor);
+    ruler->mouseMove(rulerEvent({381, 12}, {381, 12}, 0)); // beyond the edge zone -> create
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
+    // Shift wins over an edge grab: shift+drag near the end edge still moves.
+    ruler->mouseDown(rulerEvent({374, 12}, {374, 12}, shiftDrag)); // beat 107.48, near end 107.5
+    ruler->mouseDrag(rulerEvent({424, 12}, {374, 12}, shiftDrag)); // beat 108.48 -> delta 1
+    CHECK(ruler->getLoopPreview().startBeats == 108.0 && ruler->getLoopPreview().endBeats == 108.5);
+    ruler->mouseUp(rulerEvent({424, 12}, {374, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 108.0 && transportState.getLoopRegion().endBeats == 108.5);
+    ruler->setScrollOffset(100 * 50);
+    // Resize the end edge (grab within 0.1 beats = 5px of it).
+    ruler->mouseDown(rulerEvent({428, 12}, {428, 12})); // beat 108.56, edge at 108.5
+    ruler->mouseDrag(rulerEvent({450, 12}, {428, 12})); // beat 109
+    CHECK(ruler->getLoopPreview().startBeats == 108.0 && ruler->getLoopPreview().endBeats == 109.0);
+    ruler->mouseUp(rulerEvent({450, 12}, {428, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 108.0 && transportState.getLoopRegion().endBeats == 109.0);
+    ruler->setScrollOffset(100 * 50);
+    // Resize the start edge; clamped to the minimum length when crossing the end.
+    ruler->mouseDown(rulerEvent({403, 12}, {403, 12})); // beat 108.06, within 0.1 of start 108
+    ruler->mouseDrag(rulerEvent({550, 12}, {403, 12})); // beat 111 -> clamped to end - 1/16
+    CHECK(ruler->getLoopPreview().startBeats == 108.9375);
+    ruler->mouseUp(rulerEvent({550, 12}, {403, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 108.9375);
+    ruler->setScrollOffset(100 * 50);
+    // Alt bypasses the 1/16 snap; the commit keeps the unsnapped beat.
+    const int alt = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier;
+    ruler->mouseDown(rulerEvent({300, 12}, {300, 12}, alt)); // beat 106
+    ruler->mouseDrag(rulerEvent({309, 12}, {300, 12}, alt)); // beat 106.18, unsnapped
+    CHECK(ruler->getLoopPreview().startBeats == 106.0 && ruler->getLoopPreview().endBeats == 106.18);
+    ruler->mouseUp(rulerEvent({309, 12}, {300, 12}, 0));
+    CHECK(transportState.getLoopRegion().startBeats == 106.0 && transportState.getLoopRegion().endBeats == 106.18);
+    CHECK(!ruler->isDraggingLoop());
+    // A set-but-disabled region paints dim and stays grabbable (it is visible);
+    // committing any ruler gesture on it re-enables looping.
+    transportState.setLoopRegion(105.5, 107.25); // Wider region: an interior beyond the edge zones.
+    transportState.setLoopEnabled(false); // Every loop notification resyncs the ruler to the viewport offset.
+    ruler->setScrollOffset(100 * 50);
+    juce::Image dimmed(juce::Image::RGB, 400, 24, true);
+    { juce::Graphics dimmedGraphics(dimmed); ruler->paint(dimmedGraphics); }
+    CHECK(dimmed.getPixelAt(302, 1) == juce::Colour(0xff667788)); // Dim edge row of the 300..309 band.
+    CHECK(dimmed.getPixelAt(305, 20) == juce::Colour(0xff383e44)); // Dim fill, below the tick labels.
+    CHECK(dimmed.getPixelAt(308, 20) == juce::Colour(0xff383e44));
+    ruler->mouseMove(rulerEvent({305, 12}, {305, 12}, 0)); // Plain inside the dim body: create.
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
+    ruler->mouseMove(rulerEvent({305, 12}, {305, 12}, juce::ModifierKeys::shiftModifier)); // Shift moves a dim region too.
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::DraggingHandCursor);
+    ruler->mouseMove(rulerEvent({278, 12}, {278, 12}, 0)); // Near the dim start edge 105.5: resize.
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::LeftRightResizeCursor);
+    ruler->mouseDown(rulerEvent({305, 12}, {305, 12}));
+    ruler->mouseDrag(rulerEvent({362, 12}, {305, 12})); // beat 107.24
+    CHECK(ruler->isDraggingLoop());
+    CHECK(ruler->getLoopPreview().startBeats == 106.125 && ruler->getLoopPreview().endBeats == 107.25);
+    CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
+    ruler->mouseUp(rulerEvent({362, 12}, {305, 12}, 0));
+    CHECK(transportState.isLoopEnabled()); // The created region re-enables looping.
+    CHECK(!ruler->isDraggingLoop());
+    // Clearing removes the loop from the model and the ruler entirely.
+    transportState.clearLoop();
+    CHECK(!transportState.isLoopRegionSet() && !transportState.isLoopEnabled());
+    ruler->setScrollOffset(100 * 50); // clearLoop notified; resync.
+    juce::Image cleared(juce::Image::RGB, 400, 24, true);
+    { juce::Graphics clearedGraphics(cleared); ruler->paint(clearedGraphics); }
+    CHECK(cleared.getPixelAt(25, 1) == juce::Colour(0xff2a2a2a));
+    CHECK(cleared.getPixelAt(302, 1) == juce::Colour(0xff2a2a2a));
+    CHECK(cleared.getPixelAt(305, 20) == juce::Colour(0xff2a2a2a));
+    // A drag with no region creates one; enabling the cleared loop uses the default region.
+    ruler->mouseDown(rulerEvent({305, 12}, {305, 12}));
+    ruler->mouseDrag(rulerEvent({362, 12}, {305, 12}));
+    CHECK(ruler->getLoopPreview().startBeats == 106.125 && ruler->getLoopPreview().endBeats == 107.25);
+    ruler->mouseUp(rulerEvent({362, 12}, {305, 12}, 0));
+    CHECK(transportState.isLoopEnabled() && transportState.isLoopRegionSet());
+    CHECK(transportState.getLoopRegion().startBeats == 106.125 && transportState.getLoopRegion().endBeats == 107.25);
+    transportState.clearLoop();
+    transportState.setLoopEnabled(true); // Enabling a cleared loop materializes the default region.
+    CHECK(transportState.isLoopRegionSet() && transportState.getLoopRegion().startBeats == 0 &&
+          transportState.getLoopRegion().endBeats == 4.0);
+    ruler->setScrollOffset(0); // The default [0, 4) band sits at the ruler origin.
+    juce::Image defaulted(juce::Image::RGB, 400, 24, true);
+    { juce::Graphics defaultedGraphics(defaulted); ruler->paint(defaultedGraphics); }
+    CHECK(defaulted.getPixelAt(2, 1) == juce::Colour(0xff66aaff));
+    CHECK(defaulted.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a)); // Past the band, off the tick lines.
 }
 
 static void loopPedalAndLedgerTests() {
@@ -1969,6 +3070,475 @@ static void loopClickAndClockTests() {
     CHECK(renderAllocations == 0 && renderDeletions == 0);
 }
 
+static const juce::PopupMenu::Item* menuText(juce::PopupMenu& menu, juce::StringRef text) {
+    const juce::PopupMenu::Item* found = nullptr;
+    juce::PopupMenu::MenuItemIterator it(menu);
+    while (it.next()) {
+        const auto& item = it.getItem();
+        if (item.text == text && found == nullptr) found = &item;
+    }
+    return found;
+}
+
+static void contextMenuTests() {
+    // T14: target-specific menus and keyboard actions; all delayed actions
+    // re-resolve stable IDs, so deleted targets become harmless no-ops.
+    // Native dialogs are intercepted: offline coverage exercises show/accept/
+    // cancel routing without windows; visible dialogs stay watcher/manual.
+    int promptsShown = 0, confirmsShown = 0;
+    juce::String nextPromptResponse = "Intercepted Name";
+    vibedaw::textPromptInterceptor() = [&](const juce::String&, const juce::String&, const juce::String&,
+                                           juce::Component*, std::function<void(const juce::String&)> accept) {
+        ++promptsShown;
+        accept(nextPromptResponse);
+    };
+    std::function<void()> pendingConfirm;
+    juce::String confirmTitle, confirmMessage;
+    vibedaw::confirmInterceptor() = [&](const juce::String& title, const juce::String& message, const juce::String&,
+                                        juce::Component*, std::function<void()> ok) {
+        ++confirmsShown;
+        confirmTitle = title;
+        confirmMessage = message;
+        pendingConfirm = std::move(ok);
+    };
+    {
+        // Channel row: menu acts on the clicked row without changing the
+        // audition selection until an explicit Select action runs (T10 contract).
+        Project project;
+        ChannelRackContent rack(project);
+        rack.setSize(250, 240);
+        rack.setVisible(true);
+        auto* alpha = project.getChannelList().addChannel("Alpha");
+        auto* beta = project.getChannelList().addChannel("Beta");
+        auto* rowAlpha = dynamic_cast<ChannelRow*>(rack.getChildComponent(1));
+        CHECK(rowAlpha && rowAlpha->getChannel() == alpha);
+        CHECK(project.getActiveChannelId() == InvalidChannelId);
+        auto menu = rowAlpha->createContextMenu();
+        CHECK(menu.getNumItems() == 5); // Open Plugin Editor, reason header, Select, Rename, Remove (separator excluded).
+        auto* open = menuText(menu, "Open Plugin Editor");
+        CHECK(open && !open->isEnabled && open->action != nullptr); // No editor; reason shown.
+        auto* select = menuText(menu, "Select for Live Audition & New Placements");
+        CHECK(select && select->action != nullptr && !select->isTicked);
+        CHECK(menuText(menu, "Rename Channel…") != nullptr);
+        CHECK(menuText(menu, "Remove Channel…") != nullptr);
+        select->action(); // The clicked row, not a prior selection, is resolved.
+        CHECK(project.getActiveChannelId() == alpha->getId());
+        CHECK(rowAlpha->isSelected());
+        auto retick = rowAlpha->createContextMenu();
+        CHECK(menuText(retick, "Select for Live Audition & New Placements")->isTicked);
+        // Model actions by stable ID; blank names are rejected.
+        rack.renameChannelById(alpha->getId(), "Renamed");
+        CHECK(project.getChannelList().getChannelById(alpha->getId())->getName() == "Renamed");
+        rack.renameChannelById(alpha->getId(), "   ");
+        CHECK(project.getChannelList().getChannelById(alpha->getId())->getName() == "Renamed");
+        // Placement impact is counted for the removal warning.
+        auto& tracks = project.getTrackList();
+        auto* track = tracks.addTrack();
+        auto midi = std::make_unique<MidiClip>(0, 4);
+        const auto clipId = project.getClipPool().addClip(std::move(midi));
+        track->addClipInstance(std::make_unique<ClipInstance>(clipId, alpha->getId(), 0, 4));
+        CHECK(rack.countPlacementsToChannel(alpha->getId()) == 1);
+        // The rename prompt shares the validated action; the dialog is intercepted.
+        const int promptsBeforeLiveRename = promptsShown;
+        rowAlpha->renameRequested();
+        CHECK(promptsShown == promptsBeforeLiveRename + 1);
+        CHECK(project.getChannelList().getChannelById(alpha->getId())->getName() == "Intercepted Name");
+        // Action copies outlive row rebuilds and channel deletion without mutation.
+        auto selectAction = rowAlpha->selectAsActive;
+        auto renameAction = rowAlpha->renameRequested;
+        auto removeAction = rowAlpha->removeRequested;
+        rack.removeChannelById(beta->getId());
+        CHECK(project.getChannelList().getNumChannels() == 1 &&
+              project.getChannelList().getChannelById(alpha->getId()) != nullptr);
+        CHECK(project.getActiveChannelId() == alpha->getId());
+        rack.removeChannelById(alpha->getId());
+        CHECK(project.getChannelList().getNumChannels() == 0);
+        const int promptsBeforeStale = promptsShown, confirmsBeforeStale = confirmsShown;
+        selectAction();
+        renameAction();
+        removeAction(); // Deleted targets: no prompt, no dialog, no mutation.
+        CHECK(promptsShown == promptsBeforeStale && confirmsShown == confirmsBeforeStale);
+        CHECK(project.getActiveChannelId() == InvalidChannelId);
+        CHECK(track->getNumClipInstances() == 1); // Placement remains as an unresolved placeholder.
+        CHECK(track->getClipInstance(0)->getChannelId() == alpha->getId());
+    }
+
+    {
+        // Pooled MIDI clip row: explicit edit, rename, and a distinct Delete Source.
+        Project project;
+        ClipsContent clips(project);
+        clips.setSize(250, 240);
+        clips.setVisible(true);
+        auto* channel = project.getChannelList().addChannel("Dest");
+        auto* track = project.getTrackList().addTrack("T");
+        auto midi = std::make_unique<MidiClip>(0, 4);
+        midi->setName("Source");
+        const auto clipId = project.getClipPool().addClip(std::move(midi));
+        track->addClipInstance(std::make_unique<ClipInstance>(clipId, channel->getId(), 0, 4));
+        auto* row = dynamic_cast<ClipRow*>(clips.getChildComponent(2));
+        CHECK(row && row->getClipId() == clipId);
+        auto menu = row->createContextMenu();
+        CHECK(menu.getNumItems() == 3);
+        auto* editItem = menuText(menu, "Edit in Piano Roll");
+        CHECK(editItem && editItem->isEnabled && editItem->action != nullptr);
+        auto* renameItem = menuText(menu, "Rename Clip…");
+        auto* deleteItem = menuText(menu, "Delete Source…");
+        CHECK(renameItem && renameItem->isEnabled && renameItem->action != nullptr);
+        CHECK(deleteItem && deleteItem->isEnabled && deleteItem->action != nullptr);
+        CHECK(clips.countPlacementsOfClip(clipId) == 1);
+        clips.renameClipById(clipId, "Renamed");
+        CHECK(project.getClipPool().getClip(clipId)->getName() == "Renamed");
+        clips.renameClipById(clipId, "");
+        CHECK(project.getClipPool().getClip(clipId)->getName() == "Renamed");
+        // The menu's rename prompt shares the validated action.
+        const int promptsBeforeMenuRename = promptsShown;
+        renameItem->action();
+        CHECK(promptsShown == promptsBeforeMenuRename + 1);
+        CHECK(project.getClipPool().getClip(clipId)->getName() == "Intercepted Name");
+        clips.deleteSourceById(clipId);
+        CHECK(project.getClipPool().getClip(clipId) == nullptr);
+        CHECK(track->getNumClipInstances() == 1); // Placement survives as a placeholder.
+        CHECK(track->getClipInstance(0)->getClipId() == clipId);
+
+        // Button/menu parity: the footer Delete Source shares the menu's
+        // confirmed, impact-warned path and never mutates before the dialog
+        // resolves. Cancel preserves the source; confirm deletes it only.
+        auto second = std::make_unique<MidiClip>(0, 4);
+        second->setName("Second");
+        const auto secondId = project.getClipPool().addClip(std::move(second));
+        track->addClipInstance(std::make_unique<ClipInstance>(secondId, channel->getId(), 4, 4));
+        clips.clipSelected(secondId, project.getClipPool().getClip(secondId));
+        ClipsContentTestAccess::clickDeleteSource(clips);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(50); // Deliver the click; the dialog is intercepted.
+        CHECK(pendingConfirm != nullptr); // The impact warning is pending, nothing mutated.
+        CHECK(confirmTitle == "Delete Source");
+        CHECK(confirmMessage.contains("Second") && confirmMessage.contains("1 placement(s)"));
+        CHECK(project.getClipPool().getClip(secondId) != nullptr);
+        pendingConfirm = nullptr; // Cancel: no mutation.
+        CHECK(project.getClipPool().getClip(secondId) != nullptr);
+        ClipsContentTestAccess::clickDeleteSource(clips);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        CHECK(pendingConfirm != nullptr);
+        pendingConfirm(); // Simulated OK.
+        pendingConfirm = nullptr;
+        CHECK(project.getClipPool().getClip(secondId) == nullptr); // Confirmed deletion.
+        CHECK(track->getNumClipInstances() == 2); // Both placements remain as placeholders.
+        CHECK(track->getClipInstance(1)->getClipId() == secondId);
+        // The same menu item's delete action routes through the same confirmation.
+        ClipsContentTestAccess::clickDeleteSource(clips); // Nothing selected: no dialog.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        CHECK(pendingConfirm == nullptr);
+    }
+
+    {
+        // Track header: rename refreshes the header; removal is by stable UUID.
+        TrackList tracks;
+        TrackHeaderList list(tracks);
+        list.setSize(150, 300);
+        list.setVisible(true);
+        auto* one = tracks.addTrack("One");
+        tracks.addTrack("Two");
+        auto* header = dynamic_cast<TrackHeader*>(list.getChildComponent(0));
+        CHECK(header && header->getTrack() == one && header->getTrackName() == "One");
+        auto menu = header->createContextMenu();
+        CHECK(menu.getNumItems() == 2);
+        CHECK(menuText(menu, "Rename Track…") != nullptr && menuText(menu, "Rename Track…")->isEnabled);
+        CHECK(menuText(menu, "Remove Track…") != nullptr && menuText(menu, "Remove Track…")->isEnabled);
+        auto renameAction = header->onRenameRequested;
+        auto removeAction = header->onRemoveRequested;
+        list.renameTrackById(one->getId(), "First");
+        CHECK(one->getName() == "First");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(25);
+        CHECK(header->getTrackName() == "First"); // Track change listener refreshes the header.
+        list.renameTrackById("not-a-track", "X");
+        list.renameTrackById(one->getId(), "  ");
+        CHECK(one->getName() == "First");
+        // The rename prompt shares the validated action; the dialog is intercepted.
+        const int promptsBeforeTrackRename = promptsShown;
+        renameAction();
+        CHECK(promptsShown == promptsBeforeTrackRename + 1);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(25);
+        CHECK(one->getName() == "Intercepted Name" && header->getTrackName() == "Intercepted Name");
+        tracks.addTrack("Three");
+        const auto oneId = one->getId();
+        list.removeTrackById(oneId);
+        CHECK(tracks.getNumTracks() == 2 && tracks.getTrack(0)->getName() == "Two");
+        list.removeTrackById(oneId); // Stale no-op.
+        CHECK(tracks.getNumTracks() == 2);
+        const int dialogsBeforeStaleTrack = promptsShown + confirmsShown;
+        renameAction(); // Targets gone: prompts and confirmations are skipped entirely.
+        removeAction();
+        CHECK(promptsShown + confirmsShown == dialogsBeforeStaleTrack);
+        CHECK(tracks.getNumTracks() == 2);
+    }
+
+    {
+        // Timeline placement menu: contents, destination submenu, stale actions,
+        // and Delete/Ctrl+E keyboard access.
+        Project project;
+        TimelinePanel panel(project);
+        panel.setSize(800, 420);
+        panel.setVisible(true);
+        TimelineContent* content = nullptr;
+        for (auto* child : panel.getChildren()) if (auto* c = dynamic_cast<TimelineContent*>(child)) content = c;
+        CHECK(content);
+        auto& tracks = project.getTrackList();
+        auto& pool = project.getClipPool();
+        auto& channels = project.getChannelList();
+        auto* alpha = channels.addChannel("Alpha");
+        auto* beta = channels.addChannel("Beta");
+        auto* samp = channels.addChannel("Samp", Channel::Type::Sampler);
+        auto midi = std::make_unique<MidiClip>(0, 4);
+        midi->setName("Source");
+        const auto clipId = pool.addClip(std::move(midi));
+        auto audio = std::make_unique<AudioClip>(0, 2);
+        const auto audioId = pool.addClip(std::move(audio));
+        project.setActiveChannel(0);
+        panel.setSelectedClip(clipId);
+        auto* track = tracks.addTrack("T1");
+        track->addClipInstance(std::make_unique<ClipInstance>(clipId, alpha->getId(), 1, 4));
+        auto* instance = track->getClipInstance(0);
+        const auto trackId = track->getId(), instanceId = instance->getId();
+
+        auto menu = TimelineContentTestAccess::placementMenu(*content, *track, *instance);
+        juce::PopupMenu::MenuItemIterator first(menu);
+        CHECK(first.next() && first.getItem().isSectionHeader &&
+              first.getItem().text.contains("T1 — Source"));
+        auto* editItem = menuText(menu, "Edit Shared Source");
+        CHECK(editItem && editItem->isEnabled && editItem->action != nullptr);
+        auto* assign = menuText(menu, "Assign to Destination");
+        CHECK(assign && assign->subMenu != nullptr);
+        CHECK(assign->subMenu->getNumItems() == 2); // Instruments only; the sampler is excluded.
+        auto* tickedAlpha = menuText(*assign->subMenu, "Alpha (#" + juce::String(alpha->getId()) + ")");
+        CHECK(tickedAlpha && tickedAlpha->isTicked);
+        auto* betaItem = menuText(*assign->subMenu, "Beta (#" + juce::String(beta->getId()) + ")");
+        CHECK(betaItem && !betaItem->isTicked && betaItem->action != nullptr);
+        betaItem->action();
+        CHECK(instance->getChannelId() == beta->getId());
+        CHECK(!content->assignPlacementDestinationById(trackId, instanceId, samp->getId()));
+        CHECK(!content->assignPlacementDestinationById(trackId, instanceId, InvalidChannelId));
+        CHECK(instance->getChannelId() == beta->getId());
+        CHECK(content->assignPlacementDestinationById(trackId, instanceId, alpha->getId()));
+        auto* mute = menuText(menu, "Mute");
+        CHECK(mute && !mute->isTicked && mute->action != nullptr);
+        mute->action();
+        CHECK(instance->isMuted());
+        auto menuAfterMute = TimelineContentTestAccess::placementMenu(*content, *track, *instance);
+        auto* unmute = menuText(menuAfterMute, "Unmute");
+        CHECK(unmute && unmute->isTicked && unmute->action != nullptr);
+        unmute->action();
+        CHECK(!instance->isMuted());
+        CHECK(content->setPlacementStartById(trackId, instanceId, 3.25));
+        CHECK(instance->getStartTime() == 3.25);
+        CHECK(!content->setPlacementStartById(trackId, instanceId, -0.5));
+        CHECK(!content->setPlacementStartById(trackId, instanceId, std::numeric_limits<double>::infinity()));
+        CHECK(!content->setPlacementStartById(trackId, instanceId, std::numeric_limits<double>::quiet_NaN()));
+        CHECK(!content->setPlacementStartById("gone", instanceId, 1.0));
+        CHECK(instance->getStartTime() == 3.25);
+        // The menu's Set Start Beat prompt shares the validated action and
+        // rejects unparseable input without mutating.
+        auto* startItem = menuText(menu, "Set Start Beat…");
+        CHECK(startItem && startItem->isEnabled && startItem->action != nullptr);
+        const int promptsBeforeStart = promptsShown;
+        nextPromptResponse = "3.5";
+        startItem->action();
+        CHECK(promptsShown == promptsBeforeStart + 1);
+        CHECK(instance->getStartTime() == 3.5);
+        nextPromptResponse = "not a number";
+        startItem->action();
+        CHECK(promptsShown == promptsBeforeStart + 2);
+        CHECK(instance->getStartTime() == 3.5);
+        nextPromptResponse = "Intercepted Name";
+
+        CHECK(content->removePlacementById(trackId, instanceId));
+        CHECK(track->getNumClipInstances() == 0);
+        CHECK(pool.getClip(clipId) != nullptr); // Removing a placement keeps the source.
+        CHECK(!content->removePlacementById(trackId, instanceId)); // Stale IDs: harmless no-ops.
+        CHECK(!content->setPlacementStartById(trackId, instanceId, 1.0));
+        CHECK(!content->togglePlacementMuteById(trackId, instanceId));
+        CHECK(!content->assignPlacementDestinationById(trackId, instanceId, alpha->getId()));
+        CHECK(!content->editPlacementSourceById(trackId, instanceId));
+
+        // A menu built before its target vanished performs no mutation and
+        // raises no dialog.
+        track->addClipInstance(std::make_unique<ClipInstance>(clipId, alpha->getId(), 0, 4));
+        auto* second = track->getClipInstance(0);
+        auto stale = TimelineContentTestAccess::placementMenu(*content, *track, *second);
+        auto* removeItem = menuText(stale, "Remove Placement (source stays in Clips)");
+        CHECK(removeItem && removeItem->action != nullptr);
+        auto removeFn = removeItem->action;
+        auto* staleStartItem = menuText(stale, "Set Start Beat…");
+        CHECK(staleStartItem && staleStartItem->action != nullptr);
+        auto staleStartFn = staleStartItem->action;
+        track->clearClipInstances(); // Deleted while the menu is open.
+        const int dialogsBeforeStaleMenu = promptsShown + confirmsShown;
+        removeFn();
+        staleStartFn();
+        CHECK(promptsShown + confirmsShown == dialogsBeforeStaleMenu);
+        CHECK(track->getNumClipInstances() == 0 && pool.getClip(clipId) != nullptr);
+
+        // Unresolved source and destination are visible and disabled, not rerouted.
+        auto* ghost = channels.addChannel("Ghost");
+        const auto ghostId = ghost->getId();
+        track->addClipInstance(std::make_unique<ClipInstance>(audioId, ghostId, 0, 2));
+        pool.removeClip(audioId);
+        channels.removeChannel(channels.indexOfChannel(ghost));
+        auto* unresolved = track->getClipInstance(0);
+        CHECK(pool.getClip(audioId) == nullptr && channels.getChannelById(ghostId) == nullptr);
+        auto menuUnresolved = TimelineContentTestAccess::placementMenu(*content, *track, *unresolved);
+        auto* editUnresolved = menuText(menuUnresolved, "Edit Shared Source");
+        CHECK(editUnresolved && !editUnresolved->isEnabled);
+        auto* assignUnresolved = menuText(menuUnresolved, "Assign to Destination");
+        CHECK(assignUnresolved && assignUnresolved->subMenu != nullptr);
+        auto* unresolvedItem = menuText(*assignUnresolved->subMenu,
+            "(current destination unresolved #" + juce::String(ghostId) + ")");
+        CHECK(unresolvedItem && !unresolvedItem->isEnabled);
+        CHECK(assignUnresolved->subMenu->getNumItems() == 3); // Alpha, Beta, and the marker.
+
+        // A live audio placement cannot open the MIDI editor.
+        auto audio2 = std::make_unique<AudioClip>(0, 2);
+        const auto audio2Id = pool.addClip(std::move(audio2));
+        track->addClipInstance(std::make_unique<ClipInstance>(audio2Id, alpha->getId(), 5, 2));
+        auto* audioPlacement = track->getClipInstance(1);
+        auto menuAudio = TimelineContentTestAccess::placementMenu(*content, *track, *audioPlacement);
+        CHECK(!menuText(menuAudio, "Edit Shared Source")->isEnabled);
+        CHECK(!content->editPlacementSourceById(track->getId(), audioPlacement->getId()));
+
+        // Keyboard: Delete/Backspace removes the selected placement, Ctrl+E edits
+        // its shared source; unrelated keys and empty selections are untouched.
+        ClipId edited = InvalidClipId;
+        panel.onEditSource = [&](ClipId id) { edited = id; };
+        track->addClipInstance(std::make_unique<ClipInstance>(clipId, alpha->getId(), 10, 4));
+        auto* midiPlacement = track->getClipInstance(2);
+        midiPlacement->setSelected(true);
+        CHECK(content->editSelectedPlacementSource());
+        CHECK(content->keyPressed(juce::KeyPress('E', juce::ModifierKeys::ctrlModifier, 0)));
+        CHECK(edited == clipId);
+        midiPlacement->setSelected(false);
+        edited = InvalidClipId;
+        CHECK(!content->keyPressed(juce::KeyPress('E', juce::ModifierKeys::ctrlModifier, 0)));
+        CHECK(edited == InvalidClipId);
+        midiPlacement->setSelected(true);
+        CHECK(content->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+        CHECK(track->getNumClipInstances() == 2 &&
+              track->getClipInstance(0) == unresolved && track->getClipInstance(1) == audioPlacement);
+        CHECK(!content->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+        CHECK(!content->keyPressed(juce::KeyPress(juce::KeyPress::backspaceKey)));
+        CHECK(content->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+        CHECK(!content->keyPressed(juce::KeyPress('x')));
+
+        // Empty-space menus place through the same commit path as drags.
+        panel.setSelectedClip(clipId);
+        project.setActiveChannel(channels.indexOfChannel(alpha));
+        CHECK(content->pooledPlacementIsValid(2.5));
+        struct TrackProbe : TrackList::Listener {
+            explicit TrackProbe(TrackList& list) : tracks(list) { tracks.addListener(this); }
+            ~TrackProbe() override { tracks.removeListener(this); }
+            int added = 0;
+            void trackAdded(Track*) override { ++added; }
+            void trackRemoved(int) override {}
+            void trackChanged(Track*) override {}
+            void trackListChanged() override {}
+            TrackList& tracks;
+        } probe(tracks);
+        auto menuNew = TimelineContentTestAccess::emptySpaceMenu(*content, {}, true, 2.5);
+        CHECK(menuNew.getNumItems() == 3); // Section header, Place, Add Track.
+        auto* placeNew = menuText(menuNew, "Place Selected Clip Here");
+        CHECK(placeNew && placeNew->isEnabled && placeNew->action != nullptr);
+        auto placeNewFn = placeNew->action;
+        placeNewFn();
+        CHECK(tracks.getNumTracks() == 2 && probe.added == 1);
+        auto* newTrack = tracks.getTrack(1);
+        CHECK(newTrack->getNumClipInstances() == 1);
+        CHECK(newTrack->getClipInstance(0)->getStartTime() == 2.5);
+        CHECK(newTrack->getClipInstance(0)->getChannelId() == alpha->getId());
+        CHECK(newTrack->getClipInstance(0)->isSelected());
+        // Existing empty lane space commits on that track; no new lane appears.
+        auto menuExisting = TimelineContentTestAccess::emptySpaceMenu(*content, track->getId(), false, 10.0);
+        auto* placeExisting = menuText(menuExisting, "Place Selected Clip Here");
+        CHECK(placeExisting && placeExisting->isEnabled);
+        placeExisting->action();
+        CHECK(track->getNumClipInstances() == 3);
+        CHECK(track->getClipInstance(2)->getStartTime() == 10.0);
+        CHECK(tracks.getNumTracks() == 2 && probe.added == 1);
+        // Enablement mirrors the commit contract.
+        panel.setSelectedClip(InvalidClipId);
+        CHECK(!content->pooledPlacementIsValid(1.0));
+        auto menuNoClip = TimelineContentTestAccess::emptySpaceMenu(*content, {}, true, 1.0);
+        CHECK(!menuText(menuNoClip, "Place Selected Clip Here")->isEnabled);
+        panel.setSelectedClip(audio2Id); // Audio source.
+        CHECK(!content->pooledPlacementIsValid(1.0));
+        project.setActiveChannel(channels.indexOfChannel(samp));
+        panel.setSelectedClip(clipId);
+        CHECK(!content->pooledPlacementIsValid(1.0)); // Sampler destination.
+        project.setActiveChannel(channels.indexOfChannel(alpha));
+        panel.setSelectedClip(clipId);
+        // A target deleted while the menu is open must not become a new lane.
+        auto* victim = tracks.addTrack("Victim");
+        const auto victimId = victim->getId();
+        auto menuVictim = TimelineContentTestAccess::emptySpaceMenu(*content, victimId, false, 1.0);
+        auto* placeVictim = menuText(menuVictim, "Place Selected Clip Here");
+        CHECK(placeVictim && placeVictim->isEnabled);
+        auto victimFn = placeVictim->action;
+        tracks.removeTrack(tracks.indexOfTrack(victim));
+        victimFn();
+        CHECK(tracks.getNumTracks() == 2);
+        auto menuAdd = TimelineContentTestAccess::emptySpaceMenu(*content, {}, true, 0.0);
+        auto* addTrack = menuText(menuAdd, "Add Track");
+        CHECK(addTrack && addTrack->isEnabled && addTrack->action != nullptr);
+        addTrack->action();
+        CHECK(tracks.getNumTracks() == 3 && probe.added == 3); // Two placements plus the victim each created one lane.
+    }
+
+    {
+        // Browser plugin: the context action uses the same load path as a double-click.
+        PluginScanner scanner;
+        PluginSection section(scanner);
+        section.setSize(200, 220);
+        section.setVisible(true);
+        struct PluginActions : PluginSection::Listener {
+            juce::String doubleClicked;
+            void pluginSelected(const juce::String&) override {}
+            void pluginDoubleClicked(const juce::String& path) override { doubleClicked = path; }
+        } actions;
+        section.setPluginListener(&actions);
+        section.createChannelFromPlugin("/offline/test.vst3");
+        CHECK(actions.doubleClicked == "/offline/test.vst3");
+    }
+
+    {
+        // Piano roll grid: focused Delete removes selected notes and clears
+        // the borrowed selection on invalidation.
+        MidiClip midi(0, 4);
+        midi.addNote(Note(60, 0, 1));
+        midi.addNote(Note(62, 1, 1));
+        NoteGridComponent grid;
+        grid.setMidiClip(&midi);
+        struct NoteEvents : NoteGridComponent::Listener {
+            int removed = 0;
+            int pitch = -1;
+            void noteAdded(const Note&) override {}
+            void noteRemoved(const Note& note) override { ++removed; pitch = note.getPitch(); }
+            void noteChanged(const Note&) override {}
+        } events;
+        grid.setListener(&events);
+        grid.selectNote(&midi.getNotes()[0]); // Taken after all additions: borrowed pointers die on reallocation.
+        CHECK(grid.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+        CHECK(midi.getNumNotes() == 1 && events.removed == 1 && events.pitch == 60);
+        CHECK(!grid.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey))); // Selection was cleared.
+        CHECK(!grid.keyPressed(juce::KeyPress('x')));
+        auto* surviving = &midi.getNotes()[0];
+        grid.selectNote(surviving);
+        midi.removeNote(0); // Invalidation clears borrowed selection pointers.
+        CHECK(grid.getSelectedNotes().empty());
+    }
+
+    vibedaw::textPromptInterceptor() = nullptr;
+    vibedaw::confirmInterceptor() = nullptr;
+    CHECK(pendingConfirm == nullptr); // Every intercepted dialog resolved; none lingers.
+    CHECK(juce::Component::getNumCurrentlyModalComponents() == 0);
+}
+
 int main() {
     try {
         // Project's real destructor saves settings. Never touch the user's home.
@@ -1980,6 +3550,15 @@ int main() {
         modelTests();
         renderTests();
         reviewRegressionTests();
+        pluginEditorBindingTests();
+        rackDropAndClipCreationTests();
+        timelineDragTests();
+        timelineCommitTests();
+        timelineInvalidationTests();
+        timelineGestureReviewTests();
+        sidebarRailTests();
+        contextMenuTests();
+        pluginEditorCreationTests();
         transportClockTests();
         transportEngineTests();
         arrangementPlaybackTests();
@@ -1996,11 +3575,12 @@ int main() {
         loopControlCapacityTests();
         metronomeTests();
         clickMasterAndOverflowTests();
+        iconTests();
         loopUiTests();
         loopPedalAndLedgerTests();
         loopClickAndClockTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "T03/T06/T01/T02/T04 and T05 loop/metronome tests passed\n";
+        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu and T16 loop UX tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

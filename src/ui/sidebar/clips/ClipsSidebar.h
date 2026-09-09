@@ -32,11 +32,23 @@ public:
     
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent&) override { pressActive_ = false; }
+    juce::var getDragDescription() const;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
+    juce::PopupMenu createContextMenu() const;
+    // Delayed menu actions resolve stable IDs through the lifetime-checked pool.
+    std::function<void()> editSource;
+    std::function<void()> renameRequested;
+    std::function<void()> deleteSourceRequested;
     
     static constexpr int rowHeight = 28;
     
 private:
+    friend struct ClipRowTestAccess;
+    juce::var dragDescription_;
+    bool pressActive_ = false, dragStarted_ = false;
+    std::function<void(const juce::var&, bool)> dragStarter_;
     ClipId clipId_;
     Clip* clip_;
     int index_;
@@ -60,8 +72,15 @@ public:
     ~ClipsContent();
     
     void setClipsListener(Listener* listener) { clipsListener_ = listener; }
-    
+
     void refreshClips();
+
+    // Context-menu actions; all resolve by stable ClipId and no-op when the
+    // source is gone. Confirmation dialogs live in the menu bindings only.
+    void renameClipById(ClipId clipId, const juce::String& name);
+    void deleteSourceById(ClipId clipId);
+    void deleteSourceWithConfirmation(ClipId clipId);
+    int countPlacementsOfClip(ClipId clipId) const;
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -74,6 +93,7 @@ public:
     void clipOpened(ClipId clipId, Clip* clip) override;
     
 private:
+    friend struct ClipsContentTestAccess;
     Project& project_;
     Listener* clipsListener_ = nullptr;
     

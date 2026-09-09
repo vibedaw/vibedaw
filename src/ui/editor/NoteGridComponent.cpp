@@ -190,9 +190,9 @@ void NoteGridComponent::paint(juce::Graphics& g) {
 
 void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
     if (!midiClip_) return;
-    
+
     const Note* existingNote = findNoteAt(e.x, e.y);
-    
+
     if (e.mods.isRightButtonDown()) {
         if (existingNote) {
             Note removed = *existingNote;
@@ -204,7 +204,9 @@ void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
         repaint();
         return;
     }
-    
+
+    grabKeyboardFocus();
+
     if (e.mods.isShiftDown() && existingNote) {
         selectNote(existingNote);
         return;
@@ -323,6 +325,30 @@ void NoteGridComponent::mouseDoubleClick(const juce::MouseEvent& e) {
         }
         repaint();
     }
+}
+
+bool NoteGridComponent::keyPressed(const juce::KeyPress& key) {
+    if (!midiClip_ || selectedNotes_.empty()) return false;
+    if (!key.isKeyCode(juce::KeyPress::deleteKey) && !key.isKeyCode(juce::KeyPress::backspaceKey)) return false;
+    // removeNote invalidates borrowed pointers and clears the grid selection,
+    // so delete from value snapshots, re-resolving each live note.
+    std::vector<Note> snapshot;
+    snapshot.reserve(selectedNotes_.size());
+    for (const auto* note : selectedNotes_) snapshot.push_back(*note);
+    bool removed = false;
+    for (const auto& value : snapshot) {
+        for (const auto& note : midiClip_->getNotes()) {
+            if (note.getStartTime() == value.getStartTime() && note.getPitch() == value.getPitch()) {
+                Note removedNote = note;
+                midiClip_->removeNote(&note);
+                if (listener_) listener_->noteRemoved(removedNote);
+                removed = true;
+                break;
+            }
+        }
+    }
+    repaint();
+    return removed;
 }
 
 void NoteGridComponent::scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeStart) {

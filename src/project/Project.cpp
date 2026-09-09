@@ -6,6 +6,10 @@
 namespace vibedaw {
 
 Project::Project() {
+    pluginLoader_ = [](const juce::String& path) -> std::unique_ptr<PluginHost> {
+        auto host = std::make_unique<PluginHost>();
+        return host->loadPlugin(path) ? std::move(host) : nullptr;
+    };
     channelList.addListener(this);
     LOG_INFO("Project: Created");
 }
@@ -52,22 +56,34 @@ void Project::saveSettings() {
     settings.saveToFile(settingsFile);
 }
 
-bool Project::loadPlugin(const juce::String& pluginPath) {
+bool Project::loadPlugin(const juce::String& pluginPath, ChannelId target) {
+    JUCE_ASSERT_MESSAGE_THREAD
     LOG_INFO("Project: Loading plugin: " + pluginPath);
-    
-    auto pluginHost = std::make_unique<PluginHost>();
-    if (!pluginHost->loadPlugin(pluginPath)) {
+    const bool creating = target == InvalidChannelId;
+    if (pluginPath.trim().isEmpty() ||
+        (creating ? channelList.getNumChannels() >= ChannelList::maxChannels
+                  : channelList.getChannelById(target) == nullptr)) return false;
+
+    AudioQuiescence::Edit edit;
+    auto pluginHost = pluginLoader_(pluginPath);
+    if (!pluginHost || !pluginHost->isLoaded() ||
+        pluginHost->getProcessor()->getTotalNumInputChannels() > 2 ||
+        pluginHost->getProcessor()->getTotalNumOutputChannels() > 2) {
         LOG_ERROR("Project: Failed to load plugin");
         return false;
     }
     
-    auto* channel = channelList.addChannel(pluginHost->getPluginName(), Channel::Type::Instrument);
+    // Re-resolve after loading: hosted code may have dispatched message-thread work.
+    auto* channel = creating
+        ? channelList.addChannel(pluginHost->getPluginName(), Channel::Type::Instrument)
+        : channelList.getChannelById(target);
     if (!channel) return false;
     channel->setPlugin(std::move(pluginHost));
     
-    settings.pluginPath = pluginPath;
-    
-    setActiveChannel(channelList.indexOfChannel(channel));
+    if (creating) {
+        settings.pluginPath = pluginPath;
+        setActiveChannel(channelList.indexOfChannel(channel));
+    }
     
     LOG_INFO("Project: Plugin loaded successfully");
     return true;

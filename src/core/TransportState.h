@@ -28,7 +28,10 @@ struct TimeSignature {
 
 struct LoopRegion {
     // Half-open [startBeats, endBeats), in quarter-note beats regardless of meter.
+    // exists distinguishes "no loop" (cleared/never created: nothing on the
+    // ruler, no grabbing) from set-but-disabled (dim band, grabbable).
     bool enabled = false;
+    bool exists = false;
     double startBeats = 0.0;
     double endBeats = 4.0;
 };
@@ -87,7 +90,10 @@ public:
     
     void setLoopEnabled(bool enabled);
     void setLoopRegion(double startBeats, double endBeats);
+    // Removes the loop entirely: nothing on the ruler, nothing grabbable.
+    void clearLoop();
     bool isLoopEnabled() const { return loop_.enabled; }
+    bool isLoopRegionSet() const { return loop_.exists; }
     LoopRegion getLoopRegion() const { return loop_; }
     
     void setMetronomeEnabled(bool enabled);

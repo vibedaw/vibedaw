@@ -8,6 +8,11 @@ Implementation, independent-review corrections and offline tests completed
 2026-09-08. Blocked on watcher/device runtime acceptance, not on an outstanding
 review or implementation task. Hosted plugin editors are temporarily disabled.
 
+Follow-up 2026-09-08: T10 (`T10-plugin-editor-safety.md`) now records an explicit
+user override restoring stock-JUCE editor access for initial testing. The disabled
+editor statements below describe the historical T06 result, not current access.
+The restart safety gap and this task's runtime acceptance status remain unresolved.
+
 ## Outcome
 
 One documented, bounded control/data handoff lets transport, arrangement editing, and mixer controls interact with audio safely. This is a prerequisite for playback, not end-of-milestone cleanup.

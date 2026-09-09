@@ -3,6 +3,8 @@
 #include "project/ClipPool.h"
 #include "project/Clip.h"
 #include "utils/Logger.h"
+#include "ui/DragPayload.h"
+#include "ui/components/TextPrompt.h"
 
 namespace vibedaw {
 
@@ -10,6 +12,7 @@ ClipRow::ClipRow(ClipId clipId, Clip* clip, int index)
     : clipId_(clipId), clip_(clip), index_(index)
 {
     setInterceptsMouseClicks(true, false);
+    if (clip_ && clip_->getType() == Clip::Type::Midi) dragDescription_ = DragDropInfo::clip(clipId_);
 }
 
 void ClipRow::setSelected(bool selected) {
@@ -51,17 +54,50 @@ void ClipRow::paint(juce::Graphics& g) {
 }
 
 void ClipRow::mouseDown(const juce::MouseEvent& e) {
-    juce::ignoreUnused(e);
+    DragDropInfo::cancelClip(dragDescription_);
+    dragDescription_ = clip_ && clip_->getType() == Clip::Type::Midi ? DragDropInfo::clip(clipId_) : juce::var();
+    pressActive_ = e.mods.isLeftButtonDown() && !e.mods.isPopupMenu();
+    dragStarted_ = false;
+    if (e.mods.isPopupMenu()) {
+        createContextMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+        return;
+    }
     if (listener_ && clip_) {
         listener_->clipSelected(clipId_, clip_);
     }
 }
 
 void ClipRow::mouseDoubleClick(const juce::MouseEvent& e) {
-    juce::ignoreUnused(e);
+    if (e.mods.isPopupMenu() || e.mouseWasDraggedSinceMouseDown()) return;
     if (listener_ && clip_) {
         listener_->clipOpened(clipId_, clip_);
     }
+}
+
+juce::var ClipRow::getDragDescription() const {
+    return dragDescription_;
+}
+
+void ClipRow::mouseDrag(const juce::MouseEvent& e) {
+    if (!pressActive_ || dragStarted_ || !e.mods.isLeftButtonDown() || e.getDistanceFromDragStart() < 5) return;
+    const auto payload = getDragDescription();
+    if (payload.isVoid() || DragDropInfo::clipCancelled(payload)) return;
+    auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this);
+    if (!dragStarter_ && (!container || container->isDragAndDropActive())) return;
+    // Escape can delete JUCE's drag image while this mouse press is still down.
+    dragStarted_ = true;
+    constexpr bool acrossWindows = true;
+    if (dragStarter_) dragStarter_(payload, acrossWindows);
+    else container->startDragging(payload, this, juce::ScaledImage(), acrossWindows);
+}
+
+juce::PopupMenu ClipRow::createContextMenu() const {
+    juce::PopupMenu menu;
+    menu.addItem("Edit in Piano Roll", clip_ && clip_->getType() == Clip::Type::Midi, false, editSource);
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Rename Clip\xe2\x80\xa6")), clip_ != nullptr, false, renameRequested);
+    menu.addSeparator();
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Delete Source\xe2\x80\xa6")), clip_ != nullptr, false, deleteSourceRequested);
+    return menu;
 }
 
 ClipsContent::ClipsContent(Project& project)
@@ -83,8 +119,9 @@ ClipsContent::ClipsContent(Project& project)
     };
     addAndMakeVisible(addClipButton_);
     deleteClipButton_.setEnabled(false);
+    // Same confirmed, impact-warned path as the row context menu (T14 parity).
     deleteClipButton_.setTooltip("Delete the selected source. Its placements remain as unresolved placeholders.");
-    deleteClipButton_.onClick = [this] { project_.getClipPool().removeClip(selectedClipId_); };
+    deleteClipButton_.onClick = [this] { deleteSourceWithConfirmation(selectedClipId_); };
     addAndMakeVisible(deleteClipButton_);
     
     project_.getClipPool().addListener(this);
@@ -99,8 +136,44 @@ void ClipsContent::refreshClips() {
     rebuildClipRows();
 }
 
+int ClipsContent::countPlacementsOfClip(ClipId clipId) const {
+    int count = 0;
+    for (const auto& track : project_.getTrackList().getTracks())
+        for (const auto& instance : track->getClipInstances())
+            if (instance->getClipId() == clipId) ++count;
+    return count;
+}
+
+void ClipsContent::renameClipById(ClipId clipId, const juce::String& name) {
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty()) return;
+    if (auto* clip = project_.getClipPool().getClip(clipId)) clip->setName(trimmed);
+}
+
+void ClipsContent::deleteSourceById(ClipId clipId) {
+    project_.getClipPool().removeClip(clipId);
+}
+
+void ClipsContent::deleteSourceWithConfirmation(ClipId clipId) {
+    auto* clip = project_.getClipPool().getClip(clipId);
+    if (!clip) return;
+    confirmAsync("Delete Source",
+        "The MIDI source \"" + clip->getName() + "\" is used by " + juce::String(countPlacementsOfClip(clipId)) +
+            " placement(s). Deleting it leaves those placements as unresolved placeholders (visible and silent), "
+            "and any open editors close. Other clips are unaffected.",
+        "Delete Source", this, [safe = juce::Component::SafePointer<ClipsContent>(this), clipId] {
+            if (safe != nullptr) safe->deleteSourceById(clipId);
+        });
+}
+
 void ClipsContent::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff252525));
+    if (clipRows_.empty()) {
+        g.setColour(juce::Colour(0xff777777));
+        g.setFont(12.0f);
+        g.drawFittedText("Create a MIDI clip with + New Clip.\nDrag it onto the timeline to place it;\ndouble-click or right-click to edit.",
+            getLocalBounds().reduced(8, 40), juce::Justification::centred, 4);
+    }
 }
 
 void ClipsContent::resized() {
@@ -149,6 +222,8 @@ void ClipsContent::clipSelected(ClipId clipId, Clip* clip) {
 }
 
 void ClipsContent::clipOpened(ClipId clipId, Clip* clip) {
+    clip = project_.getClipPool().getClip(clipId);
+    if (clip) clipSelected(clipId, clip);
     if (clipsListener_ && clip) {
         clipsListener_->clipOpened(clipId, clip);
     }
@@ -167,6 +242,22 @@ void ClipsContent::rebuildClipRows() {
         auto clipId = clips[i].first;
         auto* clip = clips[i].second.get();
         auto row = std::make_unique<ClipRow>(clipId, clip, i);
+        row->editSource = [safe = juce::Component::SafePointer<ClipsContent>(this), clipId] {
+            if (safe != nullptr) safe->clipOpened(clipId, nullptr);
+        };
+        row->renameRequested = [safe = juce::Component::SafePointer<ClipsContent>(this), id = clipId] {
+            if (safe == nullptr) return;
+            // The source may vanish while the action is pending: no prompt, no mutation.
+            auto* target = safe->project_.getClipPool().getClip(id);
+            if (!target) return;
+            showTextPrompt("Rename Clip", "New clip name:", target->getName(), safe.getComponent(),
+                [safe, id](const juce::String& name) {
+                    if (safe != nullptr) safe->renameClipById(id, name);
+                });
+        };
+        row->deleteSourceRequested = [safe = juce::Component::SafePointer<ClipsContent>(this), id = clipId] {
+            if (safe != nullptr) safe->deleteSourceWithConfirmation(id);
+        };
         row->setListener(this);
         row->setSelected(clipId == selectedClipId_);
         addAndMakeVisible(*row);
@@ -188,6 +279,7 @@ void ClipsContent::selectClip(int index) {
 
 Sidebar* createClipsSidebar(Project& project) {
     auto* sidebar = new Sidebar("Clips", Sidebar::Side::Right);
+    sidebar->setIconSymbol(juce::String(juce::CharPointer_UTF8("\xe2\x99\xaa")));
     sidebar->setMinWidth(150);
     sidebar->setMaxWidth(400);
     sidebar->setSidebarWidth(250);

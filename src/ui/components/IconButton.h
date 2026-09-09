@@ -4,7 +4,8 @@
 
 namespace vibedaw {
 
-class IconButton : public juce::Component {
+class IconButton : public juce::Component,
+                   public juce::SettableTooltipClient {
 public:
     explicit IconButton(const juce::String& symbol = {});
     ~IconButton() override = default;

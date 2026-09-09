@@ -21,8 +21,11 @@ public:
     ~PluginSection() override;
     
     void setPluginListener(Listener* listener) { pluginListener_ = listener; }
-    
+
     void refreshPlugins();
+
+    // Same load path as a double-click: creates (or activates) an instrument channel.
+    void createChannelFromPlugin(const juce::String& pluginPath);
     
     void paintContent(juce::Graphics& g, juce::Rectangle<int> bounds) override;
     void resizedContent(juce::Rectangle<int> bounds) override;
@@ -54,15 +57,19 @@ public:
     bool isInterestedInDragSource(const juce::DragAndDropTarget::SourceDetails&) override { return false; }
     
     void setListener(PluginSection::Listener* listener) { listener_ = listener; }
-    
+    void setOwnerSection(PluginSection* owner) { owner_ = owner; }
+
     const juce::String& getPath() const { return path_; }
     bool isPlugin() const { return isPlugin_; }
-    
+
 private:
+    void showCreateMenu();
+
     juce::String name_;
     juce::String path_;
     bool isPlugin_;
     PluginSection::Listener* listener_ = nullptr;
+    juce::Component::SafePointer<PluginSection> owner_;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginTreeItem)
 };

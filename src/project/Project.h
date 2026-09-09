@@ -53,10 +53,13 @@ public:
     void loadSettings();
     void saveSettings();
     
-    bool loadPlugin(const juce::String& pluginPath);
+    // Invalid target creates and selects; a stable target replaces without selecting.
+    bool loadPlugin(const juce::String& pluginPath, ChannelId target = InvalidChannelId);
     TransportState& getTransportState() { return transport; }
     
 private:
+    friend struct ProjectTestAccess;
+    std::function<std::unique_ptr<PluginHost>(const juce::String&)> pluginLoader_;
     TransportState transport;
     TrackList trackList;
     ChannelList channelList;

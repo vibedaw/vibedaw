@@ -23,13 +23,37 @@ Tasks T01-T06. Completion means this entire workflow works through the UI:
 
 The earliest audible checkpoint is T02. Do not wait for all M1 polish before trying that workflow using the running watcher.
 
+### M1.5: Direct Manipulation and Discoverability
+
+Tasks T10-T14 address user feedback from 2026-09-08. The initial placement toolbar
+was a bootstrap workflow, not the intended long-term interaction model. Next,
+make instrument setup, clip placement, editing, and sidebar recovery intuitive:
+
+1. Open and configure the selected channel's plugin through a restored Plugin button. Initial-testing access is explicitly authorized despite the unresolved restart boundary (T10).
+2. Drag a browser plugin onto empty Channel Rack space to create and activate a channel; clearly distinguish this from replacing an existing row's plugin.
+3. Create a clip without opening Piano Roll; explicitly edit by double-click or context action.
+4. Drag clips onto existing timeline tracks or onto a previewed new track in unused space. Move placements directly without selecting a tool or pressing Move.
+5. Collapse Browser and Channel Rack into one compact left-side tab rail, with predictable independent reopening and no reserved blank columns.
+6. Use target-specific context menus and keyboard actions instead of the Place/Move/Delete/Assign toolbar workflow.
+
+This is the next implementation priority, not evidence that M1's pending runtime
+checks have passed. T10 restores stock-JUCE editor access by explicit user override
+for initial testing; restart safety and native acceptance remain unresolved.
+T11/T12 implementation is present but blocked on manual acceptance; T13 and T14
+are done (user-accepted 2026-09-08 and 2026-09-09 respectively); T16 (Loop
+Region UX, created from the 2026-09-09 discoverability feedback) is
+implemented and offline-verified but blocked on watcher/manual acceptance;
+T07 is next once T16 is accepted.
+
 ### M2: Keep Your Work and Improve Editing
 
-T07 adds explicit project save/load, including plugin state. It is the first task after M1 because sketches should survive a restart. T08 fixes editor navigation and alignment; promote any editor defect that prevents the M1 workflow into the relevant M1 task. T09 closes integration/documentation gaps, not a deferred bucket for essential tests.
+T07 adds explicit project save/load, including plugin state, immediately after the interaction milestone so sketches survive a restart. T08 fixes editor navigation and alignment; promote any editor defect that prevents writing a usable clip into the current task. T09 closes integration/documentation gaps across playback, direct manipulation, and persistence, not a deferred bucket for essential tests.
 
-### Later: Samples and Recording
+### Later: Mixer Routing, Samples and Recording
 
-Backlog only, not dependencies of M1: actual sampler rendering and sample placement, MIDI recording into clips, audio recording, automation, effects/sends, undo/redo, clip-local repetition, advanced drag/trim tools, plugin tempo/playhead reporting, and complete device/sidebar settings restoration. Create detailed tasks when these become next in line.
+Backlog only, not dependencies of M1: actual sampler rendering and sample placement, MIDI recording into clips, audio recording, automation, effects/sends, undo/redo, clip-local repetition, advanced trim/stretch tools, plugin tempo/playhead reporting, and complete device/sidebar settings restoration. Basic clip dragging and sidebar collapse/reopen behavior are now M1.5, not backlog. Create detailed tasks when remaining features become next in line.
+
+T15 is post-M2 discovery: revisit the mixer's current 1:1 relationship with Channel Rack instruments, compare routing models, and agree concrete behavior before any implementation. Independent mixer destinations and many-to-one routing are questions, not committed features; do not presume FL Studio's architecture. T15 does not block T12 or change its per-instance instrument routing contract.
 
 ## Task Index
 
@@ -43,11 +67,18 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 | 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | blocked | T01, T03, T06 |
 | 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | blocked | T02, T06 |
 | 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | blocked | T01, T02, T04 |
-| 7 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | backlog | M1 |
-| 8 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
-| 9 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | backlog | T07, T08 |
+| 7 | [T10 Restore Plugin Editing Safely](tasks/T10-plugin-editor-safety.md) | M1.5 | in_progress | T06 implementation; runtime checks retained |
+| 8 | [T11 Browser-to-Rack and Clip Creation](tasks/T11-browser-rack-clip-creation.md) | M1.5 | blocked | T10 |
+| 9 | [T12 Timeline Drag-and-Drop](tasks/T12-timeline-drag-drop.md) | M1.5 | blocked | T11, T03 implementation |
+| 10 | [T13 Unified Sidebar Tab Rail](tasks/T13-sidebar-tab-rail.md) | M1.5 | done | T12 (workstream order) |
+| 11 | [T14 Context Menus and Toolbar Cleanup](tasks/T14-context-menus.md) | M1.5 | done | T10, T11, T12, T13 |
+| 12 | [T16 Loop Region UX](tasks/T16-loop-region-ux.md) | M1.5 follow-up | blocked | T05, T13, T14 |
+| 13 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | backlog | M1, M1.5 |
+| 14 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
+| 15 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | backlog | T07, T08, T10-T14 |
+| 16 | [T15 Mixer Routing Model](tasks/T15-mixer-routing-model.md) | Later (post-M2) | backlog | M2 (workstream order) |
 
-Recommended single workstream: **T03 -> T06 -> T01 -> T02 -> T04 -> T05 -> T07 -> T08 -> T09**. T08 can be brought forward if piano-roll navigation blocks writing a usable clip. Avoid concurrent edits to shared audio/model files until T06's ownership contract is settled.
+Recommended remaining single workstream: **T16 -> T07 -> T08 -> T09**. T03/T06/T01/T02/T04/T05 implementation and offline verification are recorded below; their runtime acceptance remains blocked. The user's interaction feedback and request to write this plan prioritize M1.5 without marking earlier tasks done. T08 can be brought forward if piano-roll navigation blocks writing a usable clip. Context actions may land with their owning feature; T14 completes coverage and removes obsolete controls.
 
 T03 implementation is present (2026-09-08), but watcher/manual acceptance is
 unverified. Core model regressions now pass in T06's independent offline target.
@@ -60,7 +91,8 @@ No application build/launch or commit was performed for T03.
 T06 implementation and offline verification are present (2026-09-08). It was marked
 in_progress under the override. Independent review findings have been addressed;
 it remains blocked on watcher/device acceptance, not missing implementation. Hosted
-plugin editors are temporarily disabled because their restart path bypasses the gate. See its
+plugin editors were disabled at T06 because their restart path bypasses the gate;
+T10 now explicitly overrides that restriction for initial testing. See its
 completion record and `tests/README.md`. No application build/launch or commit was
 performed. User override on 2026-09-08 explicitly authorizes T01 end to end
 despite T03/T06 watcher/runtime blocks. T01 was marked in_progress under this
@@ -140,6 +172,140 @@ off-before-on/click alignment and later-event fractional timing. Full offline
 CTest 1/1 passed. Independent review has been performed; runtime/M1 acceptance
 remains blocked. No application build/launch, staging or commit.
 
+T10 update 2026-09-08: the user explicitly requested rollback of the unfinished
+JUCE patch and restoration of the Plugin button for initial testing. Stock pinned
+JUCE 7.0.12 is restored, with active-channel editor access, target-specific rack
+action, window focus/reuse and guarded close before host replacement/destruction.
+Private editor-originated restarts still bypass host quiescence; no restart safety
+or full T10 acceptance is claimed. See T10 for offline verification and remaining
+native/device risks. T11 stays todo; earlier statuses are unchanged. No application
+build/launch, staging or commit.
+
+User override 2026-09-08: continue roadmap explicitly authorizes T11 end to end
+despite T10 and earlier pending manual acceptance. T11 marked in_progress; T10's
+stock-JUCE initial-testing risk override and all existing work remain intact.
+Only independent offline tests are allowed; no application build/launch,
+dependency edits, staging or commit.
+
+T11 implementation/offline verification completed 2026-09-08: explicit typed plugin
+payload, candidate-first shared create/replace load path, labeled exclusive rack
+targets, bound/failure safety and selection-only New Clip with explicit source Edit
+and window reuse. Full offline CTest 1/1 passes, including real producer/component
+dispatch with fake plugins, layout/capacity rejection, cancellation, selection,
+preview colors and safe delayed source actions. See T11 for native coverage limits.
+Independent read-only review was performed by an explore agent. Its high-severity
+JUCE target-discovery finding is fixed: interest checks payload/capacity only,
+while target-local geometry gates enter/move/drop. Regression coverage mirrors
+source-coordinate discovery, child-first row priority and cross-target exit rechecks
+with preview cleanup; restoring the original predicate reproduces the failure.
+Final independent offline build succeeded and CTest 1/1 passed (6.42 seconds).
+T11 remains blocked on watcher/native acceptance. T12 remains todo; earlier statuses and T10's stock-JUCE
+initial-testing override remain unchanged. No app build/launch, dependency edits,
+staging or commit.
+
+User authorization 2026-09-08: execute T12 end to end despite pending earlier
+watcher checks; T15 documentation does not block it. T12 marked in_progress.
+Preserve all dirty work and T10's stock-JUCE initial-testing override; only the
+independent offline target is authorized, with no application build/launch or commit.
+
+T12 implementation/offline verification completed 2026-09-08: typed pooled MIDI
+payload, payload-only JUCE interest, lane/below-lane ghost and destination warning,
+5px direct moves with grab offset, 1/16-note snap/Alt bypass, bounded real-scrollbar
+autoscroll, stable track/instance session identities and atomic ownership transfer.
+New lanes enter the model already populated; previews do not publish snapshots.
+Explicit timeline double-click reuses the source editor path; toolbar remains for T14.
+Final independent offline build succeeded, CTest 1/1 passed (6.72 seconds), and
+diff check passed. See T12 and tests README for component coverage and native limits.
+T12 is blocked on unobserved watcher/manual acceptance, not done. T13 remains todo;
+T15 and T10's stock-JUCE initial-testing override are untouched. No app build/launch,
+dependency edit, external agent review, staging or commit was performed.
+
+T12 independent-review corrections: both P2 findings are fixed. Pooled gestures
+now remain cancelled across reentry/windows and cannot restart within one press;
+release-only JUCE target discovery and ruler-to-valid drops work without bypassing
+stale/cancelled gesture guards. Cross-window pooled startup is explicitly enabled.
+Both regressions failed with their respective old behavior restored, then passed
+with the fixes. Final offline build succeeded and CTest 1/1 passed (6.62 seconds).
+T12 remains blocked on watcher/native acceptance; see its review record. No app
+build/launch, dependency edit, staging or commit; T10/T15 remain unchanged.
+
+T13 implementation/offline verification completed 2026-09-08: one 28px rail per
+side with vertically stacked icon tabs, identity-stable tab rebinding across
+equal-count membership changes, the right-side expanded-width offset defect
+removed, proportional narrow-window clamping that never overwrites remembered
+widths, and component/layout regressions in the independent target. Final
+offline build succeeded and CTest 1/1 passed (6.76 seconds) with all earlier
+suites intact; `git diff --check` passed. Watcher/native acceptance was
+observed and accepted by the user on 2026-09-08; T13 is done. The user deferred
+implementation feedback to a later discussion, which may amend the record or
+feed T14. T14 is next in the workstream; earlier statuses and T10's stock-JUCE
+initial-testing override are unchanged. No application build/launch, staging
+or commit was performed.
+
+T14 context-menu/toolbar work was present unrecorded in the working tree; it was
+independently reviewed, completed, and offline-verified 2026-09-08. All six menu
+surfaces, stable-ID revalidation with prompt re-resolution, keyboard
+Delete/Ctrl+E, and removal of the Place/Move/Delete/Assign toolbar are in
+place. Review fixes: `CharPointer_UTF8` menu strings (raw UTF-8 `…`/`—`
+literals asserted and mojibaked labels), the Clips footer Delete Source button
+routed through the confirmed impact-warned path shared with its menu, rename/
+Set-Start-Beat prompts skipping vanished targets, blank-name rejection inside
+the validated rename actions, and `TextPrompt` dialog-interceptor seams so
+offline tests never create native windows (a stray prompt modal previously
+poisoned later suites). Final offline build succeeded and CTest 1/1 passed
+(~6.9 seconds) with all earlier suites intact; `git diff --check` passed. T14
+is blocked on watcher/manual acceptance: menu placement and enablement on each
+surface, discoverability, native popup/focus interaction, and native plugin
+windows. No application build/launch, staging or commit was performed. T07 is
+next in the workstream; earlier statuses and T10's stock-JUCE initial-testing
+override are unchanged.
+
+T14 watcher/manual acceptance was observed and accepted by the user on
+2026-09-09; T14 is done. The M1.5 release check is complete. M1.5's other
+surfaces (T10 restart safety, T11/T12 native acceptance) remain as recorded.
+T07 (Project Save and Load) is the next ready task; earlier statuses and
+T10's stock-JUCE initial-testing override are unchanged. No application
+build/launch, staging or commit was performed for this acceptance record.
+
+T05 runtime observation 2026-09-09: the user audibly confirmed the loop wrap
+repeats playback once the Loop toggle button is enabled (a T05 acceptance
+observation), but reported the workflow undiscoverable — the loop fields and
+Apply sit on the transport bar's bottom row while the enabling Loop toggle is
+on the far right, and the loop button's hand-drawn icon "looks nothing like a
+loop". Setting the region does not enable looping. T16 (Loop Region UX) was
+created as an M1.5 follow-up: vendored Tabler (MIT) transport icons replacing
+the hand-drawn paths, ruler-drag loop editing with auto-enable, a loop button
+context menu and Edit Loop popover, and transport bar compaction. T07 remains
+the next task after T16; earlier statuses and T10's stock-JUCE initial-testing
+override are unchanged.
+
+T16 implementation/offline verification completed 2026-09-09: vendored
+Tabler (MIT) transport icons parsed into strokeable paths replacing all
+hand-drawn button glyphs, ruler-drag loop creation/move/resize with 1/16 snap
+(Alt bypass), minimum-length clamp and local preview committed exactly once
+on mouseUp with auto-enable, a loop button context menu (Enable/Disable,
+Edit Loop..., Clear Loop) with the numeric fields relocated into a CallOutBox
+popover, transport bar compacted 104 -> 64px, and full offline regressions
+(`iconTests`, rewritten `loopUiTests`). Final build succeeded and CTest 1/1
+passed with all earlier suites intact; `git diff --check` passed. T16 is
+blocked on watcher/manual acceptance (native popover/menu behavior, cursor
+affordances, observed looping with the new workflow). Round-1 watcher feedback
+2026-09-09: plain drag now creates a replacement region anywhere, Shift+drag
+moves it (winning over edge grabs), plain edge grabs resize, the ruler shows
+the pending action in the mouse cursor (crosshair/dragging hand/left-right),
+and the Edit Loop popover launches at desktop level so panels can no longer
+paint over it; round 2 removed the disabled-region dim band entirely (the
+ruler highlight exists only while looping is enabled, so Clear/disable
+removes it completely, and only visible regions can be grabbed); round 3
+(user-specified) added a proper no-loop state via `LoopRegion.exists`: no
+loop -> no ruler indication, created loops start enabled, toggled-off loops
+show a dim grabbable band, toggled-on show blue, Clear removes the loop
+entirely, and enabling a cleared loop materializes the default `[0, 4)`
+region — all with offline regressions, CTest 1/1, `git diff --check`
+passed. Re-observation pending. T07 remains next;
+earlier statuses and T10's stock-JUCE initial-testing override are unchanged.
+No application build/launch, staging or commit.
+
 ## Verified Starting Point
 
 Historical baseline below, before T03 implementation. See the T03 task for current contracts.
@@ -161,7 +327,12 @@ Historical baseline below, before T03 implementation. See the T03 task for curre
 - Audio must not traverse UI-mutated note/placement vectors. T06 establishes a bounded, lifetime-safe handoff used by later tasks.
 - Merge arrangement events by destination and process each plugin once per audio block. Live audition selection must not reroute the arrangement.
 - Correct note cleanup and deterministic boundary timing are required for basic playback, not optional polish.
-- Prefer a simple placement action and numeric loop controls over elaborate drag-and-drop workflows.
+- Prefer direct manipulation, explicit edit gestures, and contextual actions. The initial placement toolbar is superseded by T12/T14; retain secondary precise position editing and numeric loop controls where useful.
+- Tracks remain arrangement lanes, not instruments. New clip drops use the active instrument channel, named in the preview; without a valid instrument destination, reject with actionable feedback. Moving an instance preserves its source, duration, and destination even across tracks.
+- Single-click selects and double-click edits. Creating a clip does not implicitly open an editor. Deleting a pooled source and removing one placement must be clearly distinguished.
+- Use unambiguous drag payload types for plugins and pooled clips; never interpret a clip ID as a plugin path. Cancelled or invalid drops must not partially mutate the model.
+- Collapsed sidebars share one compact tab rail per side, with stable target bindings, remembered expanded widths, and no blank reserved columns.
+- Hosted editors are enabled by explicit user override for initial testing (T10). Do not mistake this for closing T06's editor-originated lifecycle/restart gap or full acceptance.
 - Unsupported recording, sends, and sampler controls must not pretend to work. Disable or clearly label them until implemented.
 
 ## Working Protocol
@@ -185,3 +356,14 @@ Status vocabulary: `backlog`, `todo`, `ready`, `in_progress`, `blocked`, `done`.
 - [ ] Audio-thread ownership and cleanup have been reviewed; no callback logging or per-block scratch allocation remains in our processing path.
 - [x] Deterministic tests cover transport, scheduling, routing, and loop math; any unavailable runtime verification is explicitly recorded.
 - [ ] Limitations are clear: MIDI arrangement playback, not recording or sample playback; saving arrives in T07.
+
+## M1.5 Release Check
+
+- [ ] Plugin configuration is available through a visible button and contextual action, with safe restart/replacement/deletion behavior.
+- [ ] Browser-to-rack creation and existing-row replacement have distinct previews and failure-safe results.
+- [ ] New Clip selects a source without opening Piano Roll; explicit edit gestures work from the pool and timeline.
+- [ ] Clip drops target existing tracks or visibly create one new track; direct moves work within and across tracks without changing routing.
+- [ ] Snap, scroll coordinates, cancellation, invalid targets, and missing destinations have tested behavior.
+- [x] Browser/Channel Rack collapse into one shared rail and reopen correctly in either order; the right Clips tab remains reachable.
+- [x] Context menus act on their actual targets, destructive actions distinguish source versus instance, and redundant placement toolbar controls are removed only after replacements work.
+- [x] Focused offline regressions and actual watcher/manual observations are recorded separately; M1's unresolved acceptance remains visible.

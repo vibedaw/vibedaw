@@ -21,12 +21,18 @@ public:
     void setMuted(bool muted);
     void setSolo(bool solo);
     void setSelected(bool selected);
-    
+
     int getTrackIndex() const { return trackIndex; }
-    
+    Track* getTrack() const { return track; }
+    const juce::String& getTrackName() const { return trackName; }
+
+    juce::PopupMenu createContextMenu() const;
+
     std::function<void()> onSelected;
     std::function<void(bool)> onMuteToggled;
     std::function<void(bool)> onSoloToggled;
+    std::function<void()> onRenameRequested;
+    std::function<void()> onRemoveRequested;
     
     static constexpr int defaultHeight = 64;
     

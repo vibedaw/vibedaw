@@ -71,6 +71,7 @@ public:
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
+    bool keyPressed(const juce::KeyPress& key) override;
     
     void scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeStart) override;
     

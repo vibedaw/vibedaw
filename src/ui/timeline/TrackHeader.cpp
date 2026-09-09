@@ -138,10 +138,24 @@ void TrackHeader::resized() {
 }
 
 void TrackHeader::mouseDown(const juce::MouseEvent& event) {
+    if (event.mods.isPopupMenu()) {
+        // Resolve/select the clicked track before showing its menu.
+        if (onSelected) onSelected();
+        createContextMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+        return;
+    }
     if (event.mods.isLeftButtonDown() && onSelected) onSelected();
 }
 
+juce::PopupMenu TrackHeader::createContextMenu() const {
+    juce::PopupMenu menu;
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Rename Track\xe2\x80\xa6")), true, false, onRenameRequested);
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Remove Track\xe2\x80\xa6")), track != nullptr, false, onRemoveRequested);
+    return menu;
+}
+
 void TrackHeader::setTrackName(const juce::String& name) {
+    if (trackName == name) return;
     trackName = name;
     repaint();
 }

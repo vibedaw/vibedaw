@@ -107,6 +107,7 @@ void BrowserSidebar::presetDoubleClicked(const juce::File& file) {
 
 Sidebar* createBrowserSidebar(PluginScanner& scanner) {
     auto* sidebar = new Sidebar("Browser", Sidebar::Side::Left);
+    sidebar->setIconSymbol(juce::String(juce::CharPointer_UTF8("\xe2\x89\xa1")));
     sidebar->setMinWidth(180);
     sidebar->setMaxWidth(400);
     sidebar->setSidebarWidth(220);

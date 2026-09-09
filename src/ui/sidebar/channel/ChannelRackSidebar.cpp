@@ -3,35 +3,11 @@
 #include "project/ChannelList.h"
 #include "project/Channel.h"
 #include "plugins/PluginHost.h"
+#include "ui/components/PluginButton.h"
+#include "ui/components/TextPrompt.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
-
-DragDropInfo DragDropInfo::fromDragDescription(const juce::var& description) {
-    DragDropInfo info;
-    
-    if (!description.isString()) {
-        return info;
-    }
-    
-    juce::String desc = description.toString();
-    
-    if (desc.startsWith("sample://")) {
-        info.type = DragSourceType::Sample;
-        info.path = desc.fromFirstOccurrenceOf("sample://", false, false);
-        info.name = juce::File(info.path).getFileNameWithoutExtension();
-    } else if (desc.startsWith("preset://")) {
-        info.type = DragSourceType::Preset;
-        info.path = desc.fromFirstOccurrenceOf("preset://", false, false);
-        info.name = juce::File(info.path).getFileNameWithoutExtension();
-    } else if (desc.isNotEmpty()) {
-        info.type = DragSourceType::Plugin;
-        info.path = desc;
-        info.name = juce::File(desc).getFileNameWithoutExtension();
-    }
-    
-    return info;
-}
 
 ChannelRow::ChannelRow(Channel* channel, int index)
     : channel_(channel), index_(index)
@@ -65,6 +41,10 @@ void ChannelRow::paint(juce::Graphics& g) {
     if (channel_ && channel_->hasPlugin()) {
         name += " [" + channel_->getPlugin()->getPluginName() + "]";
     }
+    if (isDragOver_)
+        name = pendingDragInfo_.type == DragSourceType::Plugin
+            ? "Replace plugin: " + channel_->getName()
+            : "Assign sample file (no playback)";
     
     g.drawText(name, 8, 0, bounds.getWidth() - 16, bounds.getHeight(), 
                juce::Justification::centredLeft, true);
@@ -78,8 +58,25 @@ void ChannelRow::paint(juce::Graphics& g) {
     g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
 }
 
+juce::PopupMenu ChannelRow::createContextMenu() const {
+    juce::PopupMenu menu;
+    const auto reason = PluginButton::unavailableReason(channel_);
+    menu.addItem("Open Plugin Editor", reason.isEmpty(), false, openEditor);
+    if (reason.isNotEmpty()) menu.addSectionHeader(reason);
+    menu.addSeparator();
+    menu.addItem("Select for Live Audition & New Placements", true, isSelected_, selectAsActive);
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Rename Channel\xe2\x80\xa6")), true, false, renameRequested);
+    menu.addItem(juce::String(juce::CharPointer_UTF8("Remove Channel\xe2\x80\xa6")), true, false, removeRequested);
+    return menu;
+}
+
 void ChannelRow::mouseDown(const juce::MouseEvent& e) {
-    juce::ignoreUnused(e);
+    if (e.mods.isPopupMenu()) {
+        auto menu = createContextMenu();
+        // The action resolves its stable ID through a lifetime-checked rack owner.
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+        return;
+    }
     if (listener_ && channel_) {
         listener_->channelSelected(channel_);
     }
@@ -91,11 +88,11 @@ void ChannelRow::mouseUp(const juce::MouseEvent& e) {
 
 bool ChannelRow::isInterestedInDragSource(const SourceDetails& dragSourceDetails) {
     auto info = DragDropInfo::fromDragDescription(dragSourceDetails.description);
-    return info.type != DragSourceType::Unknown;
+    return channel_ && (info.type == DragSourceType::Plugin || info.type == DragSourceType::Sample);
 }
 
 void ChannelRow::itemDragEnter(const SourceDetails& dragSourceDetails) {
-    isDragOver_ = true;
+    isDragOver_ = isInterestedInDragSource(dragSourceDetails);
     pendingDragInfo_ = DragDropInfo::fromDragDescription(dragSourceDetails.description);
     repaint();
 }
@@ -157,8 +154,96 @@ void ChannelRackContent::refreshChannels() {
     rebuildChannelRows();
 }
 
+int ChannelRackContent::countPlacementsToChannel(ChannelId id) const {
+    int count = 0;
+    for (const auto& track : project_.getTrackList().getTracks())
+        for (const auto& instance : track->getClipInstances())
+            if (instance->getChannelId() == id) ++count;
+    return count;
+}
+
+void ChannelRackContent::selectChannelById(ChannelId id) {
+    if (auto* channel = project_.getChannelList().getChannelById(id))
+        project_.setActiveChannel(project_.getChannelList().indexOfChannel(channel));
+}
+
+void ChannelRackContent::renameChannelById(ChannelId id, const juce::String& name) {
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty()) return;
+    if (auto* channel = project_.getChannelList().getChannelById(id)) channel->setName(trimmed);
+}
+
+void ChannelRackContent::removeChannelById(ChannelId id) {
+    if (auto* channel = project_.getChannelList().getChannelById(id)) {
+        const int index = project_.getChannelList().indexOfChannel(channel);
+        if (index >= 0) project_.getChannelList().removeChannel(index);
+    }
+}
+
+void ChannelRackContent::removeChannelWithConfirmation(ChannelId id) {
+    auto* channel = project_.getChannelList().getChannelById(id);
+    if (!channel) return;
+    const int placements = countPlacementsToChannel(id);
+    const auto name = channel->getName();
+    confirmAsync("Remove Channel",
+        "Channel \"" + name + "\" is the destination of " + juce::String(placements) +
+            " placement(s). Removing it leaves those placements unresolved and silent; the plugin is unloaded.",
+        "Remove", this, [safe = juce::Component::SafePointer<ChannelRackContent>(this), id] {
+            if (safe != nullptr) safe->removeChannelById(id);
+        });
+}
+
 void ChannelRackContent::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff252525));
+    if (isDragOver_) {
+        auto area = getLocalBounds().withTrimmedTop(juce::jmin(
+            static_cast<int>(channelRows_.size()) * ChannelRow::rowHeight, juce::jmax(0, getHeight() - 32)));
+        g.setColour(juce::Colour(0xff395875));
+        g.fillRect(area);
+        g.setColour(juce::Colours::lightblue);
+        g.drawRect(area, 2);
+        g.drawText("Create instrument channel", area.reduced(6).withHeight(24), juce::Justification::centredLeft);
+    } else if (channelRows_.empty()) {
+        g.setColour(juce::Colour(0xff777777));
+        g.setFont(12.0f);
+        g.drawFittedText("Right-click a plugin in the Browser, or drag one here,\nto create an instrument channel.",
+            getLocalBounds().reduced(8, 24), juce::Justification::centred, 3);
+    }
+}
+
+bool ChannelRackContent::isInterestedInDragSource(const SourceDetails& details) {
+    // JUCE queries interest before converting coordinates, and again for exit
+    // using the next target's coordinates. Geometry belongs only in local events.
+    return DragDropInfo::fromDragDescription(details.description).type == DragSourceType::Plugin &&
+        project_.getChannelList().getNumChannels() < ChannelList::maxChannels;
+}
+
+bool ChannelRackContent::isCreateDropPosition(juce::Point<int> position) const {
+    if (!getLocalBounds().contains(position)) return false;
+    // Rows own their complete half-open rectangle. The add-button area belongs
+    // to creation; JUCE walks through that non-target child to this parent.
+    for (const auto& row : channelRows_)
+        if (row->getBounds().contains(position)) return false;
+    return true;
+}
+
+void ChannelRackContent::itemDragEnter(const SourceDetails& details) { itemDragMove(details); }
+void ChannelRackContent::itemDragMove(const SourceDetails& details) {
+    isDragOver_ = isInterestedInDragSource(details) && isCreateDropPosition(details.localPosition);
+    addChannelButton_.setButtonText(isDragOver_ ? "Create instrument channel" : "+ Add Channel");
+    repaint();
+}
+void ChannelRackContent::itemDragExit(const SourceDetails&) {
+    isDragOver_ = false;
+    addChannelButton_.setButtonText("+ Add Channel");
+    repaint();
+}
+void ChannelRackContent::itemDropped(const SourceDetails& details) {
+    const bool accepted = isInterestedInDragSource(details) && isCreateDropPosition(details.localPosition);
+    itemDragExit(details);
+    if (accepted && !project_.loadPlugin(DragDropInfo::fromDragDescription(details.description).path))
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin not loaded",
+            "Loading failed or the 128-channel limit was reached. Only mono/stereo plugins are supported. No channel was created.");
 }
 
 void ChannelRackContent::resized() {
@@ -168,7 +253,7 @@ void ChannelRackContent::resized() {
     
     int y = 0;
     for (auto& row : channelRows_) {
-        row->setBounds(0, y, bounds.getWidth(), ChannelRow::rowHeight);
+        row->setBounds(0, y, bounds.getWidth(), juce::jlimit(0, ChannelRow::rowHeight, bounds.getHeight() - y));
         y += ChannelRow::rowHeight;
     }
 }
@@ -198,10 +283,7 @@ void ChannelRackContent::channelSelected(Channel* channel) {
 void ChannelRackContent::pluginDroppedOnChannel(Channel* channel, const juce::String& pluginPath) {
     LOG_INFO("ChannelRack: Loading plugin '" + pluginPath + "' on channel");
     
-    auto pluginHost = std::make_unique<PluginHost>();
-    if (pluginHost->loadPlugin(pluginPath)) {
-        channel->setPlugin(std::move(pluginHost));
-    } else {
+    if (!channel || !project_.loadPlugin(pluginPath, channel->getId())) {
         LOG_ERROR("ChannelRack: Failed to load plugin: " + pluginPath);
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin not loaded",
             "Loading failed. Only mono/stereo plugins are supported. The existing plugin is unchanged.");
@@ -214,6 +296,7 @@ void ChannelRackContent::sampleDroppedOnChannel(Channel* channel, const juce::Fi
 }
 
 void ChannelRackContent::rebuildChannelRows() {
+    itemDragExit(SourceDetails({}, nullptr, {}));
     selectedChannelIndex_ = project_.getActiveChannel();
     for (auto& row : channelRows_) {
         removeChildComponent(row.get());
@@ -227,6 +310,28 @@ void ChannelRackContent::rebuildChannelRows() {
     for (int i = 0; i < numChannels; ++i) {
         auto* channel = channelList.getChannel(i);
         auto row = std::make_unique<ChannelRow>(channel, i);
+        row->openEditor = [safe = juce::Component::SafePointer<ChannelRackContent>(this), id = channel->getId()] {
+            if (safe == nullptr) return;
+            auto* target = safe->project_.getChannelList().getChannelById(id);
+            if (target && target->getPlugin()) target->getPlugin()->openEditorWindow();
+        };
+        row->selectAsActive = [safe = juce::Component::SafePointer<ChannelRackContent>(this), id = channel->getId()] {
+            if (safe != nullptr) safe->selectChannelById(id);
+        };
+        row->renameRequested = [safe = juce::Component::SafePointer<ChannelRackContent>(this),
+                                id = channel->getId()] {
+            if (safe == nullptr) return;
+            // The channel may vanish while the action is pending: no prompt, no mutation.
+            auto* target = safe->project_.getChannelList().getChannelById(id);
+            if (!target) return;
+            showTextPrompt("Rename Channel", "New channel name:", target->getName(), safe.getComponent(),
+                [safe, id](const juce::String& name) {
+                    if (safe != nullptr) safe->renameChannelById(id, name);
+                });
+        };
+        row->removeRequested = [safe = juce::Component::SafePointer<ChannelRackContent>(this), id = channel->getId()] {
+            if (safe != nullptr) safe->removeChannelWithConfirmation(id);
+        };
         row->setListener(this);
         row->setSelected(i == selectedChannelIndex_);
         addAndMakeVisible(*row);
@@ -250,6 +355,7 @@ void ChannelRackContent::selectChannel(int index) {
 
 Sidebar* createChannelRackSidebar(Project& project) {
     auto* sidebar = new Sidebar("Channel Rack", Sidebar::Side::Left);
+    sidebar->setIconSymbol(juce::String(juce::CharPointer_UTF8("\xe2\x96\xa6")));
     sidebar->setMinWidth(150);
     sidebar->setMaxWidth(400);
     sidebar->setSidebarWidth(250);

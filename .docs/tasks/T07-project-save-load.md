@@ -1,10 +1,10 @@
 # T07: Project Save and Load
 
-Status: backlog | Milestone: M2 | Depends on: M1
+Status: backlog | Milestone: M2 | Depends on: M1, M1.5
 
 ## Outcome
 
-Save a musical sketch, close it, reopen it, and hear the same arrangement and instrument settings. This is the first post-M1 priority.
+Save a musical sketch, close it, reopen it, and hear the same arrangement and instrument settings. This follows T10-T14's interaction milestone, prioritized by user feedback on 2026-09-08.
 
 ## Read First
 
@@ -12,6 +12,7 @@ Save a musical sketch, close it, reopen it, and hear the same arrangement and in
 - `src/project/Channel.h`, `ChannelList.h`, `Track.h`, `ClipPool.h`, `ClipInstance.h`, `Clip.h`, `Note.h`
 - `src/plugins/PluginHost.h`, `PluginHost.cpp`
 - `src/ui/MainContent.cpp`, `src/ui/MainWindow.cpp`
+- T10's hosted-editor lifecycle contract and T12/T14's placement/action contracts
 
 Existing JSON settings store preferences, not sessions. JUCE plugin instances already expose `getStateInformation`/`setStateInformation`; the missing work is application-level capture, storage, and restore.
 
@@ -26,6 +27,7 @@ Existing JSON settings store preferences, not sessions. JUCE plugin instances al
 - [ ] Save through a temporary file plus safe replacement and surface write failures. Do not report success until the file is safely written.
 - [ ] Add New/Open/Save/Save As actions, a current project path/name, and dirty tracking for notes, placements, plugin state where supported, and mix changes. Prompt before discarding unsaved work.
 - [ ] On successful load, stop/flush the old render state, safely publish the new project, and rebind UI listeners/selections. Never leave editors pointing into deleted clip storage.
+- [ ] Include T10 plugin-editor teardown and invalidate in-flight drags/context-menu targets on project replacement. New drag/menu mutation paths participate in dirty tracking just like numeric edits.
 - [ ] Add round-trip, corruption, missing-plugin, and failed-replacement tests. Use fake plugin state for ordinary tests; real VST restore is a separate manual check.
 
 ## Acceptance Checks

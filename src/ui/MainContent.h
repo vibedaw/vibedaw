@@ -14,6 +14,7 @@
 #include "sidebar/browser/BrowserSidebar.h"
 #include "sidebar/clips/ClipsSidebar.h"
 #include "editor/ClipEditorWindow.h"
+#include "components/PluginButton.h"
 
 namespace vibedaw {
 
@@ -80,17 +81,18 @@ private:
     MixerPanel* mixerPanel_ = nullptr;
     PianoPanel* pianoPanel_ = nullptr;
     
-    juce::TextButton pluginButton_;
+    PluginButton pluginButton_;
     juce::ComboBox midiDeviceCombo_;
     juce::Label statusLabel_;
     juce::Label midiLabel_;
+    juce::TooltipWindow tooltipWindow_ { this, 700 };
     
     double lastPanelFocusTime_ = 0.0;
     int lastFocusedPanelIndex_ = -1;
     static constexpr double doubleTapIntervalMs_ = 400.0;
     
     
-    static constexpr int transportBarHeight = 104;
+    static constexpr int transportBarHeight = 64;
     static constexpr int statusBarHeight = 28;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainContent)

@@ -1,5 +1,4 @@
 #include "MainContent.h"
-#include "plugins/PluginWindow.h"
 #include "plugins/PluginHost.h"
 #include "core/Constants.h"
 #include "utils/Logger.h"
@@ -13,7 +12,7 @@ namespace vibedaw {
 
 MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& manager, Project& proj)
     : midiManager_(manager),
-      project_(proj), transportState_(proj.getTransportState())
+      project_(proj), transportState_(proj.getTransportState()), pluginButton_(proj)
 {
     setOpaque(true);
     
@@ -55,6 +54,7 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     addAndMakeVisible(*panelContainer_);
     
     timelinePanel_ = new TimelinePanel(project_);
+    timelinePanel_->onEditSource = [this](ClipId id) { clipOpened(id, project_.getClipPool().getClip(id)); };
     panelContainer_->addPanel(timelinePanel_);
     
     mixerPanel_ = new MixerPanel(project_);
@@ -63,9 +63,6 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     pianoPanel_ = new PianoPanel(keyboardState, &midiManager_);
     panelContainer_->addPanel(pianoPanel_);
     
-    pluginButton_.setButtonText("No Editor");
-    pluginButton_.setEnabled(false);
-    pluginButton_.setTooltip("Plugin editors are temporarily disabled: VST3 editor restarts bypass the safe audio boundary.");
     pluginButton_.onClick = [this]() {
         openPluginWindow();
     };
@@ -128,26 +125,29 @@ void MainContent::resized() {
 
 void MainContent::updateLayout() {
     auto bounds = getLocalBounds();
-    
+
     transport_->setBounds(bounds.removeFromTop(transportBarHeight));
-    
+
     auto statusBarBounds = bounds.removeFromBottom(statusBarHeight);
-    
-    int leftWidth = leftSidebarContainer_->getTotalWidth();
-    int rightWidth = rightSidebarContainer_->getTotalWidth();
-    
+
+    int available = bounds.getWidth();
+    leftSidebarContainer_->constrainTo(available);
+    int leftWidth = leftSidebarContainer_->getDisplayedWidth();
+    rightSidebarContainer_->constrainTo(available - leftWidth);
+    int rightWidth = rightSidebarContainer_->getDisplayedWidth();
+
     if (leftWidth > 0) {
         leftSidebarContainer_->setBounds(bounds.removeFromLeft(leftWidth));
     } else {
         leftSidebarContainer_->setBounds(0, transportBarHeight, 0, bounds.getHeight());
     }
-    
+
     if (rightWidth > 0) {
         rightSidebarContainer_->setBounds(bounds.removeFromRight(rightWidth));
     } else {
         rightSidebarContainer_->setBounds(getWidth(), transportBarHeight, 0, bounds.getHeight());
     }
-    
+
     panelContainer_->setBounds(bounds);
     
     auto statusBar = statusBarBounds.reduced(10, 2);
@@ -265,8 +265,10 @@ void MainContent::handlePanelFocusHotkey(int panelIndex, double currentTime) {
 }
 
 void MainContent::openPluginWindow() {
-    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin editors disabled",
-        "Editor-triggered VST3 lifecycle changes cannot yet be safely applied during audio processing.");
+    auto* channel = project_.getChannelList().getChannelById(project_.getActiveChannelId());
+    const auto reason = PluginButton::unavailableReason(channel);
+    if (reason.isEmpty()) channel->getPlugin()->openEditorWindow();
+    else juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Plugin editor unavailable", reason);
 }
 
 void MainContent::updateStatusLabel() {
@@ -287,7 +289,7 @@ void MainContent::updateStatusLabel() {
     }
     
     status += " | MIDI: " + (midiManager_.isConnected() ? midiManager_.getCurrentDeviceName() : "Not connected");
-    status += " | Graph edits briefly silence audio; plugin editors disabled";
+    status += " | Plugin editors: initial testing (unguarded restarts)";
     
     statusLabel_.setText(status, juce::dontSendNotification);
 }
@@ -318,11 +320,20 @@ void MainContent::activeChannelChanged(int newActiveIndex) {
 
 void MainContent::clipCreated(ClipId clipId, Clip* clip) {
     clipSelected(clipId, clip);
-    clipOpened(clipId, clip);
 }
 
 void MainContent::clipOpened(ClipId clipId, Clip* clip) {
+    clip = project_.getClipPool().getClip(clipId);
+    if (!clip) return;
     clipSelected(clipId, clip);
+    for (auto* window : openClipEditors_) {
+        if (window->getClipId() == clipId) {
+            window->setMinimised(false);
+            window->setVisible(true);
+            window->toFront(true);
+            return;
+        }
+    }
     if (clip && clip->getType() == Clip::Type::Midi) {
         auto* midiClip = dynamic_cast<MidiClip*>(clip);
         if (midiClip) {

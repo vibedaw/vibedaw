@@ -22,6 +22,7 @@ public:
     ClipInstance();
     ClipInstance(ClipId clipId, ChannelId channelId, double startTime, double duration = 1.0);
     ~ClipInstance() = default;
+    const juce::String& getId() const { return id_; }
     
     ClipId getClipId() const { return clipId_; }
     void setClipId(ClipId id) { clipId_ = id; changed(); }
@@ -61,6 +62,8 @@ public:
     
 private:
     friend class Track;
+    friend class TrackList;
+    const juce::String id_ = juce::Uuid().toString();
     std::function<void()> onChange_;
     void changed() { if (onChange_) onChange_(); }
     ClipId clipId_ = InvalidClipId;

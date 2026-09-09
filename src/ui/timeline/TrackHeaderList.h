@@ -9,7 +9,8 @@
 namespace vibedaw {
 
 class TrackHeaderList : public juce::Component
-                       , public TrackList::Listener {
+                       , public TrackList::Listener
+                       , private juce::ChangeListener {
 public:
     TrackHeaderList(TrackList& trackList);
     ~TrackHeaderList() override;
@@ -27,11 +28,17 @@ public:
     std::function<void(int)> onTrackSelected;
     std::function<void(int, bool)> onTrackMuteToggled;
     std::function<void(int, bool)> onTrackSoloToggled;
+
+    // Context-menu actions; resolve by stable Track UUID and no-op when gone.
+    void renameTrackById(const juce::String& trackId, const juce::String& name);
+    void removeTrackById(const juce::String& trackId);
+    void removeTrackWithConfirmation(const juce::String& trackId);
     
     static constexpr int defaultWidth = 150;
     static constexpr int headerHeight = 24;
     
 private:
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void trackAdded(Track* track) override;
     void trackRemoved(int index) override;
     void trackChanged(Track* track) override;

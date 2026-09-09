@@ -14,6 +14,7 @@ class Track : public ProcessorBase, public juce::ChangeBroadcaster {
 public:
     Track(const juce::String& name = "Track");
     ~Track() override;
+    const juce::String& getId() const { return id_; }
     
     void setName(const juce::String& newName) { name = newName; }
     const juce::String getName() const override { return name; }
@@ -40,6 +41,8 @@ public:
     const std::vector<std::unique_ptr<ClipInstance>>& getClipInstances() const { return clipInstances; }
     
 private:
+    friend class TrackList;
+    const juce::String id_ = juce::Uuid().toString();
     void updateLevels(const juce::AudioBuffer<float>& audio);
     
     juce::String name;

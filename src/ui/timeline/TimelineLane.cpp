@@ -3,6 +3,7 @@
 #include "project/ClipPool.h"
 #include "project/ChannelList.h"
 #include <cmath>
+#include "TimelineGeometry.h"
 
 namespace vibedaw {
 
@@ -35,7 +36,8 @@ void TimelineLane::setClipPool(ClipPool* pool) { clipPool = pool; repaint(); }
 
 void TimelineLane::mouseDown(const juce::MouseEvent& e) {
     if (!track) return;
-    const double beat = (e.x + scrollOffset) / pixelsPerBeat;
+    if (!e.mods.isLeftButtonDown() || e.mods.isPopupMenu()) return;
+    const double beat = TimelineGeometry::beatAt(e.x, scrollOffset, pixelsPerBeat);
     int hit = -1;
     for (int i = track->getNumClipInstances() - 1; i >= 0; --i) {
         if (track->getClipInstance(i)->containsTime(beat)) { hit = i; break; }
@@ -47,8 +49,8 @@ void TimelineLane::drawClips(juce::Graphics& g) {
     if (!track) return;
     for (const auto& instance : track->getClipInstances()) {
         if (!instance || !instance->isValid()) continue;
-        const double left = instance->getStartTime() * pixelsPerBeat - scrollOffset;
-        const double right = instance->getEndTime() * pixelsPerBeat - scrollOffset;
+        const double left = TimelineGeometry::xAt(instance->getStartTime(), scrollOffset, pixelsPerBeat);
+        const double right = TimelineGeometry::xAt(instance->getEndTime(), scrollOffset, pixelsPerBeat);
         if (right < 0.0 || left >= getWidth()) continue;
         // Clip in floating point before integer conversion, including very distant placements.
         const int x = static_cast<int>(juce::jmax(0.0, left));

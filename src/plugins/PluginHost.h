@@ -27,9 +27,11 @@ public:
     juce::AudioProcessor* getProcessor() const { return pluginInstance.get(); }
     juce::AudioPluginInstance* getPluginInstance() const { return pluginInstance.get(); }
     
-    // Temporarily disabled for all hosts: JUCE editor restarts bypass our gate.
+    // Editor calls are guarded, but stock JUCE's internal restarts bypass our gate.
+    // Access is enabled for initial testing by explicit user override (T10).
     bool hasEditor() const;
     std::unique_ptr<juce::AudioProcessorEditor> createEditor();
+    void openEditorWindow();
     
     juce::String getPluginName() const;
     juce::String getPluginPath() const { return currentPluginPath; }

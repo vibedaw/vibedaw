@@ -15,6 +15,7 @@ PluginHost::PluginHost(std::unique_ptr<juce::AudioPluginInstance> instance)
     : pluginInstance(std::move(instance)) {}
 
 PluginHost::~PluginHost() {
+    JUCE_ASSERT_MESSAGE_THREAD
     AudioQuiescence::Edit edit;
     closeWindows();
     releaseResources();
@@ -23,6 +24,7 @@ PluginHost::~PluginHost() {
 }
 
 bool PluginHost::loadPlugin(const juce::String& pluginPath) {
+    JUCE_ASSERT_MESSAGE_THREAD
     AudioQuiescence::Edit edit;
     closeWindows();
     LOG_INFO("PluginHost: Loading plugin from: " + pluginPath);
@@ -115,6 +117,7 @@ void PluginHost::releaseResources() {
 }
 
 void PluginHost::resetVoices() {
+    JUCE_ASSERT_MESSAGE_THREAD
     AudioQuiescence::Edit edit;
     if (pluginInstance) pluginInstance->reset();
 }
@@ -132,13 +135,27 @@ const juce::String PluginHost::getName() const {
 }
 
 bool PluginHost::hasEditor() const {
-    return false;
+    JUCE_ASSERT_MESSAGE_THREAD
+    AudioQuiescence::Edit edit;
+    return pluginInstance && pluginInstance->hasEditor();
 }
 
 std::unique_ptr<juce::AudioProcessorEditor> PluginHost::createEditor() {
-    // Editor-originated JUCE VST3 restarts bypass our lifecycle guard. Until that
-    // asynchronous path is integrated, never call into a hosted editor, even here.
-    return nullptr;
+    JUCE_ASSERT_MESSAGE_THREAD
+    AudioQuiescence::Edit edit;
+    if (!hasEditor() || pluginInstance->getActiveEditor() != nullptr) return nullptr;
+    return std::unique_ptr<juce::AudioProcessorEditor>(pluginInstance->createEditorIfNeeded());
+}
+
+void PluginHost::openEditorWindow() {
+    JUCE_ASSERT_MESSAGE_THREAD
+    AudioQuiescence::Edit edit;
+    if (!windows.empty()) {
+        windows.front()->setVisible(true);
+        windows.front()->toFront(true);
+    } else if (hasEditor()) {
+        new PluginWindow(this, getPluginName());
+    }
 }
 
 juce::String PluginHost::getPluginName() const {

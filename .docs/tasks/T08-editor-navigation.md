@@ -4,6 +4,8 @@ Status: backlog | Milestone: M2 | Depends on: T03, T01
 
 Promote the blocking subset into M1 if a user cannot reliably write the clip required by T02. Do not delay all playback work for optional editor polish.
 
+Scheduling update 2026-09-08: follows M1.5 and T07 unless navigation blocks the current workflow. T11 owns create-without-opening and explicit source editor entry; T12 owns timeline dragging and placement double-click. Keep those behaviors intact rather than reintroducing automatic editor opening here.
+
 ## Outcome
 
 The piano roll's keyboard, notes, ruler, and hit testing agree at every scroll/zoom position. Longer clips can be edited without hidden content.

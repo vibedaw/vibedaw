@@ -4,27 +4,13 @@
 #include "../Sidebar.h"
 #include "project/ChannelList.h"
 #include "project/Project.h"
+#include "ui/DragPayload.h"
 #include <vector>
 
 namespace vibedaw {
 
 class Project;
 class Channel;
-
-enum class DragSourceType {
-    Plugin,
-    Sample,
-    Preset,
-    Unknown
-};
-
-struct DragDropInfo {
-    DragSourceType type = DragSourceType::Unknown;
-    juce::String path;
-    juce::String name;
-    
-    static DragDropInfo fromDragDescription(const juce::var& description);
-};
 
 class ChannelRow : public juce::Component, public juce::DragAndDropTarget {
 public:
@@ -49,6 +35,12 @@ public:
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
+    juce::PopupMenu createContextMenu() const;
+    // Delayed menu actions resolve stable IDs through the lifetime-checked rack.
+    std::function<void()> openEditor;
+    std::function<void()> selectAsActive;
+    std::function<void()> renameRequested;
+    std::function<void()> removeRequested;
     
     bool isInterestedInDragSource(const SourceDetails& dragSourceDetails) override;
     void itemDragEnter(const SourceDetails& dragSourceDetails) override;
@@ -67,6 +59,7 @@ private:
 };
 
 class ChannelRackContent : public juce::Component,
+                           public juce::DragAndDropTarget,
                            private Project::Listener,
                            public ChannelRow::Listener,
                            public ChannelList::Listener {
@@ -82,8 +75,21 @@ public:
     ~ChannelRackContent();
     
     void setChannelListener(Listener* listener) { channelListener_ = listener; }
-    
+
     void refreshChannels();
+
+    // Context-menu actions; all resolve by stable ChannelId and no-op when the
+    // channel is gone. Confirmation dialogs live in the menu bindings only.
+    void selectChannelById(ChannelId id);
+    void renameChannelById(ChannelId id, const juce::String& name);
+    void removeChannelById(ChannelId id);
+    void removeChannelWithConfirmation(ChannelId id);
+    int countPlacementsToChannel(ChannelId id) const;
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragEnter(const SourceDetails&) override;
+    void itemDragMove(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
     
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -98,6 +104,7 @@ public:
     void sampleDroppedOnChannel(Channel* channel, const juce::File& sampleFile) override;
     
 private:
+    bool isCreateDropPosition(juce::Point<int> position) const;
     void activeChannelChanged(int index) override { selectChannel(index); }
     Project& project_;
     Listener* channelListener_ = nullptr;
@@ -106,6 +113,7 @@ private:
     juce::TextButton addChannelButton_;
     
     int selectedChannelIndex_ = -1;
+    bool isDragOver_ = false;
     
     void rebuildChannelRows();
     void selectChannel(int index);

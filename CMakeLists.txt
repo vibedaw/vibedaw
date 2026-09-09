@@ -90,6 +90,7 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/ui/MainContent.cpp
     src/ui/TransportComponent.cpp
+    src/ui/Icons.cpp
     src/ui/PianoComponent.cpp
     src/ui/FloatingPianoPanel.cpp
     src/ui/panels/Panel.cpp

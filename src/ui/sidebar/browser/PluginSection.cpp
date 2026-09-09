@@ -1,4 +1,5 @@
 #include "PluginSection.h"
+#include "ui/DragPayload.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
@@ -33,6 +34,11 @@ void PluginSection::refreshPlugins() {
     scanner_.scanDefaultDirectories();
 }
 
+void PluginSection::createChannelFromPlugin(const juce::String& pluginPath) {
+    // Same validated path as a double-click/drop; no channel is created on failure.
+    if (pluginListener_) pluginListener_->pluginDoubleClicked(pluginPath);
+}
+
 void PluginSection::paintContent(juce::Graphics& g, juce::Rectangle<int> bounds) {
     juce::ignoreUnused(g, bounds);
 }
@@ -52,6 +58,7 @@ void PluginSection::buildTree() {
     for (const auto& plugin : scanner_.getScannedPlugins()) {
         auto* pluginItem = new PluginTreeItem(plugin.name, plugin.path, true);
         pluginItem->setListener(pluginListener_);
+        pluginItem->setOwnerSection(this);
         rootItem_->addSubItem(pluginItem);
     }
     
@@ -97,11 +104,26 @@ void PluginTreeItem::paintItem(juce::Graphics& g, int width, int height) {
 }
 
 void PluginTreeItem::itemClicked(const juce::MouseEvent& e) {
-    juce::ignoreUnused(e);
-    
+    if (e.mods.isPopupMenu()) {
+        if (isPlugin_) showCreateMenu();
+        return;
+    }
+
     if (isPlugin_ && listener_) {
         listener_->pluginSelected(path_);
     }
+}
+
+void PluginTreeItem::showCreateMenu() {
+    juce::PopupMenu menu;
+    // The delayed action re-resolves the owner; a destroyed section is a no-op.
+    menu.addItem("Create Instrument Channel", true, false,
+        [section = owner_, path = path_] {
+            if (section != nullptr) section->createChannelFromPlugin(path);
+        });
+    juce::PopupMenu::Options options;
+    if (owner_ != nullptr) options = options.withTargetComponent(owner_.getComponent());
+    menu.showMenuAsync(options);
 }
 
 void PluginTreeItem::itemDoubleClicked(const juce::MouseEvent& e) {
@@ -114,7 +136,7 @@ void PluginTreeItem::itemDoubleClicked(const juce::MouseEvent& e) {
 
 juce::var PluginTreeItem::getDragSourceDescription() {
     if (isPlugin_) {
-        return path_;
+        return DragDropInfo::plugin(path_);
     }
     return {};
 }

@@ -103,11 +103,14 @@ void TransportState::setTimeSignature(int numerator, int denominator) {
 }
 
 void TransportState::setLoopEnabled(bool enabled) {
+    // Enabling a cleared loop materializes the default region, so the button
+    // and menu Enable always produce a visible, active loop.
+    if (enabled && !loop_.exists) loop_.exists = true;
     if (loop_.enabled != enabled) {
         loop_.enabled = enabled;
         publishControl();
-        listeners_.call([&](TransportListener& l) { 
-            l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats); 
+        listeners_.call([&](TransportListener& l) {
+            l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats);
         });
     }
 }
@@ -121,9 +124,22 @@ void TransportState::setLoopRegion(double startBeats, double endBeats) {
     if (!validLoopRegion(startBeats, endBeats)) return;
     loop_.startBeats = startBeats;
     loop_.endBeats = endBeats;
+    loop_.exists = true;
     publishControl();
     listeners_.call([&](TransportListener& l) { 
         l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats); 
+    });
+}
+
+void TransportState::clearLoop() {
+    if (!loop_.exists && !loop_.enabled) return;
+    loop_.exists = false;
+    loop_.enabled = false;
+    loop_.startBeats = 0.0;
+    loop_.endBeats = 4.0;
+    publishControl();
+    listeners_.call([&](TransportListener& l) {
+        l.transportLoopChanged(loop_.enabled, loop_.startBeats, loop_.endBeats);
     });
 }
 

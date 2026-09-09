@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "core/TransportState.h"
+#include "ui/Icons.h"
 
 namespace vibedaw {
 
@@ -41,22 +42,22 @@ public:
     
     TransportButton(Type type);
     ~TransportButton() override = default;
-    
+
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
-    
+
     void setActive(bool active);
     bool isActive() const { return active_; }
-    
+
     std::function<void()> onClick;
-    
+    // Right-click/menu-button press; the owner builds the context menu.
+    std::function<void(const juce::MouseEvent&)> onContextMenu;
+
 private:
     Type type_;
     bool active_ = false;
     bool pressed_ = false;
-    
-    juce::Path createIcon();
 };
 
 class TempoControl : public juce::Component {
@@ -100,14 +101,35 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TimeSignatureControl)
 };
 
+// Popover contents for "Edit Loop...": the relocated numeric loop bounds.
+// Apply commits both fields atomically and enables looping; invalid input is
+// retained with a red validation message, matching the removed bar row.
+class LoopEditorPopover : public juce::Component {
+public:
+    explicit LoopEditorPopover(TransportState& state);
+
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    void refreshFromState();
+
+private:
+    void commit();
+    TransportState& transportState_;
+    juce::TextEditor start_, end_;
+    juce::TextButton apply_{"Apply"};
+    juce::Label validation_;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LoopEditorPopover)
+};
+
 class TransportComponent : public juce::Component, public TransportListener {
 public:
     TransportComponent(TransportState& state);
     ~TransportComponent() override;
-    
+
     void paint(juce::Graphics& g) override;
     void resized() override;
-    
+
     void transportPlayingChanged(bool isPlaying) override;
     void transportRecordingChanged(bool isRecording) override;
     void transportPositionChanged(double positionInSeconds) override;
@@ -115,10 +137,18 @@ public:
     void transportTimeSignatureChanged(int numerator, int denominator) override;
     void transportLoopChanged(bool enabled, double start, double end) override;
     void transportMetronomeChanged(bool enabled) override;
-    
+
+    // Right-click menu dispatch: 1 toggle, 2 edit popover, 3 clear.
+    // Public so offline tests drive actions without opening native menus.
+    void handleLoopMenuAction(int action);
+    // Builds the popover without launching it (offline test seam for fields).
+    std::unique_ptr<LoopEditorPopover> createLoopEditor();
+    // Set by tests so "Edit Loop..." never opens a native CallOutBox.
+    std::function<void()> openLoopEditorOverride;
+
 private:
     TransportState& transportState_;
-    
+
     std::unique_ptr<TimeDisplay> timeDisplay_;
     std::unique_ptr<TransportButton> returnToStartBtn_;
     std::unique_ptr<TransportButton> rewindBtn_;
@@ -130,13 +160,13 @@ private:
     std::unique_ptr<TimeSignatureControl> timeSigControl_;
     std::unique_ptr<TransportButton> loopBtn_;
     std::unique_ptr<TransportButton> metronomeBtn_;
-    juce::TextEditor loopStart_, loopEnd_;
-    juce::TextButton applyLoop_{"Apply Loop"};
-    juce::Label loopLabel_, loopEndLabel_, loopValidation_;
-    
+    juce::Component::SafePointer<LoopEditorPopover> openPopover_;
+
     void setupButtons();
     void updateButtonStates();
-    
+    void showLoopMenu();
+    void openLoopEditor();
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TransportComponent)
 };
 
