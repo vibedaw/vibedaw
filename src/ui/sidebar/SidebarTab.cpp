@@ -10,7 +10,7 @@ SidebarTab::SidebarTab(Sidebar& sidebar)
                   ? sidebar_.getIconSymbol()
                   : sidebar_.getName().substring(0, 1))
 {
-    setOpaque(true);
+    setOpaque(false);
     setInterceptsMouseClicks(true, false);
     setMouseCursor(juce::MouseCursor::PointingHandCursor);
 
@@ -29,14 +29,12 @@ void SidebarTab::activate() {
 }
 
 void SidebarTab::paint(juce::Graphics& g) {
-    g.fillAll(theme::hairline);
-
-    g.setColour(theme::border);
-    g.drawRect(getLocalBounds());
+    theme::drawSurface(g, getLocalBounds().toFloat().reduced(2.0f),
+                       theme::raised, theme::controlRadius);
 }
 
 void SidebarTab::resized() {
-    button_.setBounds(getLocalBounds());
+    button_.setBounds(getLocalBounds().reduced(2));
 }
 
 void SidebarTab::mouseDown(const juce::MouseEvent&) {

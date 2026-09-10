@@ -1,4 +1,5 @@
 #include "MixerPanel.h"
+#include "ui/Theme.h"
 
 namespace vibedaw {
 
@@ -11,6 +12,10 @@ MixerPanel::MixerPanel(Project& owner) : Panel("Mixer | Peak, linear 0..1 FS"), 
     viewport = content.get();
     viewport->setViewedComponent(&stripContent, false);
     viewport->setScrollBarsShown(true, true);
+    for (auto* bar : {&viewport->getVerticalScrollBar(), &viewport->getHorizontalScrollBar()}) {
+        bar->setColour(juce::ScrollBar::backgroundColourId, theme::deepWell);
+        bar->setColour(juce::ScrollBar::thumbColourId, theme::controlSelected);
+    }
     viewport->setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
     setContentComponent(std::move(content));
     viewport->addComponentListener(this);

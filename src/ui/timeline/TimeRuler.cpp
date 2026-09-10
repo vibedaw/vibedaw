@@ -15,12 +15,12 @@ void TimeRuler::paint(juce::Graphics& g) {
         const float right = static_cast<float>(juce::jlimit(0.0, static_cast<double>(getWidth()),
             region.endBeats * pixelsPerBeat - scrollOffset));
         if (right <= left) return;
-        g.setColour(fill);
+        g.setColour(fill.withAlpha(0.65f));
         g.fillRect(left, 0.0f, right - left, static_cast<float>(getHeight()));
         g.setColour(edge);
         g.fillRect(left, 0.0f, right - left, barHeight);
     };
-    // A set region paints blue when enabled, dim when disabled; a cleared
+    // A set region is accented when enabled, dim when disabled; a cleared
     // (non-existent) region paints nothing at all.
     if (loop.exists)
         drawRegion(loop, juce::Colour(loop.enabled ? theme::loopFillActive : theme::loopFillIdle),
@@ -32,12 +32,17 @@ void TimeRuler::paint(juce::Graphics& g) {
     const double end = (scrollOffset + getWidth()) / pixelsPerBeat;
     for (double beat = first; beat <= end; beat += interval) {
         int x = static_cast<int>(beat * pixelsPerBeat - scrollOffset);
-        g.setColour(theme::separator);
-        g.drawVerticalLine(x, 0.0f, static_cast<float>(getHeight()));
-        g.setColour(theme::textBright);
-        g.setFont(11.0f);
-        g.drawText("b" + juce::String(beat, 0), x + 3, 2, 70, getHeight() - 4, juce::Justification::left);
+        const bool bar = std::fmod(beat, 4.0) == 0.0;
+        g.setColour(bar ? theme::gridBar : theme::hairline);
+        g.drawVerticalLine(x, static_cast<float>(getHeight() - (bar ? 9 : 5)), static_cast<float>(getHeight()));
+        g.setColour(bar ? theme::textBright : theme::textSecondary);
+        g.setFont(juce::Font(10.0f, bar ? juce::Font::bold : juce::Font::plain));
+        g.drawText("b" + juce::String(beat, 0), x + 5, 2,
+                   juce::jmax(1, static_cast<int>(juce::jmin(76.0, pixelsPerBeat * interval)) - 6), getHeight() - 5,
+                   juce::Justification::left, true);
     }
+    g.setColour(theme::border);
+    g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(getWidth()));
     if (previewActive) {
         // Edge handles make resize affordance explicit during the gesture.
         const float left = static_cast<float>(preview.startBeats * pixelsPerBeat - scrollOffset);

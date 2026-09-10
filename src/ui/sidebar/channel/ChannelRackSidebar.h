@@ -33,6 +33,8 @@ public:
     int getIndex() const { return index_; }
     
     void paint(juce::Graphics& g) override;
+    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { repaint(); }
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
     juce::PopupMenu createContextMenu() const;
@@ -55,7 +57,7 @@ private:
     juce::Rectangle<int> kebabRect() const { return {getWidth() - 20, 2, 18, 18}; }
     juce::Rectangle<int> muteRect() const { return {getWidth() - 66, getHeight() - 17, 18, 14}; }
     juce::Rectangle<int> soloRect() const { return {getWidth() - 42, getHeight() - 17, 18, 14}; }
-    juce::Rectangle<int> meterRect() const { return {6, getHeight() - 13, getWidth() - 96, 7}; }
+    juce::Rectangle<int> meterRect() const { return {10, getHeight() - 10, juce::jmax(0, getWidth() - 100), 7}; }
     float meterLeft_ = 0.0f, meterRight_ = 0.0f;
     Channel* channel_;
     int index_;

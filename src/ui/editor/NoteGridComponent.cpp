@@ -128,17 +128,24 @@ void NoteGridComponent::drawNote(juce::Graphics& g, const Note& note, bool isSel
         noteColour = theme::noteDefault;
     }
     
-    g.setColour(noteColour);
-    g.fillRect(x + 1, y + 1, width - 2, geometry_.keyHeight - 2);
-    
-    g.setColour(noteColour.darker(0.3f));
-    g.drawRect(x, y, width, geometry_.keyHeight, 1);
+    const auto body = juce::Rectangle<float>(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 1.0f,
+                                           static_cast<float>(width) - 1.0f, static_cast<float>(geometry_.keyHeight) - 2.0f);
+    if (note.isMuted()) noteColour = noteColour.withMultipliedAlpha(0.35f);
+    g.setGradientFill(juce::ColourGradient(noteColour.brighter(0.15f), body.getX(), body.getY(),
+                                         noteColour.darker(0.2f), body.getX(), body.getBottom(), false));
+    g.fillRoundedRectangle(body, 2.0f);
+    g.setColour(isSelected ? theme::textBright : noteColour.brighter(0.2f).withAlpha(0.7f));
+    g.drawRoundedRectangle(body.reduced(0.5f), 2.0f, 1.0f);
+    if (width > 10 && geometry_.keyHeight > 6) {
+        g.setColour(theme::deepWell.withAlpha(0.35f));
+        g.fillRoundedRectangle(body.withWidth(2.0f).reduced(0.0f, 2.0f).translated(2.0f, 0.0f), 1.0f);
+    }
 }
 
 void NoteGridComponent::drawGridLines(juce::Graphics& g) {
     double gridSize = 4.0 / static_cast<double>(gridResolution_);
     
-    g.setColour(theme::controlActive);
+    g.setColour(theme::hairline.withAlpha(0.35f));
     
     for (int y = 0; y < getHeight(); y += geometry_.keyHeight) {
         g.drawHorizontalLine(y, 0.0f, static_cast<float>(getWidth()));
@@ -149,9 +156,9 @@ void NoteGridComponent::drawGridLines(juce::Graphics& g) {
         bool isBeat = std::fmod(time, 1.0) < 0.001;
         
         if (isBeat) {
-            g.setColour(theme::separator);
+            g.setColour(theme::gridBar.withAlpha(0.55f));
         } else {
-            g.setColour(theme::gridSub);
+            g.setColour(theme::gridSub.withAlpha(0.3f));
         }
         g.drawVerticalLine(x, 0.0f, static_cast<float>(getHeight()));
     }
@@ -159,15 +166,23 @@ void NoteGridComponent::drawGridLines(juce::Graphics& g) {
     for (int beat = 0; xFromTime(beat) < getWidth(); ++beat) {
         bool isMeasure = beat % 4 == 0;
         if (isMeasure) {
-            g.setColour(theme::gridMeasure);
+            g.setColour(theme::gridMeasure.withAlpha(0.6f));
             g.drawVerticalLine(xFromTime(beat), 0.0f, static_cast<float>(getHeight()));
         }
     }
 }
 
 void NoteGridComponent::paint(juce::Graphics& g) {
-    g.fillAll(theme::raised);
-    
+    g.fillAll(theme::panelBackground);
+    for (int y = 0; y < getHeight(); y += geometry_.keyHeight) {
+        const int pitchClass = pitchFromY(y) % 12;
+        const bool blackKey = pitchClass == 1 || pitchClass == 3 || pitchClass == 6 || pitchClass == 8 || pitchClass == 10;
+        if (blackKey) {
+            g.setColour(theme::deepWell.withAlpha(0.3f));
+            g.fillRect(0, y, getWidth(), geometry_.keyHeight);
+        }
+    }
+
     drawGridLines(g);
     
     if (midiClip_) {

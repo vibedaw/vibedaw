@@ -25,20 +25,26 @@ void ClipRow::setSelected(bool selected) {
 }
 
 void ClipRow::paint(juce::Graphics& g) {
-    auto bounds = getLocalBounds().toFloat().reduced(2.0f, 3.0f);
-
-    g.setColour(isSelected_ ? theme::selectedSurface : theme::control);
-    g.fillRoundedRectangle(bounds, 6.0f);
-    g.setColour(isSelected_ ? theme::accent : theme::hairline);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected_ ? 1.5f : 1.0f);
+    auto bounds = getLocalBounds().toFloat().reduced(3.0f, 3.0f);
+    theme::drawSurface(g, bounds, isSelected_ ? theme::selectedSurface
+        : (isMouseOver() ? theme::controlHover : theme::control), theme::panelRadius,
+        isSelected_ ? theme::accent.withAlpha(0.65f) : theme::border);
+    if (isSelected_) {
+        g.setColour(theme::accent);
+        g.fillRoundedRectangle(bounds.getX() + 1.0f, bounds.getY() + 8.0f,
+                               2.0f, bounds.getHeight() - 16.0f, 1.0f);
+    }
 
     auto textArea = bounds.reduced(8.0f, 6.0f).toNearestInt();
-    auto previewArea = textArea.removeFromRight(textArea.getWidth() * 2 / 5).withTrimmedLeft(6);
+    // Reserve the menu column so the thumbnail can never paint over its hit area.
+    textArea.setRight(kebabRect().getX() - 4);
+    auto previewArea = textArea.removeFromRight(juce::jlimit(28, 64, textArea.getWidth() / 3));
+    textArea.removeFromRight(8);
     auto titleArea = textArea.removeFromTop(16);
 
     juce::String name = clip_ ? clip_->getName() : "Clip " + juce::String(index_ + 1);
     if (clip_ && clip_->isMuted()) name += " [Muted]";
-    g.setColour(theme::white);
+    g.setColour(clip_ && clip_->isMuted() ? theme::textSecondary : theme::textBright);
     g.setFont(juce::Font(12.0f, juce::Font::bold));
     g.drawText(name, titleArea, juce::Justification::centredLeft, true);
 
@@ -46,8 +52,8 @@ void ClipRow::paint(juce::Graphics& g) {
     if (clip_) {
         if (auto* midi = dynamic_cast<MidiClip*>(clip_)) {
             const double bars = clip_->getDuration() / 4.0;
-            metadata = juce::String(bars, bars == std::floor(bars) ? 0 : 1) + " bars - " +
-                       juce::String(midi->getNumNotes()) + " notes";
+            metadata = juce::String(bars, bars == std::floor(bars) ? 0 : 1) + (bars == 1.0 ? " bar - " : " bars - ") +
+                       juce::String(midi->getNumNotes()) + (midi->getNumNotes() == 1 ? " note" : " notes");
         } else if (clip_->getType() == Clip::Type::Audio) {
             metadata = "Audio";
         } else {
@@ -59,17 +65,19 @@ void ClipRow::paint(juce::Graphics& g) {
     g.drawText(metadata, textArea, juce::Justification::centredLeft, true);
 
     g.setColour(theme::textSecondary);
-    g.setFont(juce::Font(14.0f, juce::Font::bold));
-    g.drawText(juce::String(juce::CharPointer_UTF8("\xe2\x8b\xae")), kebabRect(),
-               juce::Justification::centred);
+    const auto menuCentre = kebabRect().getCentre().toFloat();
+    for (float offset : {-4.0f, 0.0f, 4.0f})
+        g.fillEllipse(menuCentre.x - 1.0f, menuCentre.y + offset - 1.0f, 2.0f, 2.0f);
 
-    g.setColour(theme::deepWell);
-    g.fillRoundedRectangle(previewArea.toFloat(), 4.0f);
-    g.setColour(theme::hairline);
-    g.drawRoundedRectangle(previewArea.toFloat().reduced(0.5f), 4.0f, 1.0f);
+    theme::drawWell(g, previewArea.toFloat(), theme::controlRadius);
     if (auto* midi = dynamic_cast<MidiClip*>(clip_)) {
+        const auto grid = previewArea.toFloat().reduced(3.0f);
+        g.setColour(theme::hairline.withAlpha(0.6f));
+        for (int i = 1; i < 4; ++i)
+            g.drawVerticalLine(juce::roundToInt(grid.getX() + grid.getWidth() * i / 4.0f),
+                               grid.getY(), grid.getBottom());
         ClipMiniPreview::drawMiniNotes(g, *midi, midi->getDuration(),
-                                       previewArea.toFloat().reduced(2.0f), clip_->isMuted());
+                                       grid, clip_->isMuted());
     }
 }
 
@@ -129,7 +137,7 @@ ClipsContent::ClipsContent(Project& project)
 {
     addClipButton_.setButtonText("+ New Clip");
     addClipButton_.setColour(juce::TextButton::buttonColourId, theme::actionGreen);
-    addClipButton_.setColour(juce::TextButton::textColourOffId, theme::white);
+    addClipButton_.setColour(juce::TextButton::textColourOffId, theme::accent);
     addClipButton_.onClick = [this]() {
         auto newClip = std::make_unique<MidiClip>(0.0, 4.0);
         newClip->setName("Clip " + juce::String(project_.getClipPool().getNumClips() + 1));
@@ -143,6 +151,8 @@ ClipsContent::ClipsContent(Project& project)
     };
     addAndMakeVisible(addClipButton_);
     deleteClipButton_.setEnabled(false);
+    deleteClipButton_.setColour(juce::TextButton::buttonColourId, theme::control);
+    deleteClipButton_.setColour(juce::TextButton::textColourOffId, theme::textSecondary);
     // Same confirmed, impact-warned path as the row context menu (T14 parity).
     deleteClipButton_.setTooltip("Delete the selected source. Its placements remain as unresolved placeholders.");
     deleteClipButton_.onClick = [this] { deleteSourceWithConfirmation(selectedClipId_); };
@@ -199,22 +209,26 @@ bool ClipsContent::rowMatchesFilter(const ClipRow& row) const {
 void ClipsContent::paint(juce::Graphics& g) {
     g.fillAll(theme::raised);
 
-    // MIDI/AUDIO segmented filter tabs (manual hit-testing, no child components).
-    auto tabs = getLocalBounds().withHeight(tabRowHeight).reduced(2, 2);
-    midiTabBounds_ = tabs.removeFromLeft(tabs.getWidth() / 2).reduced(2, 1);
-    audioTabBounds_ = tabs.reduced(2, 1);
+    // The segmented well and its manual hit rectangles share the layout in resized().
+    theme::drawWell(g, getLocalBounds().withHeight(tabRowHeight).reduced(2, 2).toFloat(),
+                    theme::controlRadius);
     auto drawTab = [&](const juce::Rectangle<int>& bounds, const juce::String& label, bool active) {
         auto rect = bounds.toFloat();
-        g.setColour(active ? theme::actionGreen : theme::control);
-        g.fillRoundedRectangle(rect, 5.0f);
-        g.setColour(active ? theme::actionGreen : theme::hairline);
-        g.drawRoundedRectangle(rect.reduced(0.5f), 5.0f, 1.0f);
-        g.setColour(active ? theme::white : theme::textDefault);
-        g.setFont(juce::Font(11.0f, juce::Font::bold));
+        if (active)
+            theme::drawSurface(g, rect, theme::selectedSurface, theme::controlRadius,
+                               theme::accent.withAlpha(0.3f));
+        g.setColour(active ? theme::accent : theme::textSecondary);
+        g.setFont(juce::Font(10.5f, juce::Font::bold));
         g.drawText(label, bounds, juce::Justification::centred);
     };
     drawTab(midiTabBounds_, "MIDI", filterTab_ == 0);
     drawTab(audioTabBounds_, "AUDIO", filterTab_ == 1);
+
+    auto footer = getLocalBounds().withTrimmedTop(juce::jmax(0, getHeight() - 32));
+    g.setColour(theme::panelBackground);
+    g.fillRect(footer);
+    g.setColour(theme::hairline);
+    g.drawHorizontalLine(footer.getY(), 0.0f, static_cast<float>(getWidth()));
 
     int visibleRows = 0;
     for (const auto& row : clipRows_) {
@@ -252,10 +266,13 @@ void ClipsContent::mouseDown(const juce::MouseEvent& e) {
 
 void ClipsContent::resized() {
     auto bounds = getLocalBounds();
+    auto tabs = bounds.withHeight(tabRowHeight).reduced(2, 2);
+    midiTabBounds_ = tabs.removeFromLeft(tabs.getWidth() / 2).reduced(2, 1);
+    audioTabBounds_ = tabs.reduced(2, 1);
 
     auto buttons = bounds.removeFromBottom(32);
-    deleteClipButton_.setBounds(buttons.removeFromRight(buttons.getWidth() / 2).reduced(2));
-    addClipButton_.setBounds(buttons.reduced(2));
+    deleteClipButton_.setBounds(buttons.removeFromRight(buttons.getWidth() / 2).reduced(3, 4));
+    addClipButton_.setBounds(buttons.reduced(3, 4));
 
     auto listArea = bounds.withTrimmedTop(tabRowHeight);
     int y = listArea.getY();
@@ -265,6 +282,7 @@ void ClipsContent::resized() {
         row->setBounds(0, y, bounds.getWidth(), ClipRow::rowHeight);
         y += ClipRow::rowHeight;
     }
+    repaint();
 }
 
 void ClipsContent::clipAdded(ClipId clipId, Clip* clip) {

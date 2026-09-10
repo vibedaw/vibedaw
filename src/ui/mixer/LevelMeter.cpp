@@ -23,7 +23,7 @@ void LevelMeter::paint(juce::Graphics& g) {
     int totalMeterWidth = meterWidth * 2 + meterSpacing;
     int startX = (width - totalMeterWidth) / 2;
 
-    g.fillAll(theme::windowBackground);
+    theme::drawWell(g, bounds.toFloat().reduced(0.5f), 3.0f);
 
     // A peak readout reserves its own bottom row so it never overlaps the bars.
     const int readoutHeight = showPeakReadout ? 12 : 0;
@@ -36,8 +36,12 @@ void LevelMeter::paint(juce::Graphics& g) {
         g.setColour(theme::deepWell);
         g.fillRect(x, meterY, meterWidth, meterHeight);
 
-        g.setColour(theme::control);
+        g.setColour(theme::border.withAlpha(0.6f));
         g.drawRect(x, meterY, meterWidth, meterHeight);
+
+        g.setColour(theme::meterLow.withAlpha(0.08f));
+        for (int y = meterY + meterHeight - 3; y >= meterY; y -= 4)
+            g.fillRect(x + 1, y, meterWidth - 2, 2);
 
         float clampedLevel = juce::jlimit(0.0f, 1.0f, level);
         float clampedPeak = juce::jlimit(0.0f, 1.0f, peak);
@@ -58,16 +62,19 @@ void LevelMeter::paint(juce::Graphics& g) {
                 int gradientEnd = meterY + meterHeight;
                 
                 juce::ColourGradient gradient(
-                    highColour, static_cast<float>(x), static_cast<float>(gradientStart),
+                    highColour, static_cast<float>(x), static_cast<float>(meterY),
                     lowColour, static_cast<float>(x), static_cast<float>(gradientEnd),
                     false
                 );
                 
-                gradient.addColour(juce::jlimit(0.0f, 1.0f, (1.0f - yellowZone) * meterHeight / levelHeight), midColour);
-                gradient.addColour(juce::jlimit(0.0f, 1.0f, (1.0f - greenZone) * meterHeight / levelHeight), lowColour);
+                gradient.addColour(1.0f - yellowZone, midColour);
+                gradient.addColour(1.0f - greenZone, lowColour);
                 
                 g.setGradientFill(gradient);
                 g.fillRect(x, gradientStart, meterWidth, levelHeight);
+                g.setColour(theme::deepWell.withAlpha(0.28f));
+                for (int y = meterY + meterHeight - 4; y >= gradientStart; y -= 4)
+                    g.drawHorizontalLine(y, static_cast<float>(x), static_cast<float>(x + meterWidth));
             } else if (meterStyle == MeterStyle::Segmented) {
                 int segmentHeight = 3;
                 int segmentGap = 1;
@@ -121,7 +128,7 @@ void LevelMeter::paint(juce::Graphics& g) {
         const auto label = peak > 1.0e-4f
             ? juce::String(juce::Decibels::gainToDecibels(peak), 1)
             : juce::String("-inf");
-        g.setColour(theme::textSecondary);
+        g.setColour(peak >= 1.0f ? theme::meterHigh : theme::textDefault);
         g.setFont(juce::Font(8.0f));
         g.drawText(label, 0, height - readoutHeight, width, readoutHeight - 1, juce::Justification::centred);
     }

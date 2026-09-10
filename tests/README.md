@@ -18,6 +18,14 @@ not a third-party plugin runtime test. The engine callback is invoked through a
 friend test seam, without initialising AudioDeviceManager. Settings written by
 the real Project destructor are isolated under the test binary directory's HOME.
 
+The UI suites run with the application `DawLookAndFeel`. Offscreen paint checks
+cover button/scrollbar states, rounded controls, surface gradients, enabled-label
+contrast, and white/black held-key feedback in both piano keyboards. Drag and loop
+probes use the shared theme, and dock-return checks include the inset panel frame.
+The audition keyboard and PianoPanel are compiled in this independent target.
+These checks are not full-window screenshot comparisons: final desktop/HiDPI
+appearance, native menus and the MainContent layout remain watcher/manual checks.
+
 Coverage includes T03 stable IDs/many-to-many routing, selection after reorder and
 deletion, shared sources, unresolved deletion/order, beat conversions, half-open
 bounds and validation, synchronous note invalidation, asynchronous source/track

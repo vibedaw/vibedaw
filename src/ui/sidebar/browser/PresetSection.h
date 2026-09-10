@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BrowserSection.h"
+#include "BrowserTreeItem.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -42,7 +43,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetSection)
 };
 
-class PresetFileTreeItem : public juce::TreeViewItem {
+class PresetFileTreeItem : public BrowserTreeItem {
 public:
     PresetFileTreeItem(const juce::File& file, bool isRoot = false, const juce::String& filter = {});
     ~PresetFileTreeItem() override = default;

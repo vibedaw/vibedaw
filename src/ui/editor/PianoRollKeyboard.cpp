@@ -61,40 +61,50 @@ juce::String PianoRollKeyboard::getNoteName(int noteNumber) const {
 void PianoRollKeyboard::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     int width = bounds.getWidth();
+    g.fillAll(theme::deepWell);
     
     for (int i = 0; i < geometry_.numKeys; ++i) {
         int noteNumber = geometry_.lowestNote + i;
         if (noteNumber > 127) break;
         
         int y = getYForKey(noteNumber);
+        if (y + geometry_.keyHeight <= 0 || y >= getHeight()) continue;
         
         bool isBlack = isBlackKey(noteNumber);
         bool isHeld = heldNotes_[noteNumber];
         
         juce::Colour keyColour;
         if (isHeld) {
-            keyColour = isBlack ? theme::rollKeyHeldBlack : theme::rollKeyHeldWhite;
+            keyColour = isBlack ? theme::accent.darker(0.35f) : theme::accent;
         } else {
-            keyColour = isBlack ? theme::control : theme::controlHover;
+            keyColour = isBlack ? theme::controlHover : juce::Colour(0xffe3e8e6);
         }
-        
-        g.setColour(keyColour);
+
+        const auto edgeColour = isHeld ? keyColour.darker(0.2f)
+                                      : isBlack ? theme::deepWell : juce::Colour(0xffaab8c2);
+        g.setGradientFill(juce::ColourGradient(keyColour, 0.0f, static_cast<float>(y),
+                                             edgeColour, static_cast<float>(width),
+                                             static_cast<float>(y + geometry_.keyHeight), false));
         g.fillRect(0, y, width, geometry_.keyHeight);
-        
-        if (!isBlack) {
-            g.setColour(theme::separator);
-            g.drawHorizontalLine(y, 0.0f, static_cast<float>(width));
+
+        g.setColour(theme::deepWell.withAlpha(isBlack ? 0.8f : 0.4f));
+        g.drawHorizontalLine(y + geometry_.keyHeight - 1, 0.0f, static_cast<float>(width));
+        g.setColour(theme::white.withAlpha(isBlack ? 0.08f : 0.4f));
+        g.drawHorizontalLine(y, 1.0f, static_cast<float>(width - 1));
+        if (isHeld) {
+            g.setColour(theme::accent.brighter(0.3f));
+            g.fillRect(width - 3, y, 3, geometry_.keyHeight - 1);
         }
         
         if (noteNumber % 12 == 0) {
-            g.setColour(theme::white);
-            g.setFont(10.0f);
+            g.setColour(theme::deepWell);
+            g.setFont(juce::Font(10.0f, juce::Font::bold));
             g.drawText(getNoteName(noteNumber), 4, y + 2, width - 8, geometry_.keyHeight - 4,
                        juce::Justification::centredLeft, true);
         }
     }
     
-    g.setColour(theme::gridMeasure);
+    g.setColour(theme::border);
     g.drawVerticalLine(width - 1, 0.0f, static_cast<float>(getHeight()));
 }
 

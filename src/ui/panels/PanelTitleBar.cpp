@@ -8,14 +8,16 @@ namespace vibedaw {
 PanelTitleBar::PanelTitleBar(Panel& owner)
     : owner_(owner)
 {
-    setOpaque(true);
+    setOpaque(false);
     collapseBtn_ = std::make_unique<IconButton>("-");
+    collapseBtn_->setTooltip("Collapse panel");
     collapseBtn_->onClick = [this]() {
         owner_.setCollapsed(true);
     };
     addAndMakeVisible(*collapseBtn_);
     
     expandBtn_ = std::make_unique<IconButton>("+");
+    expandBtn_->setTooltip("Expand panel");
     expandBtn_->onClick = [this]() {
         owner_.setCollapsed(false);
     };
@@ -29,31 +31,30 @@ PanelTitleBar::~PanelTitleBar() = default;
 void PanelTitleBar::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
-    if (owner_.isFocused()) {
-        g.fillAll(theme::titleBarActive);
-    } else {
-        g.fillAll(theme::control);
-    }
+    theme::drawSurface(g, bounds.toFloat(),
+                       owner_.isFocused() ? theme::titleBarActive : theme::raised,
+                       theme::panelRadius - 1.0f, theme::transparent);
     
     g.setColour(theme::textBright);
-    g.setFont(juce::Font(12.0f, juce::Font::plain));
+    g.setFont(juce::Font(12.0f, juce::Font::bold));
     
     auto textBounds = bounds.reduced(8, 0);
-    textBounds.removeFromRight(60);
+    textBounds.removeFromRight(28);
     g.drawText(owner_.getPanelName(), textBounds, juce::Justification::centredLeft);
     
-    g.setColour(theme::borderStrong);
-    g.drawLine(bounds.getX(), bounds.getBottom() - 1, bounds.getRight(), bounds.getBottom() - 1, 1.0f);
+    if (!owner_.isCollapsed()) {
+        g.setColour(theme::hairline);
+        g.drawHorizontalLine(bounds.getBottom() - 1, 5.0f, juce::jmax(5.0f, bounds.getWidth() - 5.0f));
+    }
     
     updateButtonVisibility();
 }
 
 void PanelTitleBar::resized() {
     auto bounds = getLocalBounds();
-    auto rightArea = bounds.removeFromRight(50).reduced(4, 3);
-    
-    collapseBtn_->setBounds(rightArea.removeFromLeft(22));
-    expandBtn_->setBounds(rightArea.removeFromLeft(22));
+    auto buttonBounds = bounds.removeFromRight(26).reduced(2, 1);
+    collapseBtn_->setBounds(buttonBounds);
+    expandBtn_->setBounds(buttonBounds);
 }
 
 void PanelTitleBar::mouseDown(const juce::MouseEvent& e) {

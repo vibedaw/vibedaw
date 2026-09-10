@@ -7,6 +7,7 @@ IconButton::IconButton(const juce::String& symbol)
     : symbol_(symbol)
 {
     setInterceptsMouseClicks(true, false);
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
 }
 
 void IconButton::setSymbol(const juce::String& symbol) {
@@ -20,11 +21,10 @@ void IconButton::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat().reduced(2);
     
     if (isMouseOver_) {
-        g.setColour(theme::borderStrong);
-        g.fillRoundedRectangle(bounds, 3.0f);
+        theme::drawSurface(g, bounds, theme::controlHover, theme::controlRadius);
     }
     
-    g.setColour(theme::textDefault);
+    g.setColour(isMouseOver_ ? theme::textBright : theme::textSecondary);
     g.setFont(juce::Font(12.0f, juce::Font::plain));
     g.drawText(symbol_, getLocalBounds(), juce::Justification::centred);
 }

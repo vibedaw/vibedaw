@@ -18,6 +18,7 @@ add_executable(offline_tests offline_tests.cpp
     ../src/ui/editor/NoteGridComponent.cpp
     ../src/ui/editor/PianoRollKeyboard.cpp ../src/ui/editor/TimeRulerComponent.cpp
     ../src/ui/editor/PianoRollEditor.cpp
+    ../src/ui/PianoComponent.cpp ../src/ui/panels/PianoPanel.cpp
     ../src/project/Note.cpp ../src/project/Clip.cpp ../src/project/ClipInstance.cpp
     ../src/project/ClipPool.cpp ../src/project/Track.cpp ../src/project/TrackList.cpp
     ../src/project/Channel.cpp ../src/project/ChannelList.cpp ../src/project/Project.cpp

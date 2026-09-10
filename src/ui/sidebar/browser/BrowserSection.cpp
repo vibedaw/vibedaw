@@ -6,13 +6,15 @@ namespace vibedaw {
 BrowserSection::BrowserSection(const juce::String& name)
     : sectionName_(name)
 {
-    titleLabel_.setText(sectionName_, juce::dontSendNotification);
-    titleLabel_.setColour(juce::Label::textColourId, theme::white);
+    titleLabel_.setText(sectionName_.toUpperCase(), juce::dontSendNotification);
+    titleLabel_.setColour(juce::Label::textColourId, theme::accent);
     titleLabel_.setJustificationType(juce::Justification::centredLeft);
-    titleLabel_.setFont(juce::Font(12.0f, juce::Font::bold));
+    titleLabel_.setFont(juce::Font(10.5f, juce::Font::bold));
+    titleLabel_.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(titleLabel_);
     
-    toggleButton_.setSymbol("-");
+    toggleButton_.setEdgeIndent(8);
+    toggleButton_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
     toggleButton_.onClick = [this]() { toggleExpanded(); };
     addAndMakeVisible(toggleButton_);
 }
@@ -21,7 +23,6 @@ void BrowserSection::setExpanded(bool expanded) {
     if (expanded_ == expanded) return;
     
     expanded_ = expanded;
-    toggleButton_.setSymbol(expanded_ ? "-" : "+");
     
     if (expanded_) {
         contentHeight_ = preferredHeight_;
@@ -32,6 +33,7 @@ void BrowserSection::setExpanded(bool expanded) {
     }
     
     resized();
+    repaint();
 }
 
 void BrowserSection::toggleExpanded() {
@@ -60,14 +62,14 @@ void BrowserSection::setContentComponent(juce::Component* comp) {
 }
 
 void BrowserSection::paint(juce::Graphics& g) {
-    g.fillAll(theme::control);
+    g.fillAll(theme::browserBackground);
     
     auto titleBounds = getLocalBounds().removeFromTop(titleBarHeight);
-    g.setColour(theme::hairline);
+    g.setColour(theme::raised);
     g.fillRect(titleBounds);
     
-    g.setColour(theme::borderStrong);
-    g.drawHorizontalLine(titleBarHeight, 0.0f, static_cast<float>(getWidth()));
+    g.setColour(theme::hairline);
+    g.drawHorizontalLine(titleBarHeight - 1, 6.0f, static_cast<float>(getWidth() - 6));
     
     if (expanded_) {
         paintContent(g, getLocalBounds().withTrimmedTop(titleBarHeight));
@@ -78,8 +80,27 @@ void BrowserSection::resized() {
     auto bounds = getLocalBounds();
     auto titleBounds = bounds.removeFromTop(titleBarHeight);
     
-    toggleButton_.setBounds(titleBounds.removeFromRight(titleBarHeight));
-    titleLabel_.setBounds(titleBounds.reduced(4, 0));
+    toggleButton_.setBounds(titleBounds.removeFromLeft(titleBarHeight));
+    titleLabel_.setBounds(titleBounds.withTrimmedRight(6));
+    juce::Path chevron;
+    if (expanded_) {
+        chevron.startNewSubPath(0.0f, 0.0f);
+        chevron.lineTo(4.0f, 4.0f);
+        chevron.lineTo(8.0f, 0.0f);
+    } else {
+        chevron.startNewSubPath(0.0f, 0.0f);
+        chevron.lineTo(4.0f, 4.0f);
+        chevron.lineTo(0.0f, 8.0f);
+    }
+    juce::DrawablePath icon;
+    icon.setPath(chevron);
+    icon.setFill(juce::Colours::transparentBlack);
+    icon.setStrokeFill(theme::accent);
+    icon.setStrokeThickness(1.4f);
+    juce::DrawablePath hoverIcon(icon);
+    hoverIcon.setStrokeFill(theme::accent);
+    toggleButton_.setImages(&icon, &hoverIcon, &hoverIcon);
+    toggleButton_.setTooltip(expanded_ ? "Collapse " + sectionName_ : "Expand " + sectionName_);
     
     if (expanded_ && contentComponent_ != nullptr) {
         contentComponent_->setBounds(bounds.withHeight(contentHeight_));

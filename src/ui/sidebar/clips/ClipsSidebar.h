@@ -31,6 +31,8 @@ public:
     int getIndex() const { return index_; }
     
     void paint(juce::Graphics& g) override;
+    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { repaint(); }
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent&) override { pressActive_ = false; }

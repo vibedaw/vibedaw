@@ -61,8 +61,14 @@ void TimelineContent::paintOverChildren(juce::Graphics& g) {
     }
     const double x = transport.getPositionInBeats() * pixelsPerBeat - horizontalScrollOffset;
     if (x < 0 || x >= getWidth()) return;
+    g.setColour(theme::accent.withAlpha(0.1f));
+    g.fillRect(static_cast<float>(x) - 2.0f, 0.0f, 6.0f, static_cast<float>(getHeight()));
     g.setColour(theme::accent);
     g.fillRect(static_cast<float>(x), 0.0f, 2.0f, static_cast<float>(getHeight()));
+    juce::Path marker;
+    marker.addTriangle(static_cast<float>(x) - 4.0f, 0.0f, static_cast<float>(x) + 6.0f, 0.0f,
+                       static_cast<float>(x) + 1.0f, 6.0f);
+    g.fillPath(marker);
 }
 
 void TimelineContent::resized() {

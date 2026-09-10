@@ -46,7 +46,7 @@ private:
     int splitterDragStartY_ = 0;
     int splitterDragStartHeights_[2] = {0, 0};
     
-    int getSplitterHeight() const { return 4; }
+    int getSplitterHeight() const { return 6; }
     int getSplitterIndexAt(int y) const;
     bool isOverSplitter(int y) const;
     

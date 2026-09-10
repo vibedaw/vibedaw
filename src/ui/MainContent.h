@@ -118,7 +118,8 @@ private:
     
     
     static constexpr int transportBarHeight = 64;
-    static constexpr int statusBarHeight = 28;
+    static constexpr int statusBarHeight = 30;
+    static constexpr int workspaceGap = 6;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainContent)
 };

@@ -80,6 +80,8 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     addAndMakeVisible(fileButton_);
 
     midiLabel_.setText("MIDI:", juce::dontSendNotification);
+    midiLabel_.setFont(juce::Font(11.0f, juce::Font::bold));
+    midiLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
     addAndMakeVisible(midiLabel_);
     
     midiDeviceCombo_.addItem("None", 1);
@@ -105,6 +107,8 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     addAndMakeVisible(midiDeviceCombo_);
     
     statusLabel_.setJustificationType(juce::Justification::centredLeft);
+    statusLabel_.setFont(juce::Font(11.0f));
+    statusLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
     updateStatusLabel();
     addAndMakeVisible(statusLabel_);
 
@@ -115,10 +119,12 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     addAndMakeVisible(midiDot_);
 
     cpuLabel_.setJustificationType(juce::Justification::centredRight);
+    cpuLabel_.setFont(juce::Font(11.0f));
     cpuLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
     addAndMakeVisible(cpuLabel_);
 
     ramLabel_.setJustificationType(juce::Justification::centredRight);
+    ramLabel_.setFont(juce::Font(11.0f));
     ramLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
     addAndMakeVisible(ramLabel_);
     refreshSystemStats();
@@ -181,6 +187,9 @@ void MainContent::refreshSystemStats() {
 
 void MainContent::paint(juce::Graphics& g) {
     g.fillAll(theme::windowBackground);
+    auto bounds = getLocalBounds().reduced(workspaceGap);
+    theme::drawSurface(g, bounds.removeFromBottom(statusBarHeight).toFloat(),
+                       theme::raised, theme::panelRadius);
 }
 
 void MainContent::resized() {
@@ -188,40 +197,55 @@ void MainContent::resized() {
 }
 
 void MainContent::updateLayout() {
-    auto bounds = getLocalBounds();
+    auto bounds = getLocalBounds().reduced(workspaceGap);
 
     transport_->setBounds(bounds.removeFromTop(transportBarHeight));
+    bounds.removeFromTop(workspaceGap);
 
     auto statusBarBounds = bounds.removeFromBottom(statusBarHeight);
+    bounds.removeFromBottom(workspaceGap);
 
-    int available = bounds.getWidth();
-    leftSidebarContainer_->constrainTo(available);
+    const int leftGap = leftSidebarContainer_->getTotalWidth() > 0 ? workspaceGap : 0;
+    const int rightGap = rightSidebarContainer_->getTotalWidth() > 0 ? workspaceGap : 0;
+    const int available = juce::jmax(0, bounds.getWidth() - leftGap - rightGap);
+    // Constrain displayed widths, never the remembered sidebar preferences.
+    const int sidebarBudget = juce::jmax(0, available - juce::jmin(240, available / 3));
+    const int sidebarTotal = leftSidebarContainer_->getTotalWidth() + rightSidebarContainer_->getTotalWidth();
+    const int leftBudget = sidebarTotal > 0
+        ? static_cast<int>(static_cast<double>(sidebarBudget) * leftSidebarContainer_->getTotalWidth() / sidebarTotal)
+        : 0;
+    leftSidebarContainer_->constrainTo(leftBudget);
     int leftWidth = leftSidebarContainer_->getDisplayedWidth();
-    rightSidebarContainer_->constrainTo(available - leftWidth);
+    rightSidebarContainer_->constrainTo(juce::jmax(0, sidebarBudget - leftWidth));
     int rightWidth = rightSidebarContainer_->getDisplayedWidth();
 
     if (leftWidth > 0) {
         leftSidebarContainer_->setBounds(bounds.removeFromLeft(leftWidth));
+        bounds.removeFromLeft(leftGap);
     } else {
-        leftSidebarContainer_->setBounds(0, transportBarHeight, 0, bounds.getHeight());
+        leftSidebarContainer_->setBounds(bounds.getX(), bounds.getY(), 0, bounds.getHeight());
     }
 
     if (rightWidth > 0) {
         rightSidebarContainer_->setBounds(bounds.removeFromRight(rightWidth));
+        bounds.removeFromRight(rightGap);
     } else {
-        rightSidebarContainer_->setBounds(getWidth(), transportBarHeight, 0, bounds.getHeight());
+        rightSidebarContainer_->setBounds(bounds.getRight(), bounds.getY(), 0, bounds.getHeight());
     }
 
     panelContainer_->setBounds(bounds);
     
-    auto statusBar = statusBarBounds.reduced(10, 2);
-    midiLabel_.setBounds(statusBar.removeFromLeft(40));
-    midiDeviceCombo_.setBounds(statusBar.removeFromLeft(150));
-    midiDot_.setBounds(statusBar.removeFromLeft(16).withSizeKeepingCentre(14, statusBarHeight - 4));
+    auto statusBar = statusBarBounds.reduced(8, 4);
     pluginButton_.setBounds(statusBar.removeFromRight(70));
+    statusBar.removeFromRight(4);
     fileButton_.setBounds(statusBar.removeFromRight(48));
-    ramLabel_.setBounds(statusBar.removeFromRight(80));
-    cpuLabel_.setBounds(statusBar.removeFromRight(56));
+    statusBar.removeFromRight(6);
+    ramLabel_.setBounds(statusBar.removeFromRight(getWidth() >= 850 ? 80 : 0));
+    cpuLabel_.setBounds(statusBar.removeFromRight(getWidth() >= 700 ? 60 : 0));
+    midiLabel_.setBounds(statusBar.removeFromLeft(36));
+    midiDeviceCombo_.setBounds(statusBar.removeFromLeft(juce::jmin(150, juce::jmax(0, statusBar.getWidth() / 2))));
+    midiDot_.setBounds(statusBar.removeFromLeft(16));
+    statusBar.removeFromLeft(4);
     statusLabel_.setBounds(statusBar);
 }
 
@@ -371,6 +395,7 @@ void MainContent::updateStatusLabel() {
     status += " | Plugin editors: initial testing (unguarded restarts)";
     
     statusLabel_.setText(status, juce::dontSendNotification);
+    statusLabel_.setTooltip(status);
 }
 
 void MainContent::pluginSelectedForLoad(const juce::String& pluginPath) {

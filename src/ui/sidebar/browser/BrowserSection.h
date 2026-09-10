@@ -1,7 +1,6 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include "ui/components/IconButton.h"
 
 namespace vibedaw {
 
@@ -64,7 +63,7 @@ private:
     
     juce::Component* contentComponent_ = nullptr;
     juce::Label titleLabel_;
-    IconButton toggleButton_;
+    juce::DrawableButton toggleButton_{"Toggle section", juce::DrawableButton::ImageFitted};
     
     Listener* listener_ = nullptr;
     

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BrowserSection.h"
+#include "BrowserTreeItem.h"
 #include "plugins/PluginScanner.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -44,7 +45,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginSection)
 };
 
-class PluginTreeItem : public juce::TreeViewItem {
+class PluginTreeItem : public BrowserTreeItem {
 public:
     PluginTreeItem(const juce::String& name, const juce::String& path = {}, bool isPlugin = false);
     ~PluginTreeItem() override = default;

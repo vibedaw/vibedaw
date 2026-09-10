@@ -16,17 +16,14 @@ public:
     void paint(juce::Graphics& g) override {
         auto bounds = getLocalBounds().toFloat();
         
-        if (isDown) {
-            g.setColour(theme::separator);
-        } else if (isOver) {
-            g.setColour(theme::controlActive);
-        } else {
-            g.setColour(theme::controlDim);
-        }
-        g.fillRoundedRectangle(bounds, 3.0f);
+        const auto activeColour = isMute ? theme::muteRed : theme::accent;
+        const auto surface = toggled ? theme::control.interpolatedWith(activeColour, 0.2f)
+                                    : isDown ? theme::controlPressed : isOver ? theme::controlHover : theme::control;
+        theme::drawSurface(g, bounds.reduced(0.5f), surface, theme::controlRadius,
+                           toggled ? activeColour.withAlpha(0.6f) : theme::border);
         
         if (toggled) {
-            g.setColour(isMute ? theme::muteRed : theme::muteGreen);
+            g.setColour(activeColour);
         } else {
             g.setColour(theme::textSecondary);
         }
@@ -114,15 +111,16 @@ void TrackHeader::paint(juce::Graphics& g) {
     }
     
     g.setColour(trackColour);
-    g.fillRect(0, 0, colourStripWidth, getHeight());
+    g.fillRoundedRectangle(1.0f, 6.0f, static_cast<float>(colourStripWidth - 1),
+                           static_cast<float>(getHeight() - 12), 1.5f);
     
-    g.setColour(theme::separator);
+    g.setColour(theme::hairline);
     g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
     
     g.setColour(theme::textBright);
-    g.setFont(juce::Font(12.0f));
+    g.setFont(juce::Font(12.0f, juce::Font::bold));
     
-    auto textBounds = bounds.withLeft(colourStripWidth + 4).withRight(bounds.getWidth() - 4);
+    auto textBounds = bounds.withTrimmedTop(7).withLeft(colourStripWidth + 8).withRight(bounds.getWidth() - 6);
     textBounds.removeFromBottom(buttonSize + 8);
     g.drawText(trackName, textBounds, juce::Justification::topLeft);
 }

@@ -15,47 +15,44 @@ public:
         int width = bounds.getWidth();
         int height = bounds.getHeight();
         
-        g.fillAll(theme::windowBackground);
+        theme::drawWell(g, bounds.toFloat().reduced(0.5f));
         
         int trackWidth = 6;
         int trackX = (width - trackWidth) / 2;
         int trackMargin = 2;
         int trackHeight = height - trackMargin * 2;
         
-        g.setColour(theme::control);
-        g.fillRect(trackX, trackMargin, trackWidth, trackHeight);
-        
-        g.setColour(theme::border);
-        g.drawRect(trackX, trackMargin, trackWidth, trackHeight);
+        theme::drawWell(g, juce::Rectangle<float>(static_cast<float>(trackX), static_cast<float>(trackMargin),
+                                                static_cast<float>(trackWidth), static_cast<float>(trackHeight)), 2.0f);
 
         // dB marks on the linear fader (gain = value * 2), mapped to cap travel.
         g.setColour(theme::tickMark);
         const float gainMarks[] = {1.0f, 0.501f, 0.251f, 0.126f, 0.032f};
         int capHeight = 12;
         for (float gain : gainMarks) {
-            const int y = trackMargin + static_cast<int>((1.0f - gain) * (trackHeight - capHeight)) + capHeight / 2;
+            const int y = trackMargin + static_cast<int>((1.0f - gain * 0.5f) * (trackHeight - capHeight)) + capHeight / 2;
             if (y < trackMargin || y >= height - trackMargin) continue;
-            g.drawHorizontalLine(y, static_cast<float>(trackX), static_cast<float>(trackX + trackWidth));
+            g.drawHorizontalLine(y, 5.0f, static_cast<float>(trackX - 3));
+            g.drawHorizontalLine(y, static_cast<float>(trackX + trackWidth + 3), static_cast<float>(width - 5));
         }
 
         int capWidth = width - 4;
         int capY = static_cast<int>(trackMargin + (1.0f - value) * (trackHeight - capHeight));
         int capX = 2;
         
-        juce::Colour capColour(theme::controlPressed);
-        if (isHovered) {
-            capColour = theme::textSecondary;
-        }
-        
-        g.setColour(theme::tickMark);
-        g.fillRoundedRectangle(static_cast<float>(capX), static_cast<float>(capY), 
-                                static_cast<float>(capWidth), static_cast<float>(capHeight), 3.0f);
-        
-        g.setColour(capColour);
-        g.fillRoundedRectangle(static_cast<float>(capX + 1), static_cast<float>(capY + 1), 
-                                static_cast<float>(capWidth - 2), static_cast<float>(capHeight - 2), 2.0f);
-        
-        g.setColour(theme::textDefault);
+        const auto cap = juce::Rectangle<float>(static_cast<float>(capX), static_cast<float>(capY),
+                                                 static_cast<float>(capWidth), static_cast<float>(capHeight));
+        g.setColour(theme::black.withAlpha(0.4f));
+        g.fillRoundedRectangle(cap.translated(0.0f, 2.0f), 3.0f);
+        juce::ColourGradient metal(isHovered ? theme::textBright : theme::textDefault, 0.0f, cap.getY(),
+                                   theme::controlHover, 0.0f, cap.getBottom(), false);
+        metal.addColour(0.45, theme::textSecondary);
+        metal.addColour(0.5, theme::controlSelected);
+        g.setGradientFill(metal);
+        g.fillRoundedRectangle(cap, 3.0f);
+        g.setColour(theme::textBright.withAlpha(0.35f));
+        g.drawRoundedRectangle(cap.reduced(0.5f), 3.0f, 1.0f);
+        g.setColour(theme::deepWell);
         g.drawHorizontalLine(capY + capHeight / 2, capX + 3, capX + capWidth - 3);
     }
     
@@ -131,33 +128,35 @@ public:
         float centreX = static_cast<float>(x) + radius;
         float centreY = static_cast<float>(y) + radius;
 
-        const float startAngle = juce::MathConstants<float>::pi * 0.75f;
+        const float startAngle = juce::MathConstants<float>::pi * -0.75f;
         const float sweep = juce::MathConstants<float>::pi * 1.5f;
 
         juce::Path trackArc;
-        trackArc.addArc(static_cast<float>(x), static_cast<float>(y),
-                        static_cast<float>(size), static_cast<float>(size), startAngle, sweep, true);
+        trackArc.addCentredArc(centreX, centreY, radius, radius, 0.0f,
+                              startAngle, startAngle + sweep, true);
         g.setColour(theme::border);
         g.strokePath(trackArc, juce::PathStrokeType(2.0f));
 
         float angle = startAngle + value * sweep;
         juce::Path valueArc;
-        valueArc.addArc(static_cast<float>(x), static_cast<float>(y),
-                        static_cast<float>(size), static_cast<float>(size),
-                        startAngle, angle - startAngle, true);
+        valueArc.addCentredArc(centreX, centreY, radius, radius, 0.0f,
+                              startAngle + sweep * 0.5f, angle, true);
         const bool centred = std::abs(value - 0.5f) < 0.02f;
         g.setColour(centred ? theme::textSecondary : theme::accent);
         g.strokePath(valueArc, juce::PathStrokeType(2.0f));
 
         float bodyRadius = radius * 0.78f;
-        g.setColour(theme::control);
+        g.setColour(theme::black.withAlpha(0.45f));
+        g.fillEllipse(centreX - bodyRadius, centreY - bodyRadius + 2.0f, bodyRadius * 2.0f, bodyRadius * 2.0f);
+        g.setGradientFill(juce::ColourGradient(theme::controlSelected, centreX, centreY - bodyRadius,
+                                             theme::deepWell, centreX, centreY + bodyRadius, false));
         g.fillEllipse(centreX - bodyRadius, centreY - bodyRadius, bodyRadius * 2.0f, bodyRadius * 2.0f);
         g.setColour(theme::borderStrong);
         g.drawEllipse(centreX - bodyRadius, centreY - bodyRadius, bodyRadius * 2.0f, bodyRadius * 2.0f, 1.0f);
 
         g.setColour(theme::white);
-        g.drawLine(centreX + std::cos(angle) * bodyRadius * 0.25f, centreY + std::sin(angle) * bodyRadius * 0.25f,
-                   centreX + std::cos(angle) * bodyRadius * 0.85f, centreY + std::sin(angle) * bodyRadius * 0.85f, 2.0f);
+        g.drawLine(centreX + std::sin(angle) * bodyRadius * 0.25f, centreY - std::cos(angle) * bodyRadius * 0.25f,
+                   centreX + std::sin(angle) * bodyRadius * 0.85f, centreY - std::cos(angle) * bodyRadius * 0.85f, 2.0f);
         g.setColour(theme::textSecondary);
         g.fillEllipse(centreX - 1.5f, centreY - 1.5f, 3.0f, 3.0f);
     }
@@ -227,16 +226,17 @@ public:
                                 isHovered ? theme::controlHover : theme::control;
         juce::Colour textColour = isDown ? theme::white : theme::textDefault;
         
+        const auto activeColour = buttonLabel == "M" ? theme::muteRed : theme::accent;
         if (isToggled) {
-            bgColour = theme::controlSelected;
-            textColour = theme::white;
+            bgColour = theme::control.interpolatedWith(activeColour, 0.2f);
+            textColour = activeColour;
         }
-        
-        g.setColour(bgColour);
-        g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
+
+        theme::drawSurface(g, bounds.toFloat().reduced(0.5f), bgColour, theme::controlRadius,
+                           isToggled ? activeColour.withAlpha(0.6f) : theme::border);
         
         g.setColour(textColour);
-        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        g.setFont(juce::Font(10.0f, juce::Font::bold));
         g.drawText(buttonLabel, bounds, juce::Justification::centred);
     }
     
@@ -341,29 +341,32 @@ void MixerStrip::mouseDown(const juce::MouseEvent& e) {
 void MixerStrip::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
 
-    juce::Colour bgBase = selected ? theme::selectedSurface : theme::panelBackground;
-    g.fillAll(bgBase);
-
-    g.setColour(trackColour.withAlpha(selected ? 0.22f : 0.14f));
-    g.fillRect(bounds);
-
-    g.setColour(theme::border);
-    g.drawVerticalLine(bounds.getWidth() - 1, 0.0f, static_cast<float>(bounds.getHeight()));
+    g.fillAll(theme::panelBackground);
+    theme::drawSurface(g, bounds.toFloat().reduced(0.5f),
+                       selected ? theme::selectedSurface : theme::raised, theme::panelRadius,
+                       selected ? theme::accent.withAlpha(0.5f) : theme::border);
+    g.setColour(trackColour.withAlpha(selected ? 0.14f : 0.07f));
+    g.fillRoundedRectangle(bounds.toFloat().reduced(2.0f).withHeight(28.0f), theme::controlRadius);
 
     g.setColour(selected ? theme::white : theme::textDefault);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
     g.drawText(trackName, 3, 4, bounds.getWidth() - 6, 15, juce::Justification::centred, true);
 
     {
-        g.setColour(theme::textFaint);
-        g.setFont(juce::Font(8.0f));
+        g.setColour(theme::textSecondary);
+        g.setFont(juce::Font(9.0f));
         const auto label = volume > 0 ? juce::String(juce::Decibels::gainToDecibels(volume), 1) + " dB" : "-inf dB";
         g.drawText(label, 3, 18, bounds.getWidth() - 6, 11,
                    juce::Justification::centred);
     }
 
     g.setColour(trackColour.withAlpha(selected ? 0.9f : 0.6f));
-    g.fillRect(0, 29, bounds.getWidth(), 2);
+    g.fillRect(6, 29, bounds.getWidth() - 12, 2);
+
+    g.setColour(theme::textMuted);
+    g.setFont(9.0f);
+    g.drawText("L", 9, 56, 12, 18, juce::Justification::centred);
+    g.drawText("R", bounds.getWidth() - 21, 56, 12, 18, juce::Justification::centred);
 }
 
 void MixerStrip::resized() {

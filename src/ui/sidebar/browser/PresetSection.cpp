@@ -18,8 +18,9 @@ PresetSection::PresetSection()
     : BrowserSection("Presets")
 {
     treeView_ = std::make_unique<juce::TreeView>();
-    treeView_->setColour(juce::TreeView::backgroundColourId, theme::raised);
-    treeView_->setColour(juce::TreeView::linesColourId, theme::hairline);
+    treeView_->setColour(juce::TreeView::backgroundColourId, theme::browserBackground);
+    treeView_->setColour(juce::TreeView::linesColourId, theme::textSecondary);
+    treeView_->setIndentSize(14);
     treeView_->setDefaultOpenness(false);
     treeView_->setMultiSelectEnabled(false);
     addAndMakeVisible(*treeView_);
@@ -46,6 +47,7 @@ void PresetSection::paintContent(juce::Graphics& g, juce::Rectangle<int> bounds)
 
 void PresetSection::resizedContent(juce::Rectangle<int> bounds) {
     if (treeView_) {
+        treeView_->setVisible(isExpanded());
         treeView_->setBounds(bounds);
     }
 }
@@ -83,23 +85,8 @@ juce::String PresetFileTreeItem::getUniqueName() const {
 }
 
 void PresetFileTreeItem::paintItem(juce::Graphics& g, int width, int height) {
-    auto bounds = juce::Rectangle<int>(0, 0, width, height);
-    
-    if (file_.isDirectory()) {
-        g.fillAll(theme::raised);
-    } else {
-        g.fillAll(theme::control);
-    }
-    
-    g.setColour(theme::white);
-    g.setFont(11.0f);
-    
-    int indent = 4;
-    juce::String displayText = isRoot_ ? file_.getFullPathName() : file_.getFileName();
-    g.drawText(displayText, indent, 0, width - indent - 4, height, juce::Justification::centredLeft, true);
-    
-    g.setColour(theme::hairline);
-    g.drawHorizontalLine(height - 1, 0.0f, static_cast<float>(width));
+    paintRow(g, width, height, isRoot_ ? file_.getFullPathName() : file_.getFileName(),
+             file_.isDirectory() ? Icon::Folder : Icon::Preset);
 }
 
 void PresetFileTreeItem::itemClicked(const juce::MouseEvent& e) {

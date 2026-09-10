@@ -146,13 +146,11 @@ void PanelContainer::paint(juce::Graphics& g) {
         
         int splitterY = panel->getBottom();
         
-        if (i == draggedSplitterIndex_) {
-            g.setColour(theme::controlSelected);
-        } else {
-            g.setColour(theme::hairline);
-        }
-        
-        g.fillRect(0, splitterY, getWidth(), getSplitterHeight());
+        g.setColour(i == draggedSplitterIndex_ ? theme::accent.withAlpha(0.65f)
+                                               : theme::border);
+        const float gripWidth = juce::jmin(28.0f, static_cast<float>(getWidth()));
+        g.fillRoundedRectangle((getWidth() - gripWidth) * 0.5f, splitterY + 2.0f,
+                               gripWidth, 2.0f, 1.0f);
     }
 }
 

@@ -31,11 +31,7 @@ TimeDisplay::TimeDisplay() {
 void TimeDisplay::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
 
-    g.setColour(theme::windowBackground);
-    g.fillRoundedRectangle(bounds, 6.0f);
-
-    g.setColour(theme::border);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+    theme::drawWell(g, bounds, theme::controlRadius);
 
     if (displayMode_ != 0) {
         g.setColour(theme::accent);
@@ -55,16 +51,16 @@ void TimeDisplay::paint(juce::Graphics& g) {
     };
     const juce::String captions[] = {"BAR", "BEAT", "TICK"};
 
-    auto captionRow = bounds.removeFromBottom(13).withTrimmedBottom(4);
+    auto captionRow = bounds.removeFromBottom(14).withTrimmedBottom(3);
     auto digits = bounds.reduced(8, 2);
     const float columnWidth = digits.getWidth() / 3.0f;
 
-    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 20.0f, juce::Font::plain));
-    g.setColour(theme::accent);
     for (int i = 0; i < 3; ++i) {
         auto column = digits.removeFromLeft(columnWidth);
+        g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 20.0f, juce::Font::plain));
+        g.setColour(theme::accent);
         g.drawText(values[i], column, juce::Justification::centred);
-        g.setFont(juce::Font(8.0f, juce::Font::bold));
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
         g.setColour(theme::textSecondary);
         g.drawText(captions[i], juce::Rectangle<float>(column.getX(), captionRow.getY(),
                                                        columnWidth, captionRow.getHeight()),
@@ -73,10 +69,8 @@ void TimeDisplay::paint(juce::Graphics& g) {
             g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 16.0f, juce::Font::plain));
             g.setColour(theme::textFaint);
             g.drawText(":", juce::Rectangle<float>(column.getRight() - 3.0f, digits.getY(),
-                                                   columnWidth, digits.getHeight()),
+                                                   6.0f, digits.getHeight()),
                        juce::Justification::centred);
-            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 20.0f, juce::Font::plain));
-            g.setColour(theme::accent);
         }
     }
 }
@@ -125,26 +119,29 @@ TransportButton::TransportButton(Type type)
 }
 
 void TransportButton::paint(juce::Graphics& g) {
-    auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
 
     juce::Colour bgColour = borderless_ ? theme::transparent : theme::control;
-    juce::Colour iconColour = theme::textDefault;
+    juce::Colour iconColour = theme::textBright;
     juce::Colour outlineColour = borderless_ ? theme::transparent : theme::border;
 
     if (active_) {
         switch (type_) {
             case Type::Play:
                 bgColour = theme::toggleActiveBackground;
-                iconColour = theme::accent;
+                iconColour = theme::textBright;
+                outlineColour = theme::accent.withAlpha(0.5f);
                 break;
             case Type::Record:
                 bgColour = theme::dangerDim;
                 iconColour = theme::danger;
+                outlineColour = theme::danger.withAlpha(0.5f);
                 break;
             case Type::Loop:
             case Type::Metronome:
-                bgColour = theme::highlightBackground;
-                iconColour = theme::accentBlue;
+                bgColour = theme::toggleActiveBackground;
+                iconColour = theme::accent;
+                outlineColour = theme::accent.withAlpha(0.5f);
                 break;
             default:
                 bgColour = theme::controlSelected;
@@ -157,25 +154,19 @@ void TransportButton::paint(juce::Graphics& g) {
         outlineColour = theme::dangerDim;
     }
 
-    if (hovered_ && !active_) {
+    if (hovered_ && isEnabled()) {
         bgColour = bgColour.brighter(0.06f);
         outlineColour = outlineColour.brighter(0.06f);
     }
     if (pressed_) {
-        bgColour = bgColour.brighter(0.1f);
+        bgColour = bgColour.darker(0.12f);
     }
 
-    if (!borderless_ || active_ || pressed_) {
-        g.setColour(bgColour);
-        g.fillRoundedRectangle(bounds, 5.0f);
-        if (!borderless_) {
-            g.setColour(outlineColour);
-            g.drawRoundedRectangle(bounds, 5.0f, 1.0f);
-        }
-    }
+    if (!borderless_ || active_ || pressed_ || (hovered_ && isEnabled()))
+        theme::drawSurface(g, bounds, bgColour, theme::controlRadius, outlineColour);
 
     g.setColour(iconColour);
-    auto iconBounds = bounds.reduced(4.0f);
+    auto iconBounds = bounds.reduced(7.0f);
     Icons::draw(g, iconForType(type_), iconColour, iconBounds);
 }
 
@@ -228,7 +219,7 @@ TempoControl::TempoControl() {
     editor_.setJustification(juce::Justification::centred);
     editor_.setFont(juce::Font(14.0f, juce::Font::bold));
     editor_.setIndents(4, 0);
-    editor_.setColour(juce::TextEditor::backgroundColourId, theme::windowBackground);
+    editor_.setColour(juce::TextEditor::backgroundColourId, theme::deepWell);
     editor_.setColour(juce::TextEditor::outlineColourId, theme::transparent);
     editor_.setColour(juce::TextEditor::focusedOutlineColourId, theme::transparent);
     editor_.setColour(juce::TextEditor::textColourId, theme::textBright);
@@ -245,14 +236,13 @@ TempoControl::~TempoControl() {
 void TempoControl::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
     const bool captioned = getHeight() >= 40 && getWidth() >= 88;
-    auto box = captioned ? bounds.removeFromBottom(13) : bounds;
-    const float captionY = box.getY();
-
-    g.setColour(theme::windowBackground);
-    g.fillRoundedRectangle(bounds, 5.0f);
-
-    g.setColour(isInvalidEntry() ? theme::dangerText : theme::border);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 5.0f, 1.0f);
+    theme::drawWell(g, bounds, theme::controlRadius);
+    if (isInvalidEntry()) {
+        g.setColour(theme::dangerText);
+        g.drawRoundedRectangle(bounds.reduced(0.5f), theme::controlRadius, 1.0f);
+    }
+    auto caption = captioned ? bounds.removeFromBottom(14).withTrimmedBottom(3)
+                             : juce::Rectangle<float>();
 
     g.setColour(theme::textBright);
     g.setFont(juce::Font(17.0f, juce::Font::bold));
@@ -260,9 +250,8 @@ void TempoControl::paint(juce::Graphics& g) {
 
     if (captioned) {
         g.setColour(theme::textSecondary);
-        g.setFont(juce::Font(8.0f, juce::Font::bold));
-        g.drawText("BPM", juce::Rectangle<float>(0, captionY, bounds.getWidth(), 12),
-                   juce::Justification::centred);
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        g.drawText("BPM", caption, juce::Justification::centred);
     }
 }
 
@@ -435,23 +424,18 @@ TimeSignatureControl::TimeSignatureControl() {
 void TimeSignatureControl::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
     const bool captioned = getHeight() >= 40 && getWidth() >= 88;
-    auto box = captioned ? bounds.removeFromBottom(13) : bounds;
-
-    g.setColour(theme::windowBackground);
-    g.fillRoundedRectangle(box, 5.0f);
-
-    g.setColour(theme::border);
-    g.drawRoundedRectangle(box.reduced(0.5f), 5.0f, 1.0f);
+    theme::drawWell(g, bounds, theme::controlRadius);
+    auto caption = captioned ? bounds.removeFromBottom(14).withTrimmedBottom(3)
+                             : juce::Rectangle<float>();
 
     g.setColour(theme::textBright);
     g.setFont(juce::Font(16.0f, juce::Font::bold));
-    g.drawText(juce::String(numerator_) + "/" + juce::String(denominator_), box, juce::Justification::centred);
+    g.drawText(juce::String(numerator_) + "/" + juce::String(denominator_), bounds, juce::Justification::centred);
 
     if (captioned) {
         g.setColour(theme::textSecondary);
-        g.setFont(juce::Font(8.0f, juce::Font::bold));
-        g.drawText("TIME SIGNATURE", juce::Rectangle<float>(0, box.getBottom(), bounds.getWidth(), 12),
-                   juce::Justification::centred);
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        g.drawText("TIME SIGNATURE", caption, juce::Justification::centred);
     }
 }
 
@@ -513,7 +497,7 @@ TransportComponent::TransportComponent(TransportState& state)
     addAndMakeVisible(*loopBtn_);
     addAndMakeVisible(*metronomeBtn_);
     
-setupButtons();
+    setupButtons();
 
     transportState_.addListener(this);
     updateButtonStates();
@@ -558,10 +542,6 @@ void TransportComponent::setupButtons() {
     metronomeBtn_->setTitle("Enable audible metronome");
     metronomeBtn_->setComponentID("metronomeToggle");
     recordBtn_->setComponentID("record");
-    for (auto* button : {returnToStartBtn_.get(), rewindBtn_.get(), stopBtn_.get(),
-                         playBtn_.get(), recordBtn_.get(), fastForwardBtn_.get()}) {
-        button->setBorderless(true);
-    }
     
     fastForwardBtn_->onClick = [this]() {
         double currentPos = transportState_.getPosition();
@@ -592,34 +572,21 @@ void TransportComponent::setupButtons() {
 }
 
 void TransportComponent::paint(juce::Graphics& g) {
-    auto bounds = getLocalBounds();
-
-    g.setColour(theme::raised);
-    g.fillRect(bounds);
-
-    g.setColour(theme::windowBackground);
-    g.fillRect(bounds.removeFromBottom(1));
-
-    if (!buttonGroupBounds_.isEmpty()) {
-        auto pill = buttonGroupBounds_.toFloat().expanded(8.0f, 6.0f);
-        g.setColour(theme::windowBackground);
-        g.fillRoundedRectangle(pill, 8.0f);
-        g.setColour(theme::border);
-        g.drawRoundedRectangle(pill.reduced(0.5f), 8.0f, 1.0f);
-    }
+    theme::drawSurface(g, getLocalBounds().toFloat(), theme::raised, theme::panelRadius);
 }
 
 void TransportComponent::resized() {
-    auto bounds = getLocalBounds().reduced(10, 8);
+    auto bounds = getLocalBounds().reduced(10, 10);
     const bool compact = getWidth() < 800;
     auto rightSection = bounds.removeFromRight(compact ? 250 : 300);
     timeDisplay_->setBounds(bounds.removeFromLeft(compact ? 130 : 200));
 
     bounds.removeFromLeft(compact ? 10 : 16);
 
-    auto transportButtons = bounds;
-    const int btnWidth = 38;
-    const int btnHeight = 32;
+    const int groupWidth = compact ? 118 : 262;
+    auto transportButtons = bounds.removeFromLeft(juce::jmin(groupWidth, bounds.getWidth()));
+    const int btnWidth = compact ? 38 : 42;
+    const int btnHeight = compact ? 36 : 40;
     buttonGroupBounds_ = juce::Rectangle<int>();
     returnToStartBtn_->setVisible(!compact);
     rewindBtn_->setVisible(!compact);
@@ -656,9 +623,9 @@ void TransportComponent::resized() {
     rightControls.removeFromLeft(10);
     tempoControl_->setBounds(rightControls.removeFromLeft(92).withSizeKeepingCentre(92, 44));
     rightControls.removeFromLeft(12);
-    loopBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+    loopBtn_->setBounds(rightControls.removeFromLeft(38).withSizeKeepingCentre(38, btnHeight));
     rightControls.removeFromLeft(2);
-    metronomeBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+    metronomeBtn_->setBounds(rightControls.removeFromLeft(38).withSizeKeepingCentre(38, btnHeight));
 }
 
 void TransportComponent::updateButtonStates() {

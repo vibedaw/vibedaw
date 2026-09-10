@@ -12,6 +12,7 @@
 #include "project/Settings.h"
 #include "plugins/PluginHost.h"
 #include "ui/MainWindow.h"
+#include "ui/DawLookAndFeel.h"
 #include "ui/components/TextPrompt.h"
 #include "utils/Logger.h"
 
@@ -25,6 +26,7 @@ public:
     
     void initialise(const juce::String& commandLine) override {
         LOG_INFO("VibeDAW: Initialising application");
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
         
         audioEngine = std::make_unique<vibedaw::AudioEngine>();
         midiManager = std::make_unique<vibedaw::MidiManager>();
@@ -64,6 +66,7 @@ public:
         
         project.reset();
         audioEngine.reset();
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
         
         LOG_INFO("VibeDAW: Application shutdown complete");
     }
@@ -89,6 +92,7 @@ public:
     }
     
 private:
+    vibedaw::DawLookAndFeel lookAndFeel;
     std::unique_ptr<vibedaw::AudioEngine> audioEngine;
     std::unique_ptr<vibedaw::MidiManager> midiManager;
     std::unique_ptr<vibedaw::Project> project;

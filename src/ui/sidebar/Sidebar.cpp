@@ -11,11 +11,12 @@ Sidebar::Sidebar(const juce::String& name, Side side)
 {
     id_ = nextId_++;
     
-    setOpaque(true);
+    setOpaque(false);
     setInterceptsMouseClicks(true, true);
     
     titleLabel_.setText(name_, juce::dontSendNotification);
-    titleLabel_.setColour(juce::Label::textColourId, theme::white);
+    titleLabel_.setColour(juce::Label::textColourId, theme::textBright);
+    titleLabel_.setFont(juce::Font(12.0f, juce::Font::bold));
     titleLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(titleLabel_);
     
@@ -73,41 +74,32 @@ void Sidebar::setContent(juce::Component* content) {
 }
 
 void Sidebar::paint(juce::Graphics& g) {
-    g.fillAll(theme::raised);
-    
+    auto frame = getLocalBounds().toFloat().reduced(2.0f, 0.0f);
+    theme::drawSurface(g, frame, theme::panelBackground, theme::panelRadius);
+    theme::drawSurface(g, frame.reduced(1.0f).withHeight(26.0f), theme::raised,
+                       theme::panelRadius - 1.0f, theme::transparent);
     g.setColour(theme::hairline);
-    g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
-    
-    if (isOverResizeEdge_) {
-        g.setColour(theme::controlSelected);
-    } else {
-        g.setColour(theme::borderStrong);
-    }
-    
-    int resizeX = getResizeEdgeX();
-    g.fillRect(resizeX, 0, resizeEdgeWidth, getHeight());
+    g.drawHorizontalLine(27, 8.0f, juce::jmax(8.0f, getWidth() - 8.0f));
 }
 
 void Sidebar::paintOverChildren(juce::Graphics& g) {
-    g.setColour(theme::controlSelected);
-    if (side_ == Side::Left) {
-        g.fillRect(getWidth() - 1, 0, 1, getHeight());
-    } else {
-        g.fillRect(0, 0, 1, getHeight());
-    }
+    if (!isOverResizeEdge_ && !isDraggingResize_) return;
+    g.setColour(theme::accent.withAlpha(0.65f));
+    const float x = static_cast<float>(getResizeEdgeX() + resizeEdgeWidth / 2);
+    g.drawVerticalLine(juce::roundToInt(x), 6.0f, juce::jmax(6.0f, getHeight() - 6.0f));
 }
 
 void Sidebar::resized() {
-    auto bounds = getLocalBounds();
+    auto bounds = getLocalBounds().reduced(6, 0);
     
     int titleBarHeight = 28;
     auto titleBarBounds = bounds.removeFromTop(titleBarHeight);
     
-    collapseButton_.setBounds(titleBarBounds.removeFromRight(22).reduced(1));
-    titleLabel_.setBounds(titleBarBounds.reduced(8, 0));
+    collapseButton_.setBounds(titleBarBounds.removeFromRight(22).reduced(0, 3));
+    titleLabel_.setBounds(titleBarBounds.reduced(2, 0));
     
     if (content_) {
-        content_->setBounds(bounds);
+        content_->setBounds(bounds.withTrimmedBottom(4));
     }
 }
 

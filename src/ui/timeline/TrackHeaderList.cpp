@@ -32,8 +32,8 @@ void TrackHeaderList::paint(juce::Graphics& g) {
     g.drawVerticalLine(getWidth() - 1, 0.0f, static_cast<float>(headerHeight));
     
     g.setColour(theme::textSecondary);
-    g.setFont(juce::Font(11.0f));
-    g.drawText("Tracks", 4, 2, getWidth() - 8, headerHeight - 4, juce::Justification::centredLeft);
+    g.setFont(juce::Font(10.0f, juce::Font::bold));
+    g.drawText("TRACKS", 12, 2, getWidth() - 20, headerHeight - 4, juce::Justification::centredLeft);
 }
 
 void TrackHeaderList::resized() {

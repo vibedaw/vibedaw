@@ -4,6 +4,8 @@
 #include "plugins/PluginHost.h"
 #include "ui/panels/MixerPanel.h"
 #include "ui/TransportComponent.h"
+#include "ui/DawLookAndFeel.h"
+#include "ui/PianoComponent.h"
 #include "ui/panels/TimelinePanel.h"
 #include "ui/timeline/TimelineGeometry.h"
 #include "ui/editor/NoteGridComponent.h"
@@ -21,6 +23,7 @@
 #include "ui/sidebar/SidebarTab.h"
 #include "core/Constants.h"
 #include <iostream>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <thread>
@@ -395,10 +398,10 @@ static void rackDropAndClipCreationTests() {
     juce::Image rackPreview(juce::Image::RGB, 250, 240, true);
     juce::Graphics rackGraphics(rackPreview);
     rack.paint(rackGraphics);
-    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff395875));
+    CHECK(rackPreview.getPixelAt(3, 100) == theme::dropFill);
     CHECK(dispatchMove({300, 80}) == nullptr); // Cancellation never loads.
     rack.paint(rackGraphics);
-    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(rackPreview.getPixelAt(3, 100) == theme::raised);
     CHECK(loads == 0 && project.getChannelList().getNumChannels() == 0);
     CHECK(dispatchMove({20, 80}) == &rack);
     auto dropDetails = sourceDetails;
@@ -435,25 +438,30 @@ static void rackDropAndClipCreationTests() {
     CHECK(row && row->getChannel() == original);
     CHECK(row->isInterestedInDragSource(rowDrop));
     CHECK(!row->isInterestedInDragSource(Details("preset:///tmp/no", nullptr, {})));
-    juce::Image preview(juce::Image::RGB, 250, 28, true);
+    juce::Image preview(juce::Image::RGB, row->getWidth(), row->getHeight(), true);
     juce::Graphics previewGraphics(preview);
+    row->paint(previewGraphics);
+    // Inside the card, away from its rounded outline, labels and controls.
+    const auto rowInterior = juce::Point<int>(row->getWidth() - 8, row->getHeight() / 2);
+    const auto idleRowColour = preview.getPixelAt(rowInterior.x, rowInterior.y);
     auto* addButton = dynamic_cast<juce::TextButton*>(rack.getChildComponent(0));
     CHECK(addButton);
     CHECK(dispatchMove({20, 80}) == &rack);
     CHECK(addButton->getButtonText() == "Create instrument channel");
     CHECK(dispatchMove({20, 27}) == row); // Accepting child wins over interested parent.
     rack.paint(rackGraphics);
-    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(rackPreview.getPixelAt(3, 100) == theme::raised);
     CHECK(addButton->getButtonText() == "+ Add Channel");
     row->paint(previewGraphics);
-    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff3a5a3a));
+    const auto dropRowColour = preview.getPixelAt(rowInterior.x, rowInterior.y);
+    CHECK(dropRowColour != idleRowColour);
     CHECK(dispatchMove({300, 80}) == nullptr);
     row->paint(previewGraphics);
-    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff2a2a2a));
+    CHECK(preview.getPixelAt(rowInterior.x, rowInterior.y) == idleRowColour);
     CHECK(dispatchMove({20, 80}) == &rack);
     CHECK(dispatchMove({300, 80}) == nullptr); // Exit recheck uses zero, which overlaps row 0.
     rack.paint(rackGraphics);
-    CHECK(rackPreview.getPixelAt(3, 80) == juce::Colour(0xff252525));
+    CHECK(rackPreview.getPixelAt(3, 100) == theme::raised);
     CHECK(addButton->getButtonText() == "+ Add Channel");
     rack.itemDragEnter(empty);
     rack.itemDragMove(rowDrop); // Defensive geometry check even if sent to the parent directly.
@@ -462,11 +470,11 @@ static void rackDropAndClipCreationTests() {
     CHECK(addButton->getButtonText() == "+ Add Channel");
     row->itemDragEnter(rowDrop);
     row->paint(previewGraphics);
-    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff3a5a3a));
+    CHECK(preview.getPixelAt(rowInterior.x, rowInterior.y) == dropRowColour);
     row->itemDragExit(rowDrop);
     row->itemDragEnter(Details("preset:///tmp/no", nullptr, {}));
     row->paint(previewGraphics);
-    CHECK(preview.getPixelAt(3, 3) == juce::Colour(0xff2a2a2a));
+    CHECK(preview.getPixelAt(rowInterior.x, rowInterior.y) == idleRowColour);
     row->itemDropped(rowDrop);
     CHECK(original->getPlugin() != oldHost && first.destroyed == 1 && first.destroyedQuiescent);
     CHECK(project.getActiveChannelId() == other->getId());
@@ -610,7 +618,7 @@ static void timelineDragTests() {
     juce::Image ghost(juce::Image::RGB, content->getWidth(), content->getHeight(), true);
     juce::Graphics ghostGraphics(ghost);
     content->paintOverChildren(ghostGraphics);
-    CHECK(ghost.getPixelAt(2, 24) == juce::Colour(0xff70baff));
+    CHECK(ghost.getPixelAt(8, 24) == theme::dragValid); // Outside the playhead glow.
     juce::MessageManager::getInstance()->runDispatchLoopUntil(40);
     CHECK(publisher.acquire().revision == revision && tracks.getNumTracks() == 0);
     CHECK(content->isInterestedInDragSource(Details(payload, &row, {})));
@@ -2587,10 +2595,10 @@ static void mixerBindingTests() {
         // Exercise the real dock-return hook: reparent first, then use dock bounds.
         panel.onDisplayModeChanged(DisplayMode::Flex, DisplayMode::PopOut);
         CHECK(viewport->getParentComponent() == &panel);
-        CHECK(viewport->getBounds() == juce::Rectangle<int>(0, panel.getTitleBarHeight(),
-              panel.getWidth(), panel.getHeight() - panel.getTitleBarHeight()));
+        CHECK(viewport->getBounds() == juce::Rectangle<int>(4, panel.getTitleBarHeight(),
+              panel.getWidth() - 8, panel.getHeight() - panel.getTitleBarHeight() - 4));
         panel.setSize(300, 240);
-        CHECK(viewport->getWidth() == 300 && viewport->getHeight() == 240 - panel.getTitleBarHeight());
+        CHECK(viewport->getWidth() == 292 && viewport->getHeight() == 236 - panel.getTitleBarHeight());
     }
     channels.getChannel(0)->setName("after teardown");
     channels.clearChannels();
@@ -2833,6 +2841,144 @@ static void clickMasterAndOverflowTests() {
     CHECK(renderAllocations == 0 && renderDeletions == 0);
 }
 
+static void sharedControlPaintTests(DawLookAndFeel& lookAndFeel) {
+    juce::TextButton button("Apply");
+    juce::ComboBox combo;
+    juce::TextEditor editor;
+    CHECK(&button.getLookAndFeel() == &lookAndFeel);
+    CHECK(&combo.getLookAndFeel() == &lookAndFeel);
+    CHECK(&editor.getLookAndFeel() == &lookAndFeel);
+    CHECK(button.findColour(juce::TextButton::textColourOffId) == theme::textDefault);
+    CHECK(button.findColour(juce::TextButton::textColourOnId) == theme::accent);
+    CHECK(combo.findColour(juce::ComboBox::textColourId) == theme::textBright);
+    CHECK(editor.findColour(juce::TextEditor::textColourId) == theme::textBright);
+    CHECK(editor.findColour(juce::TextEditor::highlightedTextColourId) == theme::textBright);
+    CHECK(lookAndFeel.findColour(juce::PopupMenu::textColourId) == theme::textBright);
+    CHECK(lookAndFeel.findColour(juce::PopupMenu::highlightedTextColourId) == theme::accent);
+
+    const auto luminance = [](juce::Colour c) {
+        const auto linear = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * linear(c.getFloatRed()) + 0.7152 * linear(c.getFloatGreen()) + 0.0722 * linear(c.getFloatBlue());
+    };
+    // Small enabled labels must stay readable on both neutral and selected surfaces.
+    for (const auto colours : {std::pair{theme::textDefault, theme::control},
+                               std::pair{theme::textSecondary, theme::control},
+                               std::pair{theme::textBright, theme::deepWell},
+                               std::pair{theme::textBright, theme::highlightBackground},
+                               std::pair{theme::textBright, theme::raised},
+                               std::pair{theme::accent, theme::selectedSurface},
+                               std::pair{theme::accent, theme::actionGreen}})
+        CHECK((luminance(colours.first) + 0.05) / (luminance(colours.second) + 0.05) >= 4.5);
+
+    const auto paint = [](auto draw) {
+        juce::Image image(juce::Image::ARGB, 120, 32, true);
+        juce::Graphics g(image);
+        draw(g);
+        return image;
+    };
+    button.setSize(120, 32);
+    const auto paintButton = [&](bool over, bool down) {
+        return paint([&](juce::Graphics& g) {
+            lookAndFeel.drawButtonBackground(g, button,
+                button.findColour(button.getToggleState() ? juce::TextButton::buttonOnColourId
+                                                          : juce::TextButton::buttonColourId), over, down);
+        });
+    };
+    const auto normal = paintButton(false, false);
+    const auto hover = paintButton(true, false);
+    const auto pressed = paintButton(true, true);
+    CHECK(normal.getPixelAt(0, 0).isTransparent()); // Rounded corner, not a rectangular fill.
+    CHECK(normal.getPixelAt(60, 16).isOpaque());
+    CHECK(normal.getPixelAt(60, 6).getBrightness() > normal.getPixelAt(60, 26).getBrightness());
+    CHECK(hover.getPixelAt(60, 16).getBrightness() > normal.getPixelAt(60, 16).getBrightness());
+    CHECK(pressed.getPixelAt(60, 16).getBrightness() < normal.getPixelAt(60, 16).getBrightness());
+    button.setToggleState(true, juce::dontSendNotification);
+    CHECK(paintButton(false, false).getPixelAt(60, 16) != normal.getPixelAt(60, 16));
+    button.setToggleState(false, juce::dontSendNotification);
+    button.setEnabled(false);
+    CHECK(paintButton(false, false).getPixelAt(60, 16).getBrightness() < normal.getPixelAt(60, 16).getBrightness());
+
+    combo.setSize(120, 32);
+    const auto paintCombo = [&](bool down) {
+        return paint([&](juce::Graphics& g) { lookAndFeel.drawComboBox(g, 120, 32, down, 96, 0, 24, 32, combo); });
+    };
+    const auto closedCombo = paintCombo(false);
+    CHECK(closedCombo.getPixelAt(0, 0).isTransparent());
+    CHECK(closedCombo.getPixelAt(60, 16).isOpaque());
+    CHECK(paintCombo(true).getPixelAt(60, 16).getBrightness() < closedCombo.getPixelAt(60, 16).getBrightness());
+    const auto editorBackground = paint([&](juce::Graphics& g) {
+        lookAndFeel.fillTextEditorBackground(g, 120, 32, editor);
+        lookAndFeel.drawTextEditorOutline(g, 120, 32, editor);
+    });
+    CHECK(editorBackground.getPixelAt(0, 0).isTransparent());
+    CHECK(editorBackground.getPixelAt(60, 16) == theme::deepWell);
+
+    juce::ScrollBar bar(false);
+    const auto paintThumb = [&](bool over, bool down, int size) {
+        return paint([&](juce::Graphics& g) { lookAndFeel.drawScrollbar(g, bar, 0, 0, 120, 10, false, 20, size, over, down); });
+    };
+    CHECK(paintThumb(false, false, 40).getPixelAt(40, 5) == theme::borderStrong);
+    CHECK(paintThumb(true, false, 40).getPixelAt(40, 5) == theme::tickMark);
+    CHECK(paintThumb(true, true, 40).getPixelAt(40, 5) == theme::textSecondary);
+    CHECK(paintThumb(false, false, 0).getPixelAt(40, 5) == theme::deepWell);
+}
+
+static void keyboardPaintTests() {
+    const auto paint = [](juce::Component& component) {
+        juce::Image image(juce::Image::RGB, component.getWidth(), component.getHeight(), true);
+        juce::Graphics g(image);
+        component.paint(g);
+        return image;
+    };
+    juce::MidiKeyboardState state;
+    PianoComponent piano(state, nullptr);
+    piano.setAvailableRange(60, 71);
+    piano.setScrollButtonsVisible(false);
+    piano.setLowestVisibleKey(60);
+    piano.setSize(140, 100);
+    const auto white = piano.getRectangleForKey(62);
+    const auto black = piano.getRectangleForKey(63);
+    const auto whitePoint = juce::Point<int>(juce::roundToInt(white.getCentreX()), 80);
+    const auto blackPoint = black.getCentre().toInt();
+    const auto pixel = [](const juce::Image& image, juce::Point<int> p) { return image.getPixelAt(p.x, p.y); };
+    CHECK(piano.getLocalBounds().contains(whitePoint) && piano.getLocalBounds().contains(blackPoint));
+    const auto idle = paint(piano);
+    CHECK(pixel(idle, whitePoint).getBrightness() > pixel(idle, blackPoint).getBrightness());
+    CHECK(idle.getPixelAt(blackPoint.x, 10).getBrightness() > idle.getPixelAt(blackPoint.x, 40).getBrightness());
+    state.noteOn(1, 62, 0.8f);
+    const auto whiteHeld = paint(piano);
+    CHECK(pixel(whiteHeld, whitePoint) != pixel(idle, whitePoint));
+    CHECK(pixel(whiteHeld, whitePoint).getGreen() > pixel(whiteHeld, whitePoint).getRed());
+    CHECK(pixel(whiteHeld, blackPoint) == pixel(idle, blackPoint));
+    state.noteOn(1, 63, 0.8f);
+    const auto bothHeld = paint(piano);
+    CHECK(pixel(bothHeld, blackPoint) != pixel(idle, blackPoint));
+    CHECK(pixel(bothHeld, blackPoint).getGreen() > pixel(bothHeld, blackPoint).getRed());
+    CHECK(pixel(bothHeld, whitePoint) == pixel(whiteHeld, whitePoint));
+    state.noteOff(1, 62, 0.0f);
+    state.noteOff(1, 63, 0.0f);
+    const auto released = paint(piano);
+    CHECK(pixel(released, whitePoint) == pixel(idle, whitePoint));
+    CHECK(pixel(released, blackPoint) == pixel(idle, blackPoint));
+
+    PianoRollKeyboard roll;
+    roll.setLowestNote(60); roll.setNumKeys(12); roll.setKeyHeight(16); roll.setSize(60, 192);
+    const auto rollIdle = paint(roll);
+    for (int pitch : {62, 63}) roll.setHeldNote(pitch, true);
+    const auto rollHeld = paint(roll);
+    roll.clearHeldNotes();
+    const auto rollReleased = paint(roll);
+    for (int pitch : {62, 63, 64}) {
+        const auto point = juce::Point<int>(30, roll.getYForKey(pitch) + 8);
+        CHECK(pixel(rollReleased, point) == pixel(rollIdle, point));
+        if (pitch == 64) CHECK(pixel(rollHeld, point) == pixel(rollIdle, point));
+        else {
+            CHECK(pixel(rollHeld, point) != pixel(rollIdle, point));
+            CHECK(rollHeld.getPixelAt(58, point.y) == theme::accent.brighter(0.3f));
+        }
+    }
+}
+
 static void iconTests() {
     for (int i = 0; i < 8; ++i) {
         const auto id = static_cast<IconId>(i);
@@ -2841,7 +2987,7 @@ static void iconTests() {
         juce::Image image(juce::Image::ARGB, 36, 28, true);
         {
             juce::Graphics graphics(image);
-            Icons::draw(graphics, id, juce::Colour(0xff00ff88), {0.0f, 0.0f, 36.0f, 28.0f});
+            Icons::draw(graphics, id, theme::accent, {0.0f, 0.0f, 36.0f, 28.0f});
         }
         int lit = 0;
         for (int y = 0; y < 28; ++y)
@@ -2934,8 +3080,8 @@ static void loopUiTests() {
     ruler->setSize(400, 24); ruler->setScrollOffset(100 * 50);
     juce::Image image(juce::Image::RGB, 400, 24, true);
     juce::Graphics graphics(image); ruler->paint(graphics);
-    CHECK(image.getPixelAt(25, 1) == juce::Colour(0xff66aaff));
-    CHECK(image.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a));
+    CHECK(image.getPixelAt(25, 1) == theme::loopEdgeActive);
+    CHECK(image.getPixelAt(225, 1) == theme::control);
     // Ruler gestures: a click seeks; a drag previews locally and commits once.
     auto& transportState = project.getTransportState();
     auto rulerEvent = [&](juce::Point<float> point, juce::Point<float> down, int modifiers = juce::ModifierKeys::leftButtonModifier) {
@@ -2963,6 +3109,9 @@ static void loopUiTests() {
     CHECK(ruler->isDraggingLoop());
     CHECK(ruler->getLoopPreview().startBeats == 105.5 && ruler->getLoopPreview().endBeats == 107.25);
     CHECK(transportState.getLoopRegion().startBeats == 100.0); // Nothing published during drag.
+    ruler->paint(graphics);
+    CHECK(image.getPixelAt(300, 1) == theme::loopEdgePreview);
+    CHECK(image.getPixelAt(25, 1) == theme::loopEdgeActive); // Existing region survives the preview.
     ruler->mouseUp(rulerEvent({362, 12}, {275, 12}, 0));
     CHECK(transportState.getLoopRegion().startBeats == 105.5 && transportState.getLoopRegion().endBeats == 107.25);
     CHECK(transportState.isLoopEnabled());
@@ -3031,9 +3180,16 @@ static void loopUiTests() {
     ruler->setScrollOffset(100 * 50);
     juce::Image dimmed(juce::Image::RGB, 400, 24, true);
     { juce::Graphics dimmedGraphics(dimmed); ruler->paint(dimmedGraphics); }
-    CHECK(dimmed.getPixelAt(302, 1) == juce::Colour(0xff667788)); // Dim edge row of the 300..309 band.
-    CHECK(dimmed.getPixelAt(305, 20) == juce::Colour(0xff383e44)); // Dim fill, below the tick labels.
-    CHECK(dimmed.getPixelAt(308, 20) == juce::Colour(0xff383e44));
+    CHECK(dimmed.getPixelAt(302, 1) == theme::loopEdgeIdle);
+    // Use the renderer's alpha compositing, not a rounded approximation of the RGB blend.
+    juce::Image idleFill(juce::Image::RGB, 1, 1, true);
+    {
+        juce::Graphics fillGraphics(idleFill);
+        fillGraphics.fillAll(theme::control);
+        fillGraphics.fillAll(theme::loopFillIdle.withAlpha(0.65f));
+    }
+    CHECK(dimmed.getPixelAt(305, 20) == idleFill.getPixelAt(0, 0)); // Below tick labels.
+    CHECK(dimmed.getPixelAt(308, 20) == idleFill.getPixelAt(0, 0));
     ruler->mouseMove(rulerEvent({305, 12}, {305, 12}, 0)); // Plain inside the dim body: create.
     CHECK(ruler->getMouseCursor() == juce::MouseCursor::CrosshairCursor);
     ruler->mouseMove(rulerEvent({305, 12}, {305, 12}, juce::ModifierKeys::shiftModifier)); // Shift moves a dim region too.
@@ -3054,9 +3210,9 @@ static void loopUiTests() {
     ruler->setScrollOffset(100 * 50); // clearLoop notified; resync.
     juce::Image cleared(juce::Image::RGB, 400, 24, true);
     { juce::Graphics clearedGraphics(cleared); ruler->paint(clearedGraphics); }
-    CHECK(cleared.getPixelAt(25, 1) == juce::Colour(0xff2a2a2a));
-    CHECK(cleared.getPixelAt(302, 1) == juce::Colour(0xff2a2a2a));
-    CHECK(cleared.getPixelAt(305, 20) == juce::Colour(0xff2a2a2a));
+    CHECK(cleared.getPixelAt(25, 1) == theme::control);
+    CHECK(cleared.getPixelAt(302, 1) == theme::control);
+    CHECK(cleared.getPixelAt(305, 20) == theme::control);
     // A drag with no region creates one; enabling the cleared loop uses the default region.
     ruler->mouseDown(rulerEvent({305, 12}, {305, 12}));
     ruler->mouseDrag(rulerEvent({362, 12}, {305, 12}));
@@ -3071,8 +3227,8 @@ static void loopUiTests() {
     ruler->setScrollOffset(0); // The default [0, 4) band sits at the ruler origin.
     juce::Image defaulted(juce::Image::RGB, 400, 24, true);
     { juce::Graphics defaultedGraphics(defaulted); ruler->paint(defaultedGraphics); }
-    CHECK(defaulted.getPixelAt(2, 1) == juce::Colour(0xff66aaff));
-    CHECK(defaulted.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a)); // Past the band, off the tick lines.
+    CHECK(defaulted.getPixelAt(2, 1) == theme::loopEdgeActive);
+    CHECK(defaulted.getPixelAt(225, 1) == theme::control); // Past the band, off the tick lines.
 }
 
 static void tempoControlTests() {
@@ -4606,6 +4762,13 @@ int main() {
         CHECK(home.createDirectory().wasOk());
         CHECK(setenv("HOME", home.getFullPathName().toRawUTF8(), 1) == 0);
         juce::ScopedJuceInitialiser_GUI juceInitialiser; // Framework only; no app/window/device.
+        DawLookAndFeel lookAndFeel;
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+        struct ClearDefaultLookAndFeel {
+            ~ClearDefaultLookAndFeel() { juce::LookAndFeel::setDefaultLookAndFeel(nullptr); }
+        } clearDefaultLookAndFeel; // Clear before lookAndFeel dies, including assertion failures.
+        sharedControlPaintTests(lookAndFeel);
+        keyboardPaintTests();
         boundaryTests();
         modelTests();
         renderTests();
@@ -4645,7 +4808,7 @@ int main() {
         projectFileTests();
         integrationWorkflowTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, T09 external MIDI and tempo control tests passed\n";
+        std::cout << "Theme/control/keyboard paint, T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, T09 external MIDI and tempo control tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

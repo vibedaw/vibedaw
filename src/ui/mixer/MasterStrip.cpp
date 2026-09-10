@@ -13,47 +13,44 @@ public:
         int width = bounds.getWidth();
         int height = bounds.getHeight();
         
-        g.fillAll(theme::windowBackground);
+        theme::drawWell(g, bounds.toFloat().reduced(0.5f));
         
         int trackWidth = 10;
         int trackX = (width - trackWidth) / 2;
         int trackMargin = 2;
         int trackHeight = height - trackMargin * 2;
         
-        g.setColour(theme::control);
-        g.fillRect(trackX, trackMargin, trackWidth, trackHeight);
-        
-        g.setColour(theme::border);
-        g.drawRect(trackX, trackMargin, trackWidth, trackHeight, 1);
+        theme::drawWell(g, juce::Rectangle<float>(static_cast<float>(trackX), static_cast<float>(trackMargin),
+                                                static_cast<float>(trackWidth), static_cast<float>(trackHeight)), 2.0f);
 
         // Same linear dB marks as the channel faders (gain = value * 2).
         g.setColour(theme::tickMark);
         const float gainMarks[] = {1.0f, 0.501f, 0.251f, 0.126f, 0.032f};
         int capHeight = 16;
         for (float gain : gainMarks) {
-            const int y = trackMargin + static_cast<int>((1.0f - gain) * (trackHeight - capHeight)) + capHeight / 2;
+            const int y = trackMargin + static_cast<int>((1.0f - gain * 0.5f) * (trackHeight - capHeight)) + capHeight / 2;
             if (y < trackMargin || y >= height - trackMargin) continue;
-            g.drawHorizontalLine(y, static_cast<float>(trackX), static_cast<float>(trackX + trackWidth));
+            g.drawHorizontalLine(y, 5.0f, static_cast<float>(trackX - 3));
+            g.drawHorizontalLine(y, static_cast<float>(trackX + trackWidth + 3), static_cast<float>(width - 5));
         }
 
         int capWidth = width - 4;
         int capY = static_cast<int>(trackMargin + (1.0f - value) * (trackHeight - capHeight));
         int capX = 2;
         
-        g.setColour(theme::tickMark);
-        g.fillRoundedRectangle(static_cast<float>(capX), static_cast<float>(capY), 
-                                static_cast<float>(capWidth), static_cast<float>(capHeight), 4.0f);
-        
-        juce::Colour capColour = theme::textFaint;
-        if (value < 0.1f) {
-            capColour = theme::textDefault;
-        }
-        
-        g.setColour(capColour);
-        g.fillRoundedRectangle(static_cast<float>(capX + 2), static_cast<float>(capY + 2), 
-                                static_cast<float>(capWidth - 4), static_cast<float>(capHeight - 4), 3.0f);
-        
-        g.setColour(theme::textDefault);
+        const auto cap = juce::Rectangle<float>(static_cast<float>(capX), static_cast<float>(capY),
+                                                 static_cast<float>(capWidth), static_cast<float>(capHeight));
+        g.setColour(theme::black.withAlpha(0.4f));
+        g.fillRoundedRectangle(cap.translated(0.0f, 2.0f), 3.0f);
+        juce::ColourGradient metal(theme::textBright, 0.0f, cap.getY(),
+                                   theme::controlHover, 0.0f, cap.getBottom(), false);
+        metal.addColour(0.45, theme::textSecondary);
+        metal.addColour(0.5, theme::controlSelected);
+        g.setGradientFill(metal);
+        g.fillRoundedRectangle(cap, 3.0f);
+        g.setColour(theme::textBright.withAlpha(0.4f));
+        g.drawRoundedRectangle(cap.reduced(0.5f), 3.0f, 1.0f);
+        g.setColour(theme::deepWell);
         g.drawHorizontalLine(capY + capHeight / 2, capX + 4, capX + capWidth - 4);
     }
     
@@ -130,6 +127,10 @@ MasterStrip::MasterStrip() {
     };
     addAndMakeVisible(*fader);
     muteButton.setClickingTogglesState(true);
+    muteButton.setColour(juce::TextButton::buttonColourId, theme::control);
+    muteButton.setColour(juce::TextButton::buttonOnColourId, theme::control.interpolatedWith(theme::muteRed, 0.2f));
+    muteButton.setColour(juce::TextButton::textColourOffId, theme::textDefault);
+    muteButton.setColour(juce::TextButton::textColourOnId, theme::muteRed);
     muteButton.onClick = [this] { if (onMuteToggled) onMuteToggled(muteButton.getToggleState()); };
     addAndMakeVisible(muteButton);
 }
@@ -141,15 +142,16 @@ void MasterStrip::paint(juce::Graphics& g) {
 
     g.fillAll(theme::panelBackground);
 
-    g.setColour(theme::border);
-    g.drawVerticalLine(bounds.getWidth() - 1, 0.0f, static_cast<float>(bounds.getHeight()));
+    theme::drawSurface(g, bounds.toFloat().reduced(0.5f), theme::control, theme::panelRadius);
+    g.setColour(theme::accent.withAlpha(0.65f));
+    g.fillRoundedRectangle(6.0f, 23.0f, static_cast<float>(bounds.getWidth() - 12), 2.0f, 1.0f);
 
-    g.setColour(theme::textDefault);
+    g.setColour(theme::textBright);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
-    g.drawText("MSTR", 5, 4, bounds.getWidth() - 10, 15, juce::Justification::centred);
+    g.drawText("MASTER", 5, 4, bounds.getWidth() - 10, 15, juce::Justification::centred);
 
-    g.setColour(theme::textFaint);
-    g.setFont(juce::Font(8.0f));
+    g.setColour(theme::textSecondary);
+    g.setFont(juce::Font(9.0f));
 
     const auto label = volume > 0 ? juce::String(juce::Decibels::gainToDecibels(volume), 1) + " dB" : "-inf dB";
     g.drawText(label, 5, bounds.getHeight() - 18,

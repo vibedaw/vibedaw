@@ -183,7 +183,7 @@ void TimelinePanel::trackListChanged() {
 }
 
 void TimelinePanel::paint(juce::Graphics& g) {
-    g.fillAll(theme::windowBackground);
+    Panel::paint(g);
 }
 
 void TimelinePanel::resized() {
@@ -202,6 +202,7 @@ void TimelinePanel::scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeSt
 void TimelinePanel::layoutContent() {
     auto bounds = getLocalBounds();
     bounds.removeFromTop(getTitleBarHeight());
+    bounds = bounds.reduced(4, 0).withTrimmedBottom(4);
     placementStatus.setBounds(bounds.removeFromTop(24));
 
     int availableWidth = juce::jmax(0, bounds.getWidth() - scrollBarWidth);

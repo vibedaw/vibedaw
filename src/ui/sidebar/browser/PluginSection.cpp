@@ -10,8 +10,9 @@ PluginSection::PluginSection(PluginScanner& scanner)
       scanner_(scanner)
 {
     treeView_ = std::make_unique<juce::TreeView>();
-    treeView_->setColour(juce::TreeView::backgroundColourId, theme::raised);
-    treeView_->setColour(juce::TreeView::linesColourId, theme::hairline);
+    treeView_->setColour(juce::TreeView::backgroundColourId, theme::browserBackground);
+    treeView_->setColour(juce::TreeView::linesColourId, theme::textSecondary);
+    treeView_->setIndentSize(14);
     treeView_->setDefaultOpenness(true);
     treeView_->setMultiSelectEnabled(false);
     addAndMakeVisible(*treeView_);
@@ -46,6 +47,7 @@ void PluginSection::paintContent(juce::Graphics& g, juce::Rectangle<int> bounds)
 
 void PluginSection::resizedContent(juce::Rectangle<int> bounds) {
     if (treeView_) {
+        treeView_->setVisible(isExpanded());
         treeView_->setBounds(bounds);
     }
 }
@@ -95,22 +97,8 @@ juce::String PluginTreeItem::getUniqueName() const {
 }
 
 void PluginTreeItem::paintItem(juce::Graphics& g, int width, int height) {
-    auto bounds = juce::Rectangle<int>(0, 0, width, height);
-    
-    if (isPlugin_) {
-        g.fillAll(theme::control);
-    } else {
-        g.fillAll(theme::raised);
-    }
-    
-    g.setColour(theme::white);
-    g.setFont(11.0f);
-    
-    int indent = 4;
-    g.drawText(name_, indent, 0, width - indent - 4, height, juce::Justification::centredLeft, true);
-    
-    g.setColour(theme::hairline);
-    g.drawHorizontalLine(height - 1, 0.0f, static_cast<float>(width));
+    paintRow(g, width, height, name_, isPlugin_ ? Icon::Plugin
+        : (getNumSubItems() > 0 ? Icon::Folder : Icon::Empty));
 }
 
 void PluginTreeItem::itemClicked(const juce::MouseEvent& e) {

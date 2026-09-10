@@ -27,9 +27,12 @@ PianoPanel::PianoPanel(juce::MidiKeyboardState& keyboardState, MidiManager* midi
     velocitySlider_.setRange(1.0, 127.0, 1.0);
     velocitySlider_.setValue(100.0, juce::dontSendNotification);
     velocitySlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 30, 18);
-    velocitySlider_.setColour(juce::Slider::backgroundColourId, theme::control);
-    velocitySlider_.setColour(juce::Slider::trackColourId, theme::actionGreen);
+    velocitySlider_.setColour(juce::Slider::backgroundColourId, theme::deepWell);
+    velocitySlider_.setColour(juce::Slider::trackColourId, theme::accent.withAlpha(0.5f));
     velocitySlider_.setColour(juce::Slider::thumbColourId, theme::accent);
+    velocitySlider_.setColour(juce::Slider::textBoxTextColourId, theme::textBright);
+    velocitySlider_.setColour(juce::Slider::textBoxBackgroundColourId, theme::deepWell);
+    velocitySlider_.setColour(juce::Slider::textBoxOutlineColourId, theme::border);
     if (auto* piano = dynamic_cast<PianoComponent*>(getContentComponent()))
         piano->setVelocity(100.0f / 127.0f, false);
     velocitySlider_.onValueChange = [this] {
@@ -51,16 +54,18 @@ void PianoPanel::paint(juce::Graphics& g) {
     Panel::paint(g);
     auto bounds = getLocalBounds();
     bounds.removeFromTop(getTitleBarHeight());
+    bounds = bounds.reduced(4, 0).withTrimmedBottom(4);
+    theme::drawSurface(g, bounds.withWidth(150).toFloat().reduced(4.0f), theme::raised);
     auto controls = bounds.removeFromLeft(150).reduced(8, 4);
 
     g.setColour(theme::textSecondary);
-    g.setFont(juce::Font(10.0f));
-    g.drawText("Octave", controls.removeFromTop(12), juce::Justification::centredLeft);
+    g.setFont(juce::Font(9.0f, juce::Font::bold));
+    g.drawText("OCTAVE", controls.removeFromTop(12), juce::Justification::centredLeft);
 
     controls.removeFromTop(24);
     controls.removeFromTop(4);
 
-    g.drawText("Velocity", controls.removeFromTop(12), juce::Justification::centredLeft);
+    g.drawText("VELOCITY", controls.removeFromTop(12), juce::Justification::centredLeft);
 }
 
 void PianoPanel::resized() {
@@ -68,13 +73,15 @@ void PianoPanel::resized() {
 
     auto bounds = getLocalBounds();
     bounds.removeFromTop(getTitleBarHeight());
+    bounds = bounds.reduced(4, 0).withTrimmedBottom(4);
     auto controls = bounds.removeFromLeft(150).reduced(8, 4);
 
+    controls.removeFromTop(12);
     auto octaveRow = controls.removeFromTop(24);
     octaveDown_.setBounds(octaveRow.removeFromLeft(24).reduced(1));
     octaveUp_.setBounds(octaveRow.removeFromRight(24).reduced(1));
     octaveLabel_.setBounds(octaveRow.reduced(2, 0));
-    controls.removeFromTop(6);
+    controls.removeFromTop(4 + 12);
 
     velocitySlider_.setBounds(controls.removeFromTop(22));
 

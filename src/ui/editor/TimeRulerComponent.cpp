@@ -36,12 +36,12 @@ juce::String TimeRulerComponent::formatTime(double beats) const {
 void TimeRulerComponent::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
-    g.fillAll(theme::controlDim);
+    g.fillAll(theme::control);
     
-    g.setColour(theme::separator);
+    g.setColour(theme::border);
     g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
     
-    g.setColour(theme::textDim);
+    g.setColour(theme::white.withAlpha(0.035f));
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(bounds.getWidth()));
     
     g.setFont(10.0f);
@@ -58,18 +58,18 @@ void TimeRulerComponent::paint(juce::Graphics& g) {
         bool isDownbeat = beatInMeasure == 0;
         
         if (isDownbeat) {
-            g.setColour(theme::textSubtle);
-            g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
+            g.setColour(theme::gridBar);
+            g.drawVerticalLine(x, static_cast<float>(bounds.getHeight() - 9), static_cast<float>(bounds.getHeight()));
             
-            g.setColour(theme::white);
-            g.setFont(11.0f);
+            g.setColour(theme::textBright);
+            g.setFont(juce::Font(10.0f, juce::Font::bold));
             g.drawText(formatTime(beats), x + 3, 2, 40, bounds.getHeight() - 4,
                        juce::Justification::centredLeft, true);
         } else {
-            g.setColour(theme::gridBarStrong);
-            g.drawVerticalLine(x, bounds.getHeight() / 2, static_cast<float>(bounds.getHeight()));
+            g.setColour(theme::hairline);
+            g.drawVerticalLine(x, static_cast<float>(bounds.getHeight() - 5), static_cast<float>(bounds.getHeight()));
             
-            g.setColour(theme::white.withAlpha(0.5f));
+            g.setColour(theme::textSecondary);
             g.setFont(9.0f);
             g.drawText(juce::String(beatInMeasure + 1), x + 2, 2, 20, bounds.getHeight() - 4,
                        juce::Justification::centredLeft, true);

@@ -9,7 +9,7 @@ namespace vibedaw {
 Panel::Panel(const juce::String& name)
     : panelName_(name)
 {
-    setOpaque(true);
+    setOpaque(false);
     titleBar_ = std::make_unique<PanelTitleBar>(*this);
     addAndMakeVisible(*titleBar_);
 }
@@ -17,12 +17,10 @@ Panel::Panel(const juce::String& name)
 Panel::~Panel() = default;
 
 void Panel::paint(juce::Graphics& g) {
-    g.fillAll(theme::windowBackground);
-    
-    if (focused_) {
-        g.setColour(theme::floatingPanelBorder);
-        g.drawRect(getLocalBounds(), 1);
-    }
+    theme::drawSurface(g, getLocalBounds().toFloat(), theme::panelBackground,
+                       theme::panelRadius,
+                       focused_ ? theme::border.interpolatedWith(theme::accent, 0.45f)
+                                : theme::border);
 }
 
 void Panel::resized() {
@@ -288,7 +286,7 @@ void Panel::maximize() {
 void Panel::updateLayout() {
     auto bounds = getLocalBounds();
     
-    titleBar_->setBounds(bounds.removeFromTop(titleBarHeight_));
+    titleBar_->setBounds(bounds.removeFromTop(titleBarHeight_).reduced(1));
     
     if (panelState_ == PanelState::Collapsed) {
         if (content_) {
@@ -297,9 +295,11 @@ void Panel::updateLayout() {
         return;
     }
     
+    // Keep opaque content clear of the frame and rounded bottom corners.
+    bounds = bounds.reduced(4, 0).withTrimmedBottom(4);
     int contentHeight = bounds.getHeight();
     if (panelState_ == PanelState::Collapsing || panelState_ == PanelState::Expanding) {
-        contentHeight = juce::jmax(0, animatedHeight_ - titleBarHeight_);
+        contentHeight = juce::jmax(0, animatedHeight_ - titleBarHeight_ - 4);
     }
     
     if (contentHeight > 0 && content_) {

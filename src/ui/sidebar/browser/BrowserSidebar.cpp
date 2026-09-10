@@ -9,12 +9,14 @@ BrowserSidebar::BrowserSidebar(PluginScanner& scanner)
     : scanner_(scanner)
 {
     searchBox_.setTextToShowWhenEmpty("Search...", theme::textMuted);
-    searchBox_.setColour(juce::TextEditor::backgroundColourId, theme::control);
-    searchBox_.setColour(juce::TextEditor::outlineColourId, theme::hairline);
+    searchBox_.setColour(juce::TextEditor::backgroundColourId, theme::deepWell);
+    searchBox_.setColour(juce::TextEditor::outlineColourId, theme::border);
     searchBox_.setColour(juce::TextEditor::focusedOutlineColourId, theme::accent);
     searchBox_.setColour(juce::TextEditor::textColourId, theme::textBright);
     searchBox_.setColour(juce::TextEditor::highlightColourId, theme::highlightBackground);
     searchBox_.setJustification(juce::Justification::centredLeft);
+    searchBox_.setFont(juce::Font(12.0f));
+    searchBox_.setIndents(8, 0);
     searchBox_.onTextChange = [this] {
         for (auto* section : sections_) section->applyFilter(searchBox_.getText());
     };
@@ -55,7 +57,7 @@ void BrowserSidebar::resized() {
 
 void BrowserSidebar::updateLayout() {
     auto bounds = getLocalBounds();
-    searchBox_.setBounds(bounds.removeFromTop(26).reduced(2, 1));
+    searchBox_.setBounds(bounds.removeFromTop(32).reduced(6, 4));
 
     for (auto* section : sections_) {
         int height = BrowserSection::titleBarHeight;
