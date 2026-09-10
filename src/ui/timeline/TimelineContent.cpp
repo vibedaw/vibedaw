@@ -1,4 +1,5 @@
 #include "TimelineContent.h"
+#include "ui/Theme.h"
 #include <cmath>
 #include <cstdlib>
 #include "TimelineGeometry.h"
@@ -36,7 +37,7 @@ TimelineContent::~TimelineContent() {
 }
 
 void TimelineContent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
 }
 
 void TimelineContent::paintOverChildren(juce::Graphics& g) {
@@ -44,7 +45,7 @@ void TimelineContent::paintOverChildren(juce::Graphics& g) {
         juce::Graphics::ScopedSaveState save(g);
         g.reduceClipRegion(0, TimeRuler::rulerHeight, getWidth(), getHeight() - TimeRuler::rulerHeight);
         const int y = TimeRuler::rulerHeight + preview.lane * TimelineLane::defaultHeight - verticalScrollOffset;
-        const auto colour = juce::Colour(preview.valid ? 0xff70baff : 0xffffaa70);
+        const auto colour = juce::Colour(preview.valid ? theme::dragValid : theme::dragInvalid);
         g.setColour(colour.withAlpha(0.15f));
         g.fillRect(0, y, getWidth(), TimelineLane::defaultHeight);
         const double left = TimelineGeometry::xAt(preview.beat, horizontalScrollOffset, pixelsPerBeat);
@@ -60,7 +61,7 @@ void TimelineContent::paintOverChildren(juce::Graphics& g) {
     }
     const double x = transport.getPositionInBeats() * pixelsPerBeat - horizontalScrollOffset;
     if (x < 0 || x >= getWidth()) return;
-    g.setColour(juce::Colour(0xff00ff88));
+    g.setColour(theme::accent);
     g.fillRect(static_cast<float>(x), 0.0f, 2.0f, static_cast<float>(getHeight()));
 }
 

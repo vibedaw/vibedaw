@@ -1,4 +1,6 @@
 #include "ClipsSidebar.h"
+#include "ui/Theme.h"
+#include "ui/components/ClipMiniPreview.h"
 #include "project/Project.h"
 #include "project/ClipPool.h"
 #include "project/Clip.h"
@@ -23,37 +25,59 @@ void ClipRow::setSelected(bool selected) {
 }
 
 void ClipRow::paint(juce::Graphics& g) {
-    auto bounds = getLocalBounds();
-    
-    if (isSelected_) {
-        g.fillAll(juce::Colour(0xff3a3a4a));
-    } else {
-        g.fillAll(juce::Colour(0xff2a2a2a));
-    }
-    
-    g.setColour(juce::Colours::white);
-    g.setFont(12.0f);
-    
+    auto bounds = getLocalBounds().toFloat().reduced(2.0f, 3.0f);
+
+    g.setColour(isSelected_ ? theme::selectedSurface : theme::control);
+    g.fillRoundedRectangle(bounds, 6.0f);
+    g.setColour(isSelected_ ? theme::accent : theme::hairline);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected_ ? 1.5f : 1.0f);
+
+    auto textArea = bounds.reduced(8.0f, 6.0f).toNearestInt();
+    auto previewArea = textArea.removeFromRight(textArea.getWidth() * 2 / 5).withTrimmedLeft(6);
+    auto titleArea = textArea.removeFromTop(16);
+
     juce::String name = clip_ ? clip_->getName() : "Clip " + juce::String(index_ + 1);
-    
-    juce::String typeStr;
+    if (clip_ && clip_->isMuted()) name += " [Muted]";
+    g.setColour(theme::white);
+    g.setFont(juce::Font(12.0f, juce::Font::bold));
+    g.drawText(name, titleArea, juce::Justification::centredLeft, true);
+
+    juce::String metadata = "Missing source";
     if (clip_) {
-        switch (clip_->getType()) {
-            case Clip::Type::Audio: typeStr = "[Audio]"; break;
-            case Clip::Type::Midi: typeStr = "[MIDI]"; break;
-            case Clip::Type::Pattern: typeStr = "[Pattern]"; break;
+        if (auto* midi = dynamic_cast<MidiClip*>(clip_)) {
+            const double bars = clip_->getDuration() / 4.0;
+            metadata = juce::String(bars, bars == std::floor(bars) ? 0 : 1) + " bars - " +
+                       juce::String(midi->getNumNotes()) + " notes";
+        } else if (clip_->getType() == Clip::Type::Audio) {
+            metadata = "Audio";
+        } else {
+            metadata = "Pattern";
         }
-        name += " " + typeStr;
     }
-    
-    g.drawText(name, 8, 0, bounds.getWidth() - 16, bounds.getHeight(), 
-               juce::Justification::centredLeft, true);
-    
-    g.setColour(juce::Colour(0xff444444));
-    g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
+    g.setColour(theme::textSecondary);
+    g.setFont(10.0f);
+    g.drawText(metadata, textArea, juce::Justification::centredLeft, true);
+
+    g.setColour(theme::textSecondary);
+    g.setFont(juce::Font(14.0f, juce::Font::bold));
+    g.drawText(juce::String(juce::CharPointer_UTF8("\xe2\x8b\xae")), kebabRect(),
+               juce::Justification::centred);
+
+    g.setColour(theme::deepWell);
+    g.fillRoundedRectangle(previewArea.toFloat(), 4.0f);
+    g.setColour(theme::hairline);
+    g.drawRoundedRectangle(previewArea.toFloat().reduced(0.5f), 4.0f, 1.0f);
+    if (auto* midi = dynamic_cast<MidiClip*>(clip_)) {
+        ClipMiniPreview::drawMiniNotes(g, *midi, midi->getDuration(),
+                                       previewArea.toFloat().reduced(2.0f), clip_->isMuted());
+    }
 }
 
 void ClipRow::mouseDown(const juce::MouseEvent& e) {
+    if (kebabRect().contains(e.position.toInt())) {
+        createContextMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+        return;
+    }
     DragDropInfo::cancelClip(dragDescription_);
     dragDescription_ = clip_ && clip_->getType() == Clip::Type::Midi ? DragDropInfo::clip(clipId_) : juce::var();
     pressActive_ = e.mods.isLeftButtonDown() && !e.mods.isPopupMenu();
@@ -104,8 +128,8 @@ ClipsContent::ClipsContent(Project& project)
     : project_(project)
 {
     addClipButton_.setButtonText("+ New Clip");
-    addClipButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a3a));
-    addClipButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    addClipButton_.setColour(juce::TextButton::buttonColourId, theme::actionGreen);
+    addClipButton_.setColour(juce::TextButton::textColourOffId, theme::white);
     addClipButton_.onClick = [this]() {
         auto newClip = std::make_unique<MidiClip>(0.0, 4.0);
         newClip->setName("Clip " + juce::String(project_.getClipPool().getNumClips() + 1));
@@ -166,25 +190,78 @@ void ClipsContent::deleteSourceWithConfirmation(ClipId clipId) {
         });
 }
 
+bool ClipsContent::rowMatchesFilter(const ClipRow& row) const {
+    auto* clip = row.getClip();
+    if (filterTab_ == 1) return clip && clip->getType() == Clip::Type::Audio;
+    return clip && (clip->getType() == Clip::Type::Midi || clip->getType() == Clip::Type::Pattern);
+}
+
 void ClipsContent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff252525));
-    if (clipRows_.empty()) {
-        g.setColour(juce::Colour(0xff777777));
+    g.fillAll(theme::raised);
+
+    // MIDI/AUDIO segmented filter tabs (manual hit-testing, no child components).
+    auto tabs = getLocalBounds().withHeight(tabRowHeight).reduced(2, 2);
+    midiTabBounds_ = tabs.removeFromLeft(tabs.getWidth() / 2).reduced(2, 1);
+    audioTabBounds_ = tabs.reduced(2, 1);
+    auto drawTab = [&](const juce::Rectangle<int>& bounds, const juce::String& label, bool active) {
+        auto rect = bounds.toFloat();
+        g.setColour(active ? theme::actionGreen : theme::control);
+        g.fillRoundedRectangle(rect, 5.0f);
+        g.setColour(active ? theme::actionGreen : theme::hairline);
+        g.drawRoundedRectangle(rect.reduced(0.5f), 5.0f, 1.0f);
+        g.setColour(active ? theme::white : theme::textDefault);
+        g.setFont(juce::Font(11.0f, juce::Font::bold));
+        g.drawText(label, bounds, juce::Justification::centred);
+    };
+    drawTab(midiTabBounds_, "MIDI", filterTab_ == 0);
+    drawTab(audioTabBounds_, "AUDIO", filterTab_ == 1);
+
+    int visibleRows = 0;
+    for (const auto& row : clipRows_) {
+        if (row->isVisible()) ++visibleRows;
+    }
+    if (visibleRows == 0) {
+        g.setColour(theme::textMuted);
         g.setFont(12.0f);
-        g.drawFittedText("Create a MIDI clip with + New Clip.\nDrag it onto the timeline to place it;\ndouble-click or right-click to edit.",
-            getLocalBounds().reduced(8, 40), juce::Justification::centred, 4);
+        auto area = getLocalBounds().withTrimmedTop(tabRowHeight).reduced(8, 40);
+        if (clipRows_.empty()) {
+            g.drawFittedText("Create a MIDI clip with + New Clip.\nDrag it onto the timeline to place it;\ndouble-click or right-click to edit.",
+                area, juce::Justification::centred, 4);
+        } else {
+            g.drawFittedText("No clips in this tab.", area, juce::Justification::centred, 2);
+        }
+    }
+}
+
+void ClipsContent::mouseDown(const juce::MouseEvent& e) {
+    const auto position = e.position.toInt();
+    if (midiTabBounds_.contains(position)) {
+        if (filterTab_ != 0) {
+            filterTab_ = 0;
+            for (auto& row : clipRows_) row->setVisible(rowMatchesFilter(*row));
+            resized();
+        }
+    } else if (audioTabBounds_.contains(position)) {
+        if (filterTab_ != 1) {
+            filterTab_ = 1;
+            for (auto& row : clipRows_) row->setVisible(rowMatchesFilter(*row));
+            resized();
+        }
     }
 }
 
 void ClipsContent::resized() {
     auto bounds = getLocalBounds();
-    
+
     auto buttons = bounds.removeFromBottom(32);
     deleteClipButton_.setBounds(buttons.removeFromRight(buttons.getWidth() / 2).reduced(2));
     addClipButton_.setBounds(buttons.reduced(2));
-    
-    int y = 0;
+
+    auto listArea = bounds.withTrimmedTop(tabRowHeight);
+    int y = listArea.getY();
     for (auto& row : clipRows_) {
+        row->setVisible(rowMatchesFilter(*row));
+        if (!row->isVisible()) continue;
         row->setBounds(0, y, bounds.getWidth(), ClipRow::rowHeight);
         y += ClipRow::rowHeight;
     }

@@ -7,6 +7,10 @@
 #include "ui/panels/TimelinePanel.h"
 #include "ui/timeline/TimelineGeometry.h"
 #include "ui/editor/NoteGridComponent.h"
+#include "ui/editor/PianoRollGeometry.h"
+#include "ui/editor/PianoRollKeyboard.h"
+#include "ui/editor/TimeRulerComponent.h"
+#include "ui/editor/PianoRollEditor.h"
 #include "ui/components/PluginButton.h"
 #include "ui/components/TextPrompt.h"
 #include "ui/sidebar/channel/ChannelRackSidebar.h"
@@ -1754,6 +1758,121 @@ static void transportEngineTests() {
     CHECK(renderAllocations == 0 && renderDeletions == 0);
 }
 
+static void externalMidiTests() {
+    // T09: the device-selection path end to end. connectToDevice cannot open real
+    // hardware here (ALSA/JACK are compiled out of this target and their JUCE
+    // stubs return an empty device list), so sendMidiMessage stands in for the
+    // connected device's callback: MidiManager routes it through exactly the same
+    // handleIncomingMidiMessage path an open MidiInput would invoke.
+    {
+        MidiManager manager; // Never given an audio destination.
+        CHECK(manager.getAvailableDevices().isEmpty());
+        CHECK(!manager.isConnected() && manager.getCurrentDeviceName().isEmpty());
+        CHECK(!manager.connectToDevice(-1));
+        CHECK(!manager.connectToDevice(0)); // Empty device list.
+        CHECK(!manager.connectToDevice("Not a device"));
+        CHECK(!manager.isConnected());
+        manager.disconnect(); // No device connected: must stay a safe no-op.
+        manager.sendMidiMessage(juce::MidiMessage::noteOn(1, 60, 0.5f)); // No destination: dropped.
+        MidiManagerTestAccess::drain(manager); // No keyboard/listeners: harmless.
+    }
+
+    // Device event -> engine queue -> active channel, alongside arrangement
+    // playback routed to a different destination, with keyboard feedback that
+    // must never re-enter the audio path.
+    Probe probe, other;
+    ChannelList channels;
+    TrackList tracks;
+    ClipPool clips;
+    TransportState state;
+    auto* active = channels.addChannel("Active");
+    auto* background = channels.addChannel("Background");
+    active->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(probe)));
+    background->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(other)));
+    auto source = std::make_unique<MidiClip>(4, 4);
+    source->addNote(Note(40, 0, 2)); // Plays on the background destination only.
+    const auto id = clips.addClip(std::move(source));
+    tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, background->getId(), 0, 4));
+    ChannelMixer mixer(channels, tracks, clips, state);
+    mixer.setActiveChannel(0);
+    mixer.prepareToPlay(48000, 256);
+    AudioEngine engine;
+    engine.setProcessor(&mixer);
+    AudioEngineTestAccess::prepare(engine, 48000, 256);
+    juce::MidiKeyboardState keyboard;
+    keyboard.addListener(&engine);
+    MidiManager manager;
+    manager.setAudioDestination(engine, keyboard);
+    struct Recorder : MidiListener {
+        std::vector<juce::MidiMessage> received;
+        void handleMidiMessage(const juce::MidiMessage& message, int) override {
+            received.push_back(message);
+        }
+    } recorder;
+    manager.addListener(&recorder);
+
+    juce::AudioBuffer<float> buffer(2, 256);
+    auto render = [&](int samples) {
+        rendering = true;
+        AudioEngineTestAccess::renderSamples(engine, buffer, samples);
+        rendering = false;
+        state.pollRenderPosition();
+    };
+
+    state.setPlaying(true);
+    render(256);
+    CHECK(other.sounding == 1 && probe.sounding == 0); // Arrangement reaches only its destination.
+
+    const auto notesBefore = probe.notes;
+    manager.sendMidiMessage(juce::MidiMessage::noteOn(1, 60, 0.6f));
+    render(256);
+    CHECK(probe.sounding == 1 && probe.notes == notesBefore + 1);
+    CHECK(other.sounding == 1); // Arrangement note keeps sounding independently.
+
+    // The feedback timer marks the on-screen keyboard and notifies listeners,
+    // but must never re-enqueue the note as fresh live input.
+    MidiManagerTestAccess::drain(manager);
+    CHECK(recorder.received.size() == 1);
+    CHECK(keyboard.isNoteOn(1, 60));
+    CHECK(probe.notes == notesBefore + 1); // Exactly one attack reached the plugin.
+    render(256);
+    CHECK(probe.sounding == 1 && probe.notes == notesBefore + 1);
+
+    manager.sendMidiMessage(juce::MidiMessage::noteOff(1, 60));
+    render(256);
+    CHECK(probe.sounding == 0);
+    MidiManagerTestAccess::drain(manager);
+    CHECK(recorder.received.size() == 2);
+    CHECK(!keyboard.isNoteOn(1, 60));
+
+    // Live input follows the active channel: switching destinations reroutes the
+    // next external event without disturbing the still-playing arrangement.
+    mixer.setActiveChannel(1);
+    manager.sendMidiMessage(juce::MidiMessage::noteOn(1, 62, 0.6f));
+    render(256);
+    CHECK(other.sounding == 2 && probe.sounding == 0); // Arrangement note + new live note.
+
+    // Release the live note; the arrangement tail then ends on its own.
+    manager.sendMidiMessage(juce::MidiMessage::noteOff(1, 62));
+    render(256);
+    CHECK(other.sounding == 1 && probe.sounding == 0);
+
+    // Everything winds down: arrangement tail ends, no stuck notes anywhere.
+    int guard = 0;
+    while ((probe.sounding != 0 || other.sounding != 0) && guard++ < 1000) render(256);
+    CHECK(guard < 1000 && probe.sounding == 0 && other.sounding == 0);
+    const auto allClear = [](const Probe& p) {
+        return std::all_of(p.held.begin(), p.held.end(), [](unsigned n) { return n == 0; });
+    };
+    CHECK(allClear(probe) && allClear(other));
+
+    manager.removeListener(&recorder);
+    keyboard.removeListener(&engine);
+    state.setPlaying(false);
+    render(256);
+    engine.clearProcessor();
+}
+
 static void arrangementPlaybackTests() {
     // Exact absolute event times must be invariant under block partitioning. Source
     // origin/loop flag are deliberately irrelevant; placement tails are silent.
@@ -2454,7 +2573,7 @@ static void mixerBindingTests() {
             CHECK(viewport->getBounds() == externalBounds);
             CHECK(panel.getMasterStrip()->getHeight() ==
                   externalBounds.getHeight() - viewport->getScrollBarThickness());
-            CHECK(viewport->getViewedComponent()->getWidth() == (panel.getNumChannels() + 1) * 73);
+            CHECK(viewport->getViewedComponent()->getWidth() == (panel.getNumChannels() + 1) * 97);
         };
         CHECK(channels.addChannel("External addition"));
         checkExternalLayout();
@@ -2954,6 +3073,119 @@ static void loopUiTests() {
     { juce::Graphics defaultedGraphics(defaulted); ruler->paint(defaultedGraphics); }
     CHECK(defaulted.getPixelAt(2, 1) == juce::Colour(0xff66aaff));
     CHECK(defaulted.getPixelAt(225, 1) == juce::Colour(0xff2a2a2a)); // Past the band, off the tick lines.
+}
+
+static void tempoControlTests() {
+    TransportState state;
+    TransportComponent ui(state); ui.setSize(1000, 64);
+    auto* tempo = dynamic_cast<TempoControl*>(ui.findChildWithID("tempoControl"));
+    CHECK(tempo);
+    // Presets include 128; the menu model exposes Tap Tempo plus all presets.
+    const auto& presets = TempoControl::presetTempos();
+    CHECK(presets.size() == 13);
+    const double expected[] = {70, 80, 90, 100, 110, 120, 128, 140, 150, 160, 174, 180, 200};
+    for (int i = 0; i < 13; ++i) CHECK(presets[static_cast<std::size_t>(i)] == expected[i]);
+    CHECK(TempoControl::buildMenu(128.0).getNumItems() == 14); // Separator not counted.
+    // Right-click dispatches the menu request; nothing else happens.
+    int menuRequests = 0;
+    tempo->showMenuOverride = [&] { ++menuRequests; };
+    std::vector<double> published;
+    tempo->onTempoChanged = [&](double t) { published.push_back(t); state.setTempo(t); };
+    int taps = 0;
+    tempo->onTempoTapped = [&] { ++taps; };
+    auto event = [&](juce::Point<float> point, juce::Point<float> down, int modifiers) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point, modifiers,
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, tempo, tempo, juce::Time::getCurrentTime(),
+            down, juce::Time::getCurrentTime(), 1, point != down);
+    };
+    const int left = juce::ModifierKeys::leftButtonModifier;
+    tempo->mouseDown(event({35, 14}, {35, 14}, juce::ModifierKeys::rightButtonModifier));
+    CHECK(menuRequests == 1 && !tempo->isEditing() && state.getTempo() == 120.0);
+    // Menu dispatch: 1 = tap, 2..14 = presets in list order, other ids ignored.
+    tempo->handleMenuAction(1);
+    CHECK(taps == 1 && state.getTempo() == 120.0 && published.empty());
+    for (int i = 0; i < 13; ++i) {
+        tempo->handleMenuAction(2 + i);
+        CHECK(state.getTempo() == expected[i]);
+    }
+    CHECK(published.size() == 13 && published.back() == 200.0);
+    tempo->handleMenuAction(0); tempo->handleMenuAction(99);
+    CHECK(published.size() == 13 && state.getTempo() == 200.0);
+    // Drag scrubbing: threshold-gated, live, rounded to whole BPM.
+    tempo->mouseDown(event({35, 14}, {35, 14}, left));
+    tempo->mouseDrag(event({35, 12}, {35, 14}, left)); // Below the threshold.
+    CHECK(!tempo->isScrubbing() && state.getTempo() == 200.0);
+    tempo->mouseDrag(event({35, 4}, {35, 14}, left)); // dy = -10 -> start + 1.
+    CHECK(tempo->isScrubbing() && state.getTempo() == 201.0);
+    tempo->mouseDrag(event({35, 2014}, {35, 14}, left)); // dy = 2000 -> raw 0, clamped.
+    CHECK(state.getTempo() == 20.0);
+    tempo->mouseUp(event({35, 2014}, {35, 14}, left));
+    CHECK(!tempo->isScrubbing() && !tempo->isEditing());
+    // Shift scrubs in 0.1 steps instead of rounding to whole BPM.
+    const int shiftLeft = left | juce::ModifierKeys::shiftModifier;
+    tempo->mouseDown(event({35, 14}, {35, 14}, left));
+    tempo->mouseDrag(event({35, 9}, {35, 14}, shiftLeft)); // 20 + 0.5 without rounding.
+    CHECK(tempo->isScrubbing() && std::abs(state.getTempo() - 20.5) < 1e-9);
+    tempo->mouseUp(event({35, 9}, {35, 14}, 0));
+    // Upward clamps at 300.
+    tempo->mouseDown(event({35, 500}, {35, 500}, left));
+    tempo->mouseDrag(event({35, -2500}, {35, 500}, left)); // raw 320.5 -> 300.
+    CHECK(state.getTempo() == 300.0);
+    tempo->mouseUp(event({35, -2500}, {35, 500}, 0));
+    CHECK(published.size() == 17 && published[13] == 201.0 && published[14] == 20.0 &&
+          published[15] == 20.5 && published.back() == 300.0);
+    // Cursor affordance: up/down resize while idle, normal while editing.
+    CHECK(tempo->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor);
+    tempo->mouseMove(event({35, 14}, {35, 14}, 0));
+    CHECK(tempo->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor);
+    // A press that stays under the threshold is a tap and opens the editor.
+    tempo->mouseDown(event({35, 14}, {35, 14}, left));
+    tempo->mouseDrag(event({36, 15}, {35, 14}, left));
+    tempo->mouseUp(event({36, 15}, {35, 14}, left));
+    CHECK(tempo->isEditing());
+    auto* editor = dynamic_cast<juce::TextEditor*>(tempo->findChildWithID("tempoEditor"));
+    CHECK(editor && editor->isVisible());
+    CHECK(tempo->editingText() == "300.0");
+    // Valid text commits through the live command path.
+    tempo->setEditingText("128");
+    CHECK(!tempo->isInvalidEntry());
+    tempo->commitEdit();
+    CHECK(!tempo->isEditing() && !editor->isVisible() && state.getTempo() == 128.0);
+    // Invalid entries are retained, tinted, and keep the editor open.
+    for (const char* bad : {"", "1.2.3", "0", "999", "-50"}) {
+        tempo->beginEdit();
+        tempo->setEditingText(bad);
+        CHECK(tempo->isInvalidEntry());
+        tempo->commitEdit();
+        CHECK(tempo->isEditing() && state.getTempo() == 128.0);
+    }
+    tempo->cancelEdit();
+    CHECK(!tempo->isEditing() && state.getTempo() == 128.0);
+    // Fractional values commit exactly.
+    tempo->beginEdit();
+    tempo->setEditingText("137.5");
+    tempo->commitEdit();
+    CHECK(!tempo->isEditing() && state.getTempo() == 137.5);
+    // External tempo updates never clobber text being typed; a following scrub
+    // proves the internal value is still the edited one.
+    tempo->beginEdit();
+    state.setTempo(250.0); // transportTempoChanged -> setTempo is ignored while editing.
+    CHECK(tempo->isEditing());
+    tempo->cancelEdit();
+    tempo->mouseDown(event({35, 14}, {35, 14}, left));
+    tempo->mouseDrag(event({35, 4}, {35, 14}, left)); // 137.5 + 1 -> 138.5 rounds away to 139.
+    tempo->mouseUp(event({35, 4}, {35, 14}, 0));
+    CHECK(state.getTempo() == 139.0);
+    // While editing, the box ignores clicks and the cursor goes back to normal.
+    tempo->beginEdit();
+    tempo->mouseMove(event({35, 14}, {35, 14}, 0));
+    CHECK(tempo->getMouseCursor() == juce::MouseCursor::NormalCursor);
+    tempo->mouseDown(event({35, 14}, {35, 14}, left));
+    tempo->mouseUp(event({35, 14}, {35, 14}, left));
+    CHECK(tempo->isEditing() && !tempo->isScrubbing());
+    tempo->cancelEdit();
+    tempo->mouseMove(event({35, 14}, {35, 14}, 0));
+    CHECK(tempo->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor);
 }
 
 static void loopPedalAndLedgerTests() {
@@ -3566,9 +3798,394 @@ static void contextMenuTests() {
     CHECK(juce::Component::getNumCurrentlyModalComponents() == 0);
 }
 
+static void editorNavigationTests() {
+    // ---- Shared geometry: pitch rows round-trip, boundaries and scroll agree.
+    {
+        PianoRollGeometry geo;
+        geo.lowestNote = 0;
+        geo.numKeys = 128;
+        geo.keyHeight = 12;
+        CHECK(geo.highestNote() == 127);
+        CHECK(geo.gridHeight() == 128 * 12);
+        for (int pitch = 0; pitch <= 127; ++pitch) {
+            const int y = geo.yFromPitch(pitch, 0);
+            CHECK(geo.pitchFromY(y, 0) == pitch);
+            if (pitch > 0) CHECK(geo.pitchFromY(y + geo.keyHeight - 1, 0) == pitch);
+        }
+        // Every valid MIDI pitch is reachable, including 0 and 127.
+        CHECK(geo.yFromPitch(127, 0) == 0);
+        CHECK(geo.yFromPitch(0, 0) == 127 * 12);
+        // The keyboard's viewport offset resolves the same row as the grid.
+        CHECK(geo.pitchFromY(0, 5 * 12) == 122);
+        CHECK(geo.yFromPitch(122, 5 * 12) == 0);
+        // Fractional pixel scrolling still resolves the correct row.
+        CHECK(geo.pitchFromY(0, 7) == 127);
+        CHECK(geo.pitchFromY(4, 7) == 127); // Same row: 0 + 7 is still within [0, 12).
+        CHECK(geo.pitchFromY(5, 7) == 126); // 5 + 7 crosses into the next row.
+        CHECK(PianoRollGeometry::floorDiv(-1, 12) == -1);
+    }
+
+    // ---- Beat <-> x round-trips at multiple zoom levels.
+    {
+        for (double ppb : {20.0, 80.0, 320.0}) {
+            for (double beat : {0.0, 0.25, 3.75, 40.5}) {
+                const double x = PianoRollGeometry::xFromBeat(beat, ppb);
+                CHECK(std::abs(PianoRollGeometry::beatFromX(x, ppb) - beat) < 1e-9);
+            }
+        }
+    }
+
+    // ---- Editable extent: clip length, notes, minimum and margin.
+    {
+        CHECK(pianoRollContentBeats(4.0, 0.0) == 12.0);   // Minimum beats dominate.
+        CHECK(pianoRollContentBeats(20.0, 0.0) == 24.0);
+        CHECK(pianoRollContentBeats(4.0, 15.5) == 19.5);  // Longest note end wins.
+        CHECK(pianoRollContentBeats(std::numeric_limits<double>::quiet_NaN(), 0.0) == 12.0);
+    }
+
+    // ---- Arrangement -> source-local mapping across placements/gaps/tails.
+    {
+        double local = -1.0;
+        CHECK(sourceLocalBeat(1.0, 0.0, 4.0, 4.0, local) && local == 1.0);
+        CHECK(sourceLocalBeat(3.999, 0.0, 4.0, 4.0, local));
+        CHECK(!sourceLocalBeat(4.0, 0.0, 4.0, 4.0, local));  // Exclusive end.
+        CHECK(!sourceLocalBeat(9.0, 4.0, 8.0, 4.0, local));  // Placement longer than source.
+        CHECK(sourceLocalBeat(5.0, 4.0, 8.0, 10.0, local) && local == 1.0);
+        CHECK(!sourceLocalBeat(0.5, 4.0, 4.0, 4.0, local));  // Before the placement.
+    }
+
+    // ---- Follow band decision and clamping.
+    {
+        CHECK(followedScrollX(500.0, 400.0, 400.0, 4000.0) < 0.0); // Inside band.
+        const double forward = followedScrollX(950.0, 400.0, 400.0, 4000.0);
+        CHECK(std::abs(forward - (950.0 - 200.0)) < 1e-9);
+        CHECK(followedScrollX(410.0, 800.0, 400.0, 4000.0) < 800.0); // Behind band.
+        CHECK(followedScrollX(10.0, 100.0, 400.0, 4000.0) == 0.0);   // Clamp low.
+        CHECK(followedScrollX(3990.0, 100.0, 400.0, 4000.0) == 3600.0); // Clamp high.
+        CHECK(followedScrollX(0.0, 0.0, 400.0, 400.0) < 0.0); // Content fits: no scroll.
+    }
+
+    // ---- Real grid hit testing targets the note under the pointer.
+    {
+        MidiClip midi(0, 8);
+        midi.addNote(Note(60, 5.0, 1.0));
+        midi.addNote(Note(0, 0.0, 1.0));
+        midi.addNote(Note(127, 7.0, 1.0));
+        NoteGridComponent grid;
+        grid.setMidiClip(&midi);
+        grid.setPixelsPerBeat(80);
+        grid.setKeyHeight(12);
+        grid.setLowestNote(0);
+        grid.setSize(40 * 80, 128 * 12);
+        grid.setPlayheadBeats(6.5);
+        CHECK(grid.getPlayheadBeats() == 6.5);
+
+        auto mouse = [&](juce::Point<float> point, int modifiers) {
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point, modifiers,
+                1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &grid, &grid, juce::Time::getCurrentTime(),
+                point, juce::Time::getCurrentTime(), 1, false);
+        };
+        const auto clickNote = [&](int pitch, double beat) {
+            const int y = grid.getGeometry().yFromPitch(pitch, 0);
+            const int x = static_cast<int>(beat * 80.0);
+            const juce::Point<float> point(static_cast<float>(x + 4), static_cast<float>(y + 6));
+            grid.mouseDown(mouse(point, juce::ModifierKeys::leftButtonModifier));
+            grid.mouseUp(mouse(point, 0));
+        };
+        clickNote(60, 5.0);
+        {
+            const auto selected = grid.getSelectedNotes();
+            CHECK(selected.size() == 1 && selected.front()->getPitch() == 60);
+        }
+        clickNote(0, 0.0);
+        {
+            const auto selected = grid.getSelectedNotes();
+            CHECK(selected.size() == 1 && selected.front()->getPitch() == 0);
+        }
+        clickNote(127, 7.0);
+        {
+            const auto selected = grid.getSelectedNotes();
+            CHECK(selected.size() == 1 && selected.front()->getPitch() == 127);
+        }
+    }
+
+    // ---- Keyboard rows line up with the grid at the same viewport offset.
+    {
+        PianoRollKeyboard keyboard;
+        keyboard.setLowestNote(0);
+        keyboard.setKeyHeight(12);
+        keyboard.setScrollOffset(300); // Viewport scrolled down 25 rows.
+        CHECK(keyboard.getKeyForY(0) == 102);
+        CHECK(keyboard.getKeyForY(11) == 102);
+        CHECK(keyboard.getKeyForY(12) == 101);
+        CHECK(keyboard.getYForKey(102) == 0);
+        PianoRollGeometry geo;
+        geo.keyHeight = 12;
+        CHECK(geo.pitchFromY(300, 0) == 102); // Grid-local row matches the keyboard view.
+    }
+
+    // ---- Grid invalidation and detachment are pointer-safe.
+    {
+        MidiClip midi(0, 4);
+        midi.addNote(Note(60, 0.0, 1.0));
+        NoteGridComponent grid;
+        struct ExtentEvents : NoteGridComponent::Listener {
+            int contentChanges = 0;
+            void noteAdded(const Note&) override {}
+            void noteRemoved(const Note&) override {}
+            void noteChanged(const Note&) override {}
+            void gridContentChanged() override { ++contentChanges; }
+        } events;
+        grid.setListener(&events);
+        grid.setMidiClip(&midi);
+        CHECK(events.contentChanges >= 1);
+        grid.selectNote(&midi.getNotes()[0]);
+        midi.addNote(Note(62, 2.0, 1.0)); // Reallocation invalidates borrowed selection.
+        CHECK(grid.getSelectedNotes().empty());
+        grid.setMidiClip(nullptr);
+        CHECK(grid.getMidiClip() == nullptr);
+        grid.selectNote(nullptr); // No-op.
+        CHECK(grid.getSelectedNotes().empty());
+    }
+
+    // ---- Editor playhead + follow contract.
+    {
+        MidiClip midi(0, 16);
+        midi.addNote(Note(60, 0.0, 1.0));
+        PianoRollEditor editor;
+        editor.setSize(800, 500);
+        editor.setMidiClip(&midi, 7);
+
+        TransportState transport;
+        editor.setLocalBeatProvider([&](double arrangementBeat, double& local) {
+            return sourceLocalBeat(arrangementBeat, 8.0, 16.0, midi.getDuration(), local);
+        });
+        editor.setTransport(&transport);
+
+        CHECK(!editor.isFollowEnabled());
+        CHECK(!editor.isPlayheadVisible()); // Transport at 0 with no covering placement.
+
+        editor.setFollowEnabled(true);
+        CHECK(editor.isFollowEnabled() && !editor.isFollowSuspended());
+
+        // A resize is programmatic and must not suspend following.
+        editor.setSize(900, 600);
+        CHECK(!editor.isFollowSuspended());
+
+        transport.setPlaying(true);
+        transport.setPositionInBeats(8.0 + 5.0);
+        CHECK(editor.isPlayheadVisible());
+        CHECK(std::abs(editor.getPlayheadBeat() - 5.0) < 1e-9);
+
+        // A far playhead is scrolled into the comfort band.
+        transport.setPositionInBeats(8.0 + 15.0);
+        CHECK(editor.isPlayheadVisible());
+        CHECK(editor.getHorizontalScroll() > 0.0);
+
+        // Following must never move the audio position (read-only contract).
+        const double held = transport.getPositionInBeats();
+        editor.transportPositionChanged(0.0);
+        CHECK(transport.getPositionInBeats() == held);
+
+        // Manual scrolling suspends until the Follow toggle resumes.
+        editor.setHorizontalScroll(1.0);
+        CHECK(editor.isFollowSuspended());
+        editor.setFollowEnabled(true);
+        CHECK(!editor.isFollowSuspended());
+
+        // A position with no covering placement hides the playhead.
+        transport.setPositionInBeats(8.0 + 100.0);
+        CHECK(!editor.isPlayheadVisible());
+
+        // Zoom preserves the beat at the viewport's left edge.
+        transport.stop();
+        editor.setHorizontalScroll(3.0);
+        const double anchorBefore = editor.getHorizontalScroll();
+        editor.setZoomLevel(2.0);
+        CHECK(std::abs(editor.getHorizontalScroll() - anchorBefore) < 0.01);
+
+        editor.setTransport(nullptr);
+        CHECK(!editor.isPlayheadVisible());
+    }
+
+    // ---- Ruler playhead storage.
+    {
+        TimeRulerComponent ruler;
+        CHECK(ruler.getPlayhead() < 0.0);
+        ruler.setPlayhead(3.5);
+        CHECK(ruler.getPlayhead() == 3.5);
+    }
+}
+
+static void integrationWorkflowTests() {
+    // T09 integration fixture: the Main.cpp wiring (Project -> ChannelMixer ->
+    // AudioEngine) with a shared clip placed on two routed tracks, looped
+    // playback, a mid-playback tempo change, mix controls, and a save/load
+    // round trip that keeps rendering through the same mixer. Probes are
+    // declared before the Project so instrument destructors outlive them.
+    const juce::File home(VIBEDAW_TEST_HOME);
+    CHECK(home.isDirectory());
+
+    Probe lead, pad;
+    std::vector<std::unique_ptr<Probe>> restored; // Must outlive the Project.
+    int restoreCalls = 0;
+    Project project;
+    ProjectTestAccess::restorer(project,
+        [&](const juce::PluginDescription& description, const juce::MemoryBlock& state) -> std::unique_ptr<PluginHost> {
+            ++restoreCalls;
+            CHECK(description.uniqueId == 0x7ea77 && description.isInstrument);
+            auto* probe = restored.emplace_back(std::make_unique<Probe>()).get();
+            auto instrument = std::make_unique<StatefulInstrument>(*probe);
+            if (state.getSize() > 0)
+                instrument->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+            return std::make_unique<PluginHost>(std::move(instrument));
+        });
+
+    auto& channels = project.getChannelList();
+    auto& tracks = project.getTrackList();
+    auto& pool = project.getClipPool();
+    auto& transport = project.getTransportState();
+
+    auto* leadChannel = channels.addChannel("Lead");
+    auto* padChannel = channels.addChannel("Pad");
+    const auto leadId = leadChannel->getId();
+    const auto padId = padChannel->getId();
+    leadChannel->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(lead)));
+    padChannel->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(pad)));
+    leadChannel->setVolume(0.5f);
+    transport.setTempo(120.0);
+    transport.setLoopRegion(0, 8);
+    transport.setLoopEnabled(true);
+
+    // One shared source; each placement routes to a different instrument.
+    auto source = std::make_unique<MidiClip>(4, 4);
+    source->addNote(Note(60, 0, 1));
+    source->addNote(Note(67, 2, 1));
+    const auto clipId = pool.addClip(std::move(source));
+    tracks.addTrack("One")->addClipInstance(std::make_unique<ClipInstance>(clipId, leadId, 0, 4));
+    tracks.addTrack("Two")->addClipInstance(std::make_unique<ClipInstance>(clipId, padId, 4, 4));
+
+    ChannelMixer mixer(channels, tracks, pool, transport);
+    mixer.setActiveChannel(0);
+    mixer.prepareToPlay(48000, 256);
+    AudioEngine engine;
+    engine.setProcessor(&mixer);
+    AudioEngineTestAccess::prepare(engine, 48000, 256);
+    juce::AudioBuffer<float> buffer(2, 256);
+    auto render = [&](int samples) {
+        rendering = true;
+        AudioEngineTestAccess::renderSamples(engine, buffer, samples);
+        rendering = false;
+        transport.pollRenderPosition();
+    };
+    int guard = 0;
+    auto renderUntil = [&](auto&& predicate) {
+        while (!predicate() && guard++ < 40000) render(256);
+        CHECK(guard < 40000);
+    };
+
+    // Playback through the loop: Lead fires at beats 0 and 2, position tracks tempo.
+    transport.setPlaying(true);
+    renderUntil([&] { return transport.getPositionInBeats() >= 0.5; });
+    CHECK(lead.notes == 1 && lead.sounding == 1 && pad.notes == 0);
+    CHECK(std::abs(buffer.getSample(0, 128) - 0.125f) < 1e-6f); // 0.25 * volume 0.5, master 1.
+    project.getMasterBus().setGain(0.5f);
+    render(256); render(256);
+    CHECK(std::abs(buffer.getSample(0, 128) - 0.0625f) < 1e-6f); // Post-sum master gain.
+    project.getMasterBus().setGain(1.0f);
+
+    // Mid-playback tempo change: the musical position holds (T01) and the next
+    // arrangement event fires where the new tempo places it.
+    transport.setTempo(90.0);
+    transport.setMetronomeEnabled(true); // Click rounds trip through the document later.
+    renderUntil([&] { return lead.notes >= 2; }); // note67@2 under the new tempo.
+    CHECK(pad.notes == 0); // Pad's placement starts at beat 4.
+
+    // Mute Pad before its window; its first-pass attacks must be suppressed
+    // with destination-local cleanup, not stuck or deferred.
+    padChannel->setMuted(true);
+    renderUntil([&] { return transport.getPositionInBeats() >= 6.5; });
+    CHECK(pad.notes == 0 && pad.sounding == 0);
+    padChannel->setMuted(false); // Next Pad attacks arrive; held notes do not chase.
+
+    // Loop wrap: Lead's note60 refires, then Pad's unmuted second pass.
+    renderUntil([&] { return lead.notes >= 3; });
+    renderUntil([&] { return pad.notes >= 1; });
+    CHECK(pad.sounding >= 1); // Sounding again after unmute.
+
+    // Stop: all voices cleaned, nothing stuck.
+    transport.setPlaying(false);
+    render(256);
+    CHECK(lead.sounding == 0 && pad.sounding == 0);
+    const auto clear = [](const Probe& p) {
+        return std::all_of(p.held.begin(), p.held.end(), [](unsigned n) { return n == 0; });
+    };
+    CHECK(clear(lead) && clear(pad));
+
+    // ---- Save, mutate, load: the same mixer must keep working afterwards.
+    const auto file = home.getChildFile("integration" + juce::String(Constants::PROJECT_FILE_EXTENSION));
+    juce::String error;
+    CHECK(project.saveProjectAs(file, error));
+    CHECK(!project.isDirty());
+    CHECK(transport.isMetronomeEnabled() && transport.isLoopEnabled() && transport.isLoopRegionSet());
+    channels.addChannel("Doomed");
+    transport.setTempo(200.0);
+    transport.setLoopEnabled(false);
+    CHECK(project.isDirty());
+    CHECK(project.prepareLoad(file, error));
+    project.commitLoad();
+    CHECK(!project.isDirty());
+    CHECK(channels.getNumChannels() == 2);
+    CHECK(channels.getChannelById(leadId) != nullptr && channels.getChannelById(padId) != nullptr);
+    CHECK(channels.getChannel(0)->getName() == juce::String("Lead"));
+    CHECK(channels.getChannel(1)->getName() == juce::String("Pad"));
+    CHECK(std::abs(transport.getTempo() - 90.0) < 1e-12);
+    CHECK(transport.isLoopEnabled() && transport.isLoopRegionSet());
+    CHECK(std::abs(transport.getLoopRegion().startBeats) < 1e-12 &&
+          std::abs(transport.getLoopRegion().endBeats - 8.0) < 1e-12);
+    CHECK(transport.isMetronomeEnabled());
+    CHECK(tracks.getNumTracks() == 2 && pool.getNumClips() == 1);
+    CHECK(restored.size() == 2 && restoreCalls == 2);
+    CHECK(lead.destroyed == 1 && pad.destroyed == 1); // Replaced off audio by the load.
+    CHECK(lead.destroyedQuiescent && pad.destroyedQuiescent);
+    CHECK(!lead.destroyedOnAudio && !pad.destroyedOnAudio);
+
+    // Restored channels carry identity + opaque state and are prepared again.
+    for (const auto& probe : restored) CHECK(probe->prepared);
+    CHECK(restored[0]->notes == 0 && restored[1]->notes == 0);
+
+    // Playback resumes through the SAME mixer, on the restored instruments.
+    transport.setPlaying(false);
+    render(256);
+    transport.setPositionInBeats(0);
+    transport.setPlaying(true);
+    renderUntil([&] { return restored[0]->notes >= 1; });
+    CHECK(restored[0]->sounding == 1 && restored[1]->notes == 0);
+    renderUntil([&] { return restored[1]->notes >= 1; }); // Pad's second placement at beat 4.
+    CHECK(restored[1]->sounding >= 1);
+
+    // Restored mix state: Lead keeps its saved 0.5 volume under master 1.
+    transport.setPlaying(false);
+    transport.setMetronomeEnabled(false);
+    transport.setPositionInBeats(0);
+    transport.setPlaying(true);
+    renderUntil([&] { return restored[0]->sounding == 1; });
+    render(256);
+    CHECK(std::abs(buffer.getSample(0, 128) - 0.125f) < 1e-6f);
+    transport.setPlaying(false);
+    render(256);
+    int wind = 0;
+    while ((restored[0]->sounding != 0 || restored[1]->sounding != 0) && wind++ < 20000) render(256);
+    CHECK(wind < 20000 && restored[0]->sounding == 0 && restored[1]->sounding == 0);
+    CHECK(clear(*restored[0]) && clear(*restored[1]));
+    engine.clearProcessor();
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
 static void projectFileTests() {
     const juce::File home(VIBEDAW_TEST_HOME);
     CHECK(home.isDirectory());
+
     const auto extension = juce::String(Constants::PROJECT_FILE_EXTENSION);
     juce::String error;
 
@@ -4004,6 +4621,7 @@ int main() {
         pluginEditorCreationTests();
         transportClockTests();
         transportEngineTests();
+        externalMidiTests();
         arrangementPlaybackTests();
         arrangementLifecycleTests();
         arrangementCapacityTests();
@@ -4020,11 +4638,14 @@ int main() {
         clickMasterAndOverflowTests();
         iconTests();
         loopUiTests();
+        tempoControlTests();
         loopPedalAndLedgerTests();
         loopClickAndClockTests();
+        editorNavigationTests();
         projectFileTests();
+        integrationWorkflowTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX and T07 project file tests passed\n";
+        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, T09 external MIDI and tempo control tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

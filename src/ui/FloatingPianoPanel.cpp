@@ -1,4 +1,5 @@
 #include "FloatingPianoPanel.h"
+#include "ui/Theme.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
@@ -21,8 +22,8 @@ FloatingPianoPanel::~FloatingPianoPanel() {
 }
 
 void FloatingPianoPanel::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xdd1a1a1a));
-    g.setColour(juce::Colour(0xff3a3a3a));
+    g.fillAll(theme::overlayWindow);
+    g.setColour(theme::border);
     g.drawRoundedRectangle(getLocalBounds().toFloat(), 8.0f, 2.0f);
 }
 

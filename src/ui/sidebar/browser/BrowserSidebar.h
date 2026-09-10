@@ -54,7 +54,8 @@ public:
 private:
     PluginScanner& scanner_;
     Listener* listener_ = nullptr;
-    
+
+    juce::TextEditor searchBox_;
     std::vector<BrowserSection*> sections_;
     
     std::unique_ptr<PluginSection> pluginSection_;

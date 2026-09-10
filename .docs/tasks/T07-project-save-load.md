@@ -1,6 +1,13 @@
 # T07: Project Save and Load
 
-Status: blocked (implemented + offline-verified) | Milestone: M2 | Depends on: M1, M1.5
+Status: done | Milestone: M2 | Depends on: M1, M1.5
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/manual observations (native
+FileChooser flows, prompts, editors across load, plugin state through a real
+restart, audible workflow) are accepted by the override rather than individually
+observed. Unchecked boxes in this file are cleared by the same override. See the
+backlog clearance record in `.docs/ROADMAP.md`.
 
 ## Outcome
 

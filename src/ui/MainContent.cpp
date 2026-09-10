@@ -1,21 +1,25 @@
 #include "MainContent.h"
+#include "ui/Theme.h"
 #include "MainWindow.h"
 #include "plugins/PluginHost.h"
 #include "core/Constants.h"
 #include "utils/Logger.h"
 #include "components/FileDialog.h"
 #include "components/TextPrompt.h"
+#include "editor/PianoRollGeometry.h"
 #include "sidebar/Sidebar.h"
 #include "sidebar/SidebarContainer.h"
 #include "sidebar/channel/ChannelRackSidebar.h"
 #include "sidebar/browser/BrowserSidebar.h"
 #include "sidebar/clips/ClipsSidebar.h"
+#include <fstream>
 
 namespace vibedaw {
 
-MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& manager, Project& proj)
+MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& manager, Project& proj, AudioEngine& engine)
     : midiManager_(manager),
-      project_(proj), transportState_(proj.getTransportState()), pluginButton_(proj)
+      project_(proj), transportState_(proj.getTransportState()), pluginButton_(proj),
+      engine_(&engine)
 {
     setOpaque(true);
     
@@ -96,12 +100,28 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
             }
         }
         updateStatusLabel();
+        refreshSystemStats();
     };
     addAndMakeVisible(midiDeviceCombo_);
     
     statusLabel_.setJustificationType(juce::Justification::centredLeft);
     updateStatusLabel();
     addAndMakeVisible(statusLabel_);
+
+    // Live MIDI device indicator: filled dot when a device is open.
+    midiDot_.setText(juce::String(juce::CharPointer_UTF8("\xe2\x97\x8f")), juce::dontSendNotification);
+    midiDot_.setJustificationType(juce::Justification::centred);
+    midiDot_.setColour(juce::Label::textColourId, midiManager_.isConnected() ? theme::accent : theme::textFaint);
+    addAndMakeVisible(midiDot_);
+
+    cpuLabel_.setJustificationType(juce::Justification::centredRight);
+    cpuLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
+    addAndMakeVisible(cpuLabel_);
+
+    ramLabel_.setJustificationType(juce::Justification::centredRight);
+    ramLabel_.setColour(juce::Label::textColourId, theme::textSecondary);
+    addAndMakeVisible(ramLabel_);
+    refreshSystemStats();
     
     setWantsKeyboardFocus(true);
     
@@ -120,10 +140,47 @@ MainContent::~MainContent() {
 
 void MainContent::timerCallback() {
     transportState_.pollRenderPosition();
+    // CPU/RAM readouts are 1 Hz class, piggybacking on the 30 Hz poll timer.
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastSystemPollTime_ >= 1000.0) {
+        lastSystemPollTime_ = now;
+        refreshSystemStats();
+    }
+}
+
+void MainContent::refreshSystemStats() {
+    if (engine_ != nullptr) {
+        const double cpu = engine_->getCpuUsage();
+        if (cpu >= 0.0) {
+            cpuLabel_.setText("CPU " + juce::String(juce::roundToInt(cpu * 100.0)) + "%",
+                              juce::dontSendNotification);
+        } else {
+            cpuLabel_.setText("CPU --%", juce::dontSendNotification);
+        }
+    } else {
+        cpuLabel_.setVisible(false);
+    }
+
+#if defined(__linux__)
+    std::ifstream statm("/proc/self/statm");
+    long total = 0, resident = 0;
+    if (statm.is_open() && (statm >> total >> resident) && resident > 0) {
+        const double megabytes = static_cast<double>(resident) *
+            static_cast<double>(juce::SystemStats::getPageSize()) / (1024.0 * 1024.0);
+        ramLabel_.setText("RAM " + juce::String(megabytes, 0) + " MB", juce::dontSendNotification);
+        ramLabel_.setVisible(true);
+    } else {
+        ramLabel_.setVisible(false);
+    }
+#else
+    ramLabel_.setVisible(false);
+#endif
+
+    midiDot_.setColour(juce::Label::textColourId, midiManager_.isConnected() ? theme::accent : theme::textFaint);
 }
 
 void MainContent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
 }
 
 void MainContent::resized() {
@@ -160,8 +217,11 @@ void MainContent::updateLayout() {
     auto statusBar = statusBarBounds.reduced(10, 2);
     midiLabel_.setBounds(statusBar.removeFromLeft(40));
     midiDeviceCombo_.setBounds(statusBar.removeFromLeft(150));
+    midiDot_.setBounds(statusBar.removeFromLeft(16).withSizeKeepingCentre(14, statusBarHeight - 4));
     pluginButton_.setBounds(statusBar.removeFromRight(70));
     fileButton_.setBounds(statusBar.removeFromRight(48));
+    ramLabel_.setBounds(statusBar.removeFromRight(80));
+    cpuLabel_.setBounds(statusBar.removeFromRight(56));
     statusLabel_.setBounds(statusBar);
 }
 
@@ -356,7 +416,30 @@ void MainContent::clipOpened(ClipId clipId, Clip* clip) {
     if (clip && clip->getType() == Clip::Type::Midi) {
         auto* midiClip = dynamic_cast<MidiClip*>(clip);
         if (midiClip) {
-            auto* window = new ClipEditorWindow(midiClip, clipId, &midiManager_);
+            // Arrangement -> source-local beat for the playhead: follow the
+            // placement containing the transport position (earliest on overlap).
+            auto provider = [this, clipId, midiClip](double arrangementBeat, double& local) -> bool {
+                bool found = false;
+                double bestStart = 0.0;
+                for (const auto& track : project_.getTrackList().getTracks()) {
+                    for (const auto& instance : track->getClipInstances()) {
+                        if (!instance || instance->getClipId() != clipId || !instance->isValid())
+                            continue;
+                        double candidate = 0.0;
+                        if (sourceLocalBeat(arrangementBeat, instance->getStartTime(),
+                                            instance->getDuration(), midiClip->getDuration(), candidate)) {
+                            if (!found || instance->getStartTime() < bestStart) {
+                                found = true;
+                                bestStart = instance->getStartTime();
+                                local = candidate;
+                            }
+                        }
+                    }
+                }
+                return found;
+            };
+            auto* window = new ClipEditorWindow(midiClip, clipId, &midiManager_,
+                                                &transportState_, std::move(provider));
             window->setListener(this);
             openClipEditors_.push_back(window);
         }

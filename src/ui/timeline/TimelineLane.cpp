@@ -2,6 +2,8 @@
 #include "project/Track.h"
 #include "project/ClipPool.h"
 #include "project/ChannelList.h"
+#include "ui/Theme.h"
+#include "ui/components/ClipMiniPreview.h"
 #include <cmath>
 #include "TimelineGeometry.h"
 
@@ -13,14 +15,14 @@ TimelineLane::TimelineLane(Track* owner, int index)
 }
 
 void TimelineLane::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(selected ? 0xff2a2a3a : 0xff1e1e1e));
+    g.fillAll(juce::Colour(selected ? theme::selectedLane : theme::panelBackground));
     double firstBeat = std::ceil(scrollOffset / pixelsPerBeat);
     double endBeat = (scrollOffset + getWidth()) / pixelsPerBeat;
     for (double beat = firstBeat; beat <= endBeat; ++beat) {
-        g.setColour(juce::Colour(std::fmod(beat, 4.0) == 0.0 ? 0xff484848 : 0xff333333));
+        g.setColour(juce::Colour(std::fmod(beat, 4.0) == 0.0 ? theme::gridBar : theme::hairline));
         g.drawVerticalLine(static_cast<int>(beat * pixelsPerBeat - scrollOffset), 0.0f, static_cast<float>(getHeight()));
     }
-    g.setColour(juce::Colour(0xff505050));
+    g.setColour(theme::separator);
     g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(getWidth()));
     drawClips(g);
 }
@@ -61,36 +63,34 @@ void TimelineLane::drawClips(juce::Graphics& g) {
         const bool unresolved = !clip || clip->getType() != Clip::Type::Midi ||
                                 !channel || channel->getType() != Channel::Type::Instrument;
         const bool muted = instance->isMuted() || (clip && clip->isMuted()) || (channel && channel->isMuted());
-        auto colour = unresolved ? juce::Colour(0xffad6464) : clip->getColour();
+        auto colour = unresolved ? theme::unresolvedClip : clip->getColour();
         if (muted) colour = colour.withMultipliedBrightness(0.45f);
         g.setColour(colour);
         g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
-        g.setColour(instance->isSelected() ? juce::Colours::white : colour.darker(0.4f));
+        g.setColour(instance->isSelected() ? theme::white : colour.darker(0.4f));
         g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), 4.0f, instance->isSelected() ? 2.0f : 1.0f);
-        g.setColour(juce::Colours::white);
+
+        auto text = bounds.reduced(5, 2);
+        auto nameRow = text.removeFromTop(15);
+        auto destinationRow = text.removeFromTop(13);
+        g.setColour(theme::white);
         g.setFont(12.0f);
-        auto text = bounds.reduced(5, 3);
         auto name = clip ? clip->getName() : "Missing source #" + juce::String(instance->getClipId());
         if (muted) name += " [Muted]";
-        g.drawText(name, text.removeFromTop(18), juce::Justification::centredLeft, true);
+        g.drawText(name, nameRow, juce::Justification::centredLeft, true);
+        g.setColour(theme::white.withAlpha(0.7f));
+        g.setFont(10.0f);
         const auto destination = channel ? channel->getName() + " (#" + juce::String(channel->getId()) + ")"
                                          : "Missing destination #" + juce::String(instance->getChannelId());
-        g.drawText(destination, text.removeFromTop(18), juce::Justification::centredLeft, true);
-        if (unresolved) g.drawText("Unresolved: silent", text, juce::Justification::centredLeft, true);
-        else if (auto* midi = dynamic_cast<const MidiClip*>(clip)) {
+        g.drawText(destination, destinationRow, juce::Justification::centredLeft, true);
+
+        auto previewArea = bounds.toFloat().withTrimmedBottom(2.0f);
+        if (unresolved) {
+            g.setFont(10.0f);
+            g.drawText("Unresolved: silent", previewArea.toNearestInt(), juce::Justification::centredLeft, true);
+        } else if (auto* midi = dynamic_cast<const MidiClip*>(clip)) {
             const double sourceEnd = juce::jmin(instance->getDuration(), midi->getDuration());
-            for (const auto& note : midi->getNotes()) {
-                const double end = juce::jmin(note.getEndTime(), sourceEnd);
-                if (note.getStartTime() >= end) continue;
-                const double noteLeft = (instance->getStartTime() + note.getStartTime()) * pixelsPerBeat - scrollOffset;
-                const double noteRight = (instance->getStartTime() + end) * pixelsPerBeat - scrollOffset;
-                if (noteRight <= x || noteLeft >= x + width) continue;
-                const int nx = static_cast<int>(juce::jmax(static_cast<double>(x), noteLeft));
-                const int nr = static_cast<int>(juce::jmin(static_cast<double>(x + width), noteRight));
-                const int ny = text.getBottom() - 2 - note.getPitch() * juce::jmax(0, text.getHeight() - 2) / 128;
-                g.setColour(juce::Colours::white.withAlpha(note.isMuted() ? 0.2f : 0.7f));
-                g.fillRect(nx, ny, juce::jmax(1, nr - nx), 2);
-            }
+            ClipMiniPreview::drawMiniNotes(g, *midi, sourceEnd, previewArea, muted, pixelsPerBeat);
         }
     }
 }

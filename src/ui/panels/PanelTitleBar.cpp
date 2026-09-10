@@ -1,4 +1,5 @@
 #include "PanelTitleBar.h"
+#include "ui/Theme.h"
 #include "Panel.h"
 #include "PanelContainer.h"
 
@@ -29,19 +30,19 @@ void PanelTitleBar::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
     if (owner_.isFocused()) {
-        g.fillAll(juce::Colour(0xff3a5a6a));
+        g.fillAll(theme::titleBarActive);
     } else {
-        g.fillAll(juce::Colour(0xff2a2a2a));
+        g.fillAll(theme::control);
     }
     
-    g.setColour(juce::Colour(0xffcccccc));
+    g.setColour(theme::textBright);
     g.setFont(juce::Font(12.0f, juce::Font::plain));
     
     auto textBounds = bounds.reduced(8, 0);
     textBounds.removeFromRight(60);
     g.drawText(owner_.getPanelName(), textBounds, juce::Justification::centredLeft);
     
-    g.setColour(juce::Colour(0xff444444));
+    g.setColour(theme::borderStrong);
     g.drawLine(bounds.getX(), bounds.getBottom() - 1, bounds.getRight(), bounds.getBottom() - 1, 1.0f);
     
     updateButtonVisibility();

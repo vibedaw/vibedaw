@@ -1,4 +1,5 @@
 #include "PresetSection.h"
+#include "ui/Theme.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
@@ -17,8 +18,8 @@ PresetSection::PresetSection()
     : BrowserSection("Presets")
 {
     treeView_ = std::make_unique<juce::TreeView>();
-    treeView_->setColour(juce::TreeView::backgroundColourId, juce::Colour(0xff252525));
-    treeView_->setColour(juce::TreeView::linesColourId, juce::Colour(0xff333333));
+    treeView_->setColour(juce::TreeView::backgroundColourId, theme::raised);
+    treeView_->setColour(juce::TreeView::linesColourId, theme::hairline);
     treeView_->setDefaultOpenness(false);
     treeView_->setMultiSelectEnabled(false);
     addAndMakeVisible(*treeView_);
@@ -51,16 +52,22 @@ void PresetSection::resizedContent(juce::Rectangle<int> bounds) {
 
 void PresetSection::buildTree() {
     treeView_->setRootItem(nullptr);
-    
+
     if (rootDirectory_.exists()) {
-        rootItem_ = std::make_unique<PresetFileTreeItem>(rootDirectory_, true);
+        rootItem_ = std::make_unique<PresetFileTreeItem>(rootDirectory_, true, filterText_);
         rootItem_->setListener(presetListener_);
         treeView_->setRootItem(rootItem_.get());
     }
 }
 
-PresetFileTreeItem::PresetFileTreeItem(const juce::File& file, bool isRoot)
-    : file_(file), isRoot_(isRoot)
+void PresetSection::applyFilter(const juce::String& filter) {
+    if (filterText_ == filter) return;
+    filterText_ = filter;
+    buildTree();
+}
+
+PresetFileTreeItem::PresetFileTreeItem(const juce::File& file, bool isRoot, const juce::String& filter)
+    : file_(file), isRoot_(isRoot), filter_(filter)
 {
     if (file_.isDirectory()) {
         populateChildren();
@@ -79,19 +86,19 @@ void PresetFileTreeItem::paintItem(juce::Graphics& g, int width, int height) {
     auto bounds = juce::Rectangle<int>(0, 0, width, height);
     
     if (file_.isDirectory()) {
-        g.fillAll(juce::Colour(0xff252525));
+        g.fillAll(theme::raised);
     } else {
-        g.fillAll(juce::Colour(0xff2a2a2a));
+        g.fillAll(theme::control);
     }
     
-    g.setColour(juce::Colours::white);
+    g.setColour(theme::white);
     g.setFont(11.0f);
     
     int indent = 4;
     juce::String displayText = isRoot_ ? file_.getFullPathName() : file_.getFileName();
     g.drawText(displayText, indent, 0, width - indent - 4, height, juce::Justification::centredLeft, true);
     
-    g.setColour(juce::Colour(0xff333333));
+    g.setColour(theme::hairline);
     g.drawHorizontalLine(height - 1, 0.0f, static_cast<float>(width));
 }
 
@@ -120,17 +127,35 @@ juce::var PresetFileTreeItem::getDragSourceDescription() {
 
 void PresetFileTreeItem::populateChildren() {
     clearSubItems();
-    
+
     auto files = file_.findChildFiles(juce::File::findFilesAndDirectories, false);
     files.sort();
-    
+
     for (const auto& child : files) {
-        if (child.isDirectory() || isPresetFile(child)) {
-            auto* childItem = new PresetFileTreeItem(child);
+        if (child.isDirectory()) {
+            if (filter_.isNotEmpty() && !subtreeMatches(child, filter_)) continue;
+            auto* childItem = new PresetFileTreeItem(child, false, filter_);
+            childItem->setListener(listener_);
+            addSubItem(childItem);
+        } else if (isPresetFile(child)) {
+            if (filter_.isNotEmpty() && !child.getFileName().containsIgnoreCase(filter_)) continue;
+            auto* childItem = new PresetFileTreeItem(child, false, filter_);
             childItem->setListener(listener_);
             addSubItem(childItem);
         }
     }
+}
+
+bool PresetFileTreeItem::subtreeMatches(const juce::File& directory, const juce::String& filter) {
+    if (directory.getFileName().containsIgnoreCase(filter)) return true;
+    for (const auto& child : directory.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+        if (child.isDirectory()) {
+            if (subtreeMatches(child, filter)) return true;
+        } else if (isPresetFile(child) && child.getFileName().containsIgnoreCase(filter)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace vibedaw

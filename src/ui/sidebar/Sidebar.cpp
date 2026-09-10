@@ -1,4 +1,5 @@
 #include "Sidebar.h"
+#include "ui/Theme.h"
 #include "ui/components/IconButton.h"
 
 namespace vibedaw {
@@ -14,7 +15,7 @@ Sidebar::Sidebar(const juce::String& name, Side side)
     setInterceptsMouseClicks(true, true);
     
     titleLabel_.setText(name_, juce::dontSendNotification);
-    titleLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+    titleLabel_.setColour(juce::Label::textColourId, theme::white);
     titleLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(titleLabel_);
     
@@ -72,15 +73,15 @@ void Sidebar::setContent(juce::Component* content) {
 }
 
 void Sidebar::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff252525));
+    g.fillAll(theme::raised);
     
-    g.setColour(juce::Colour(0xff333333));
+    g.setColour(theme::hairline);
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
     
     if (isOverResizeEdge_) {
-        g.setColour(juce::Colour(0xff555555));
+        g.setColour(theme::controlSelected);
     } else {
-        g.setColour(juce::Colour(0xff444444));
+        g.setColour(theme::borderStrong);
     }
     
     int resizeX = getResizeEdgeX();
@@ -88,7 +89,7 @@ void Sidebar::paint(juce::Graphics& g) {
 }
 
 void Sidebar::paintOverChildren(juce::Graphics& g) {
-    g.setColour(juce::Colour(0xff555555));
+    g.setColour(theme::controlSelected);
     if (side_ == Side::Left) {
         g.fillRect(getWidth() - 1, 0, 1, getHeight());
     } else {

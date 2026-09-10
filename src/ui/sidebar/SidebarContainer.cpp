@@ -1,4 +1,5 @@
 #include "SidebarContainer.h"
+#include "ui/Theme.h"
 #include "SidebarTab.h"
 #include <algorithm>
 
@@ -155,7 +156,7 @@ bool SidebarContainer::hasExpandedSidebars() const {
 }
 
 void SidebarContainer::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
 }
 
 void SidebarContainer::resized() {

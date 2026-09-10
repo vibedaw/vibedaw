@@ -45,7 +45,7 @@ public:
         audioEngine->setProcessor(channelMixer.get());
         
         mainWindow = std::make_unique<vibedaw::MainWindow>(
-            vibedaw::Constants::APP_NAME, *keyboardState, *midiManager, *project);
+            vibedaw::Constants::APP_NAME, *keyboardState, *midiManager, *project, *audioEngine);
         
         LOG_INFO("VibeDAW: Application initialised successfully");
     }

@@ -27,9 +27,11 @@ public:
     
     void paintContent(juce::Graphics& g, juce::Rectangle<int> bounds) override;
     void resizedContent(juce::Rectangle<int> bounds) override;
-    
+    void applyFilter(const juce::String& filter) override;
+
 private:
     Listener* presetListener_ = nullptr;
+    juce::String filterText_;
     
     std::unique_ptr<juce::TreeView> treeView_;
     std::unique_ptr<PresetFileTreeItem> rootItem_;
@@ -42,7 +44,7 @@ private:
 
 class PresetFileTreeItem : public juce::TreeViewItem {
 public:
-    PresetFileTreeItem(const juce::File& file, bool isRoot = false);
+    PresetFileTreeItem(const juce::File& file, bool isRoot = false, const juce::String& filter = {});
     ~PresetFileTreeItem() override = default;
     
     bool mightContainSubItems() override;
@@ -61,9 +63,11 @@ public:
 private:
     juce::File file_;
     bool isRoot_;
+    juce::String filter_;
     PresetSection::Listener* listener_ = nullptr;
-    
+
     void populateChildren();
+    static bool subtreeMatches(const juce::File& directory, const juce::String& filter);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetFileTreeItem)
 };

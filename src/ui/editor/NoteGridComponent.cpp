@@ -1,4 +1,5 @@
 #include "NoteGridComponent.h"
+#include "ui/Theme.h"
 #include "project/Clip.h"
 #include <algorithm>
 #include <cmath>
@@ -15,11 +16,17 @@ NoteGridComponent::~NoteGridComponent() {
     if (midiClip_) midiClip_->removeListener(this);
 }
 
+void NoteGridComponent::clipChanged() {
+    repaint();
+    if (listener_) listener_->gridContentChanged();
+}
+
 void NoteGridComponent::notesInvalidated() {
     selectedNotes_.clear();
     hoveredNote_ = nullptr;
     dragState_ = {};
     repaint();
+    if (listener_) listener_->gridContentChanged();
 }
 
 void NoteGridComponent::setMidiClip(MidiClip* clip) {
@@ -28,6 +35,7 @@ void NoteGridComponent::setMidiClip(MidiClip* clip) {
     midiClip_ = clip;
     if (midiClip_) midiClip_->addListener(this);
     repaint();
+    if (listener_) listener_->gridContentChanged();
 }
 
 void NoteGridComponent::setGridResolution(GridResolution resolution) {
@@ -36,31 +44,18 @@ void NoteGridComponent::setGridResolution(GridResolution resolution) {
 }
 
 void NoteGridComponent::setPixelsPerBeat(int pixels) {
-    pixelsPerBeat_ = juce::jmax(10, pixels);
+    geometry_.pixelsPerBeat = juce::jmax(10.0, static_cast<double>(pixels));
     repaint();
 }
 
 void NoteGridComponent::setKeyHeight(int height) {
-    keyHeight_ = juce::jmax(4, height);
+    geometry_.keyHeight = juce::jmax(4, height);
     repaint();
 }
 
 void NoteGridComponent::setLowestNote(int lowest) {
-    lowestNote_ = juce::jlimit(0, 127, lowest);
-    repaint();
-}
-
-void NoteGridComponent::setVisibleBeats(double beats) {
-    juce::ignoreUnused(beats);
-}
-
-void NoteGridComponent::setTimeOffset(double beats) {
-    timeOffset_ = beats;
-    repaint();
-}
-
-void NoteGridComponent::setScrollOffset(int offsetY) {
-    scrollOffsetY_ = offsetY;
+    geometry_.lowestNote = juce::jlimit(0, 127, lowest);
+    geometry_.numKeys = 128 - geometry_.lowestNote;
     repaint();
 }
 
@@ -88,24 +83,21 @@ double NoteGridComponent::snapToGrid(double time) const {
 }
 
 int NoteGridComponent::pitchFromY(int y) const {
-    int adjustedY = y + scrollOffsetY_;
-    int noteIndex = (getHeight() - 1 - adjustedY) / keyHeight_;
-    return lowestNote_ + noteIndex;
+    return geometry_.pitchFromY(y, 0);
 }
 
 int NoteGridComponent::yFromPitch(int pitch) const {
-    int noteIndex = pitch - lowestNote_;
-    return getHeight() - (noteIndex + 1) * keyHeight_ - scrollOffsetY_;
+    return geometry_.yFromPitch(pitch, 0);
 }
 
 double NoteGridComponent::timeFromX(int x) const {
-    return static_cast<double>(x) / pixelsPerBeat_ + timeOffset_;
+    return PianoRollGeometry::beatFromX(static_cast<double>(x), geometry_.pixelsPerBeat);
 }
 
 int NoteGridComponent::xFromTime(double time) const {
     return static_cast<int>(juce::jlimit(static_cast<double>(std::numeric_limits<int>::min()),
                                        static_cast<double>(std::numeric_limits<int>::max()),
-                                       (time - timeOffset_) * pixelsPerBeat_));
+                                       PianoRollGeometry::xFromBeat(time, geometry_.pixelsPerBeat)));
 }
 
 const Note* NoteGridComponent::findNoteAt(int x, int y) {
@@ -119,8 +111,9 @@ const Note* NoteGridComponent::findNoteAt(int x, int y) {
 }
 
 void NoteGridComponent::drawNote(juce::Graphics& g, const Note& note, bool isSelected, bool isHovered) {
-    const double left = (note.getStartTime() - timeOffset_) * pixelsPerBeat_;
-    const double right = (note.getEndTime() - timeOffset_) * pixelsPerBeat_;
+    const double ppb = geometry_.pixelsPerBeat;
+    const double left = PianoRollGeometry::xFromBeat(note.getStartTime(), ppb);
+    const double right = PianoRollGeometry::xFromBeat(note.getEndTime(), ppb);
     if (right < 0.0 || left >= getWidth()) return;
     int x = static_cast<int>(juce::jmax(0.0, left));
     int y = yFromPitch(note.getPitch());
@@ -128,53 +121,52 @@ void NoteGridComponent::drawNote(juce::Graphics& g, const Note& note, bool isSel
     
     juce::Colour noteColour;
     if (isSelected) {
-        noteColour = juce::Colour(0xffee9933);
+        noteColour = theme::noteSelected;
     } else if (isHovered) {
-        noteColour = juce::Colour(0xff88aa55);
+        noteColour = theme::noteHover;
     } else {
-        noteColour = juce::Colour(0xff6ad94a);
+        noteColour = theme::noteDefault;
     }
     
     g.setColour(noteColour);
-    g.fillRect(x + 1, y + 1, width - 2, keyHeight_ - 2);
+    g.fillRect(x + 1, y + 1, width - 2, geometry_.keyHeight - 2);
     
     g.setColour(noteColour.darker(0.3f));
-    g.drawRect(x, y, width, keyHeight_, 1);
+    g.drawRect(x, y, width, geometry_.keyHeight, 1);
 }
 
 void NoteGridComponent::drawGridLines(juce::Graphics& g) {
     double gridSize = 4.0 / static_cast<double>(gridResolution_);
     
-    g.setColour(juce::Colour(0xff404040));
+    g.setColour(theme::controlActive);
     
-    for (int y = 0; y < getHeight(); y += keyHeight_) {
+    for (int y = 0; y < getHeight(); y += geometry_.keyHeight) {
         g.drawHorizontalLine(y, 0.0f, static_cast<float>(getWidth()));
     }
     
-    for (double time = std::ceil(timeOffset_ / gridSize) * gridSize;
-         time < timeFromX(getWidth()); time += gridSize) {
+    for (double time = 0.0; time < timeFromX(getWidth()); time += gridSize) {
         int x = xFromTime(time);
         bool isBeat = std::fmod(time, 1.0) < 0.001;
         
         if (isBeat) {
-            g.setColour(juce::Colour(0xff505050));
+            g.setColour(theme::separator);
         } else {
-            g.setColour(juce::Colour(0xff383838));
+            g.setColour(theme::gridSub);
         }
         g.drawVerticalLine(x, 0.0f, static_cast<float>(getHeight()));
     }
     
-    for (int beat = static_cast<int>(std::ceil(timeOffset_)); xFromTime(beat) < getWidth(); ++beat) {
+    for (int beat = 0; xFromTime(beat) < getWidth(); ++beat) {
         bool isMeasure = beat % 4 == 0;
         if (isMeasure) {
-            g.setColour(juce::Colour(0xff606060));
+            g.setColour(theme::gridMeasure);
             g.drawVerticalLine(xFromTime(beat), 0.0f, static_cast<float>(getHeight()));
         }
     }
 }
 
 void NoteGridComponent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff252525));
+    g.fillAll(theme::raised);
     
     drawGridLines(g);
     
@@ -185,6 +177,12 @@ void NoteGridComponent::paint(juce::Graphics& g) {
             bool isHovered = &note == hoveredNote_;
             drawNote(g, note, isSelected, isHovered);
         }
+    }
+
+    if (playheadBeats_ >= 0.0) {
+        const int x = xFromTime(playheadBeats_);
+        g.setColour(theme::accent);
+        g.fillRect(static_cast<float>(x), 0.0f, 2.0f, static_cast<float>(getHeight()));
     }
 }
 
@@ -205,7 +203,7 @@ void NoteGridComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
-    grabKeyboardFocus();
+    if (isShowing()) grabKeyboardFocus();
 
     if (e.mods.isShiftDown() && existingNote) {
         selectNote(existingNote);
@@ -285,8 +283,9 @@ void NoteGridComponent::mouseDrag(const juce::MouseEvent& e) {
             break;
         }
         case DragState::Mode::Move: {
-            double newStart = snapToGrid(dragState_.originalStart + deltaX / static_cast<double>(pixelsPerBeat_));
-            int newPitch = juce::jlimit(0, 127, dragState_.originalPitch - deltaY / keyHeight_);
+            double newStart = snapToGrid(dragState_.originalStart +
+                                         deltaX / geometry_.pixelsPerBeat);
+            int newPitch = juce::jlimit(0, 127, dragState_.originalPitch - deltaY / geometry_.keyHeight);
             edited.setStartTime(newStart);
             edited.setPitch(newPitch);
             break;
@@ -349,10 +348,6 @@ bool NoteGridComponent::keyPressed(const juce::KeyPress& key) {
     }
     repaint();
     return removed;
-}
-
-void NoteGridComponent::scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeStart) {
-    juce::ignoreUnused(scrollBar, newRangeStart);
 }
 
 } // namespace vibedaw

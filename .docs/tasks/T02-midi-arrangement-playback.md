@@ -1,6 +1,12 @@
 # T02: MIDI Arrangement Playback
 
-Status: blocked | Milestone: M1 | Depends on: T01, T03, T06
+Status: done | Milestone: M1 | Depends on: T01, T03, T06
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/audible observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user authorization to continue despite blocked
 T03/T06/T01 watcher acceptance. Earlier statuses and uncommitted changes are

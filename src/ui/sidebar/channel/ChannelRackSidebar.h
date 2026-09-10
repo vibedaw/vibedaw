@@ -46,10 +46,17 @@ public:
     void itemDragEnter(const SourceDetails& dragSourceDetails) override;
     void itemDragExit(const SourceDetails& dragSourceDetails) override;
     void itemDropped(const SourceDetails& dragSourceDetails) override;
-    
-    static constexpr int rowHeight = 28;
-    
+
+    void pollMeter(const StereoMeter& source);
+
+    static constexpr int rowHeight = 40;
+
 private:
+    juce::Rectangle<int> kebabRect() const { return {getWidth() - 20, 2, 18, 18}; }
+    juce::Rectangle<int> muteRect() const { return {getWidth() - 66, getHeight() - 17, 18, 14}; }
+    juce::Rectangle<int> soloRect() const { return {getWidth() - 42, getHeight() - 17, 18, 14}; }
+    juce::Rectangle<int> meterRect() const { return {6, getHeight() - 13, getWidth() - 96, 7}; }
+    float meterLeft_ = 0.0f, meterRight_ = 0.0f;
     Channel* channel_;
     int index_;
     Listener* listener_ = nullptr;
@@ -62,7 +69,8 @@ class ChannelRackContent : public juce::Component,
                            public juce::DragAndDropTarget,
                            private Project::Listener,
                            public ChannelRow::Listener,
-                           public ChannelList::Listener {
+                           public ChannelList::Listener,
+                           private juce::MultiTimer {
 public:
     class Listener {
     public:
@@ -105,6 +113,7 @@ public:
     
 private:
     bool isCreateDropPosition(juce::Point<int> position) const;
+    void timerCallback(int timerId) override;
     void activeChannelChanged(int index) override { selectChannel(index); }
     Project& project_;
     Listener* channelListener_ = nullptr;

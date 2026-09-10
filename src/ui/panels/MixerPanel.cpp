@@ -102,7 +102,7 @@ void MixerPanel::onDisplayModeChanged(DisplayMode mode, DisplayMode oldMode) {
 
 void MixerPanel::layoutStrips() {
     if (!viewport) return;
-    constexpr int width = 72;
+    constexpr int width = 96;
     const int height = juce::jmax(180, viewport->getHeight() - viewport->getScrollBarThickness());
     stripContent.setSize((getNumChannels() + 1) * (width + 1), height);
     masterStrip.setBounds(0, 0, width, height);

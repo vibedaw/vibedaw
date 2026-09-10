@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "TransportComponent.h"
 #include "core/TransportState.h"
+#include "core/AudioEngine.h"
 #include "core/MidiManager.h"
 #include "project/Project.h"
 #include "panels/PanelContainer.h"
@@ -28,7 +29,8 @@ class MainContent : public juce::Component,
                      public ClipEditorWindow::Listener,
                      public juce::DragAndDropContainer {
 public:
-    MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& midiManager, Project& project);
+    MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& midiManager,
+                Project& project, AudioEngine& engine);
     ~MainContent() override;
     
     void paint(juce::Graphics& g) override;
@@ -63,6 +65,7 @@ private:
     void projectDocumentChanged() override;
     void timerCallback() override;
     void updateStatusLabel();
+    void refreshSystemStats();
     void handlePanelFocusHotkey(int panelIndex, double currentTime);
     std::vector<ClipEditorWindow*> openClipEditors_;
 
@@ -83,6 +86,7 @@ private:
 
     MidiManager& midiManager_;
     Project& project_;
+    AudioEngine* engine_ = nullptr;
     TransportState& transportState_;
     PluginScanner pluginScanner_;
 
@@ -102,9 +106,13 @@ private:
     juce::ComboBox midiDeviceCombo_;
     juce::Label statusLabel_;
     juce::Label midiLabel_;
+    juce::Label midiDot_;
+    juce::Label cpuLabel_;
+    juce::Label ramLabel_;
     juce::TooltipWindow tooltipWindow_ { this, 700 };
-    
+
     double lastPanelFocusTime_ = 0.0;
+    double lastSystemPollTime_ = 0.0;
     int lastFocusedPanelIndex_ = -1;
     static constexpr double doubleTapIntervalMs_ = 400.0;
     

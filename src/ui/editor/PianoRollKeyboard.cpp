@@ -1,4 +1,5 @@
 #include "PianoRollKeyboard.h"
+#include "ui/Theme.h"
 
 namespace vibedaw {
 
@@ -9,26 +10,27 @@ PianoRollKeyboard::PianoRollKeyboard()
 }
 
 void PianoRollKeyboard::setLowestNote(int lowest) {
-    lowestNote_ = juce::jlimit(0, 127, lowest);
+    geometry_.lowestNote = juce::jlimit(0, 127, lowest);
+    geometry_.numKeys = juce::jlimit(1, 128 - geometry_.lowestNote, geometry_.numKeys);
     repaint();
 }
 
 void PianoRollKeyboard::setNumKeys(int numKeys) {
-    numKeys_ = juce::jlimit(1, 128, numKeys);
+    geometry_.numKeys = juce::jlimit(1, 128 - geometry_.lowestNote, numKeys);
     repaint();
 }
 
 void PianoRollKeyboard::setKeyHeight(int height) {
-    keyHeight_ = juce::jmax(4, height);
+    geometry_.keyHeight = juce::jmax(4, height);
     repaint();
 }
 
 int PianoRollKeyboard::getKeyForY(int y) const {
-    return 127 - (y + scrollOffset_) / keyHeight_;
+    return geometry_.pitchFromY(y, scrollOffset_);
 }
 
 int PianoRollKeyboard::getYForKey(int noteNumber) const {
-    return (127 - noteNumber) * keyHeight_ - scrollOffset_;
+    return geometry_.yFromPitch(noteNumber, scrollOffset_);
 }
 
 void PianoRollKeyboard::setHeldNote(int pitch, bool held) {
@@ -60,8 +62,8 @@ void PianoRollKeyboard::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     int width = bounds.getWidth();
     
-    for (int i = 0; i < numKeys_; ++i) {
-        int noteNumber = lowestNote_ + i;
+    for (int i = 0; i < geometry_.numKeys; ++i) {
+        int noteNumber = geometry_.lowestNote + i;
         if (noteNumber > 127) break;
         
         int y = getYForKey(noteNumber);
@@ -71,28 +73,28 @@ void PianoRollKeyboard::paint(juce::Graphics& g) {
         
         juce::Colour keyColour;
         if (isHeld) {
-            keyColour = isBlack ? juce::Colour(0xff4466aa) : juce::Colour(0xff6688cc);
+            keyColour = isBlack ? theme::rollKeyHeldBlack : theme::rollKeyHeldWhite;
         } else {
-            keyColour = isBlack ? juce::Colour(0xff2a2a2a) : juce::Colour(0xff3a3a3a);
+            keyColour = isBlack ? theme::control : theme::controlHover;
         }
         
         g.setColour(keyColour);
-        g.fillRect(0, y, width, keyHeight_);
+        g.fillRect(0, y, width, geometry_.keyHeight);
         
         if (!isBlack) {
-            g.setColour(juce::Colour(0xff505050));
+            g.setColour(theme::separator);
             g.drawHorizontalLine(y, 0.0f, static_cast<float>(width));
         }
         
         if (noteNumber % 12 == 0) {
-            g.setColour(juce::Colours::white);
+            g.setColour(theme::white);
             g.setFont(10.0f);
-            g.drawText(getNoteName(noteNumber), 4, y + 2, width - 8, keyHeight_ - 4,
+            g.drawText(getNoteName(noteNumber), 4, y + 2, width - 8, geometry_.keyHeight - 4,
                        juce::Justification::centredLeft, true);
         }
     }
     
-    g.setColour(juce::Colour(0xff606060));
+    g.setColour(theme::gridMeasure);
     g.drawVerticalLine(width - 1, 0.0f, static_cast<float>(getHeight()));
 }
 

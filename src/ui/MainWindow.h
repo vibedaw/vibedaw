@@ -10,7 +10,7 @@ class Project;
 class MainWindow : public juce::DocumentWindow {
 public:
     MainWindow(juce::String name, juce::MidiKeyboardState& keyboardState,
-               MidiManager& midiManager, Project& project);
+               MidiManager& midiManager, Project& project, AudioEngine& engine);
     ~MainWindow() override;
 
     void closeButtonPressed() override;

@@ -1,4 +1,5 @@
 #include "SidebarTab.h"
+#include "ui/Theme.h"
 #include "Sidebar.h"
 
 namespace vibedaw {
@@ -28,9 +29,9 @@ void SidebarTab::activate() {
 }
 
 void SidebarTab::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff333333));
+    g.fillAll(theme::hairline);
 
-    g.setColour(juce::Colour(0xff3a3a3a));
+    g.setColour(theme::border);
     g.drawRect(getLocalBounds());
 }
 

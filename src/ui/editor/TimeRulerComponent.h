@@ -15,6 +15,10 @@ public:
     void setTimeOffset(double beats);
     double getTimeOffset() const { return timeOffset_; }
     
+    // Playhead line in source-local quarter-note beats; negative hides it.
+    void setPlayhead(double beats) { playheadBeats_ = beats; repaint(); }
+    double getPlayhead() const { return playheadBeats_; }
+
     void setBeatsPerMeasure(int beats);
     void setTempo(double bpm);
     
@@ -25,6 +29,7 @@ public:
 private:
     int pixelsPerBeat_ = 80;
     double timeOffset_ = 0.0;
+    double playheadBeats_ = -1.0;
     int beatsPerMeasure_ = 4;
     double tempo_ = 120.0;
     

@@ -1,4 +1,5 @@
 #include "TrackHeader.h"
+#include "ui/Theme.h"
 #include "project/Track.h"
 
 namespace vibedaw {
@@ -16,18 +17,18 @@ public:
         auto bounds = getLocalBounds().toFloat();
         
         if (isDown) {
-            g.setColour(juce::Colour(0xff505050));
+            g.setColour(theme::separator);
         } else if (isOver) {
-            g.setColour(juce::Colour(0xff404040));
+            g.setColour(theme::controlActive);
         } else {
-            g.setColour(juce::Colour(0xff353535));
+            g.setColour(theme::controlDim);
         }
         g.fillRoundedRectangle(bounds, 3.0f);
         
         if (toggled) {
-            g.setColour(isMute ? juce::Colour(0xffd94a4a) : juce::Colour(0xff4ad94a));
+            g.setColour(isMute ? theme::muteRed : theme::muteGreen);
         } else {
-            g.setColour(juce::Colour(0xff888888));
+            g.setColour(theme::textSecondary);
         }
         
         g.setFont(juce::Font(10.0f, juce::Font::bold));
@@ -107,18 +108,18 @@ void TrackHeader::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
     if (selected) {
-        g.fillAll(juce::Colour(0xff3a3a4a));
+        g.fillAll(theme::selectedSurface);
     } else {
-        g.fillAll(juce::Colour(0xff2a2a2a));
+        g.fillAll(theme::control);
     }
     
     g.setColour(trackColour);
     g.fillRect(0, 0, colourStripWidth, getHeight());
     
-    g.setColour(juce::Colour(0xff505050));
+    g.setColour(theme::separator);
     g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
     
-    g.setColour(juce::Colour(0xffcccccc));
+    g.setColour(theme::textBright);
     g.setFont(juce::Font(12.0f));
     
     auto textBounds = bounds.withLeft(colourStripWidth + 4).withRight(bounds.getWidth() - 4);

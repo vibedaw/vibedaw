@@ -1,4 +1,5 @@
 #include "MasterStrip.h"
+#include "ui/Theme.h"
 #include <cmath>
 
 namespace vibedaw {
@@ -12,38 +13,47 @@ public:
         int width = bounds.getWidth();
         int height = bounds.getHeight();
         
-        g.fillAll(juce::Colour(0xff1a1a1a));
+        g.fillAll(theme::windowBackground);
         
         int trackWidth = 10;
         int trackX = (width - trackWidth) / 2;
         int trackMargin = 2;
         int trackHeight = height - trackMargin * 2;
         
-        g.setColour(juce::Colour(0xff2a2a2a));
+        g.setColour(theme::control);
         g.fillRect(trackX, trackMargin, trackWidth, trackHeight);
         
-        g.setColour(juce::Colour(0xff3a3a3a));
+        g.setColour(theme::border);
         g.drawRect(trackX, trackMargin, trackWidth, trackHeight, 1);
-        
+
+        // Same linear dB marks as the channel faders (gain = value * 2).
+        g.setColour(theme::tickMark);
+        const float gainMarks[] = {1.0f, 0.501f, 0.251f, 0.126f, 0.032f};
         int capHeight = 16;
+        for (float gain : gainMarks) {
+            const int y = trackMargin + static_cast<int>((1.0f - gain) * (trackHeight - capHeight)) + capHeight / 2;
+            if (y < trackMargin || y >= height - trackMargin) continue;
+            g.drawHorizontalLine(y, static_cast<float>(trackX), static_cast<float>(trackX + trackWidth));
+        }
+
         int capWidth = width - 4;
         int capY = static_cast<int>(trackMargin + (1.0f - value) * (trackHeight - capHeight));
         int capX = 2;
         
-        g.setColour(juce::Colour(0xff4a4a4a));
+        g.setColour(theme::tickMark);
         g.fillRoundedRectangle(static_cast<float>(capX), static_cast<float>(capY), 
                                 static_cast<float>(capWidth), static_cast<float>(capHeight), 4.0f);
         
-        juce::Colour capColour = juce::Colour(0xff666666);
+        juce::Colour capColour = theme::textFaint;
         if (value < 0.1f) {
-            capColour = juce::Colour(0xffaaaaaa);
+            capColour = theme::textDefault;
         }
         
         g.setColour(capColour);
         g.fillRoundedRectangle(static_cast<float>(capX + 2), static_cast<float>(capY + 2), 
                                 static_cast<float>(capWidth - 4), static_cast<float>(capHeight - 4), 3.0f);
         
-        g.setColour(juce::Colour(0xffaaaaaa));
+        g.setColour(theme::textDefault);
         g.drawHorizontalLine(capY + capHeight / 2, capX + 4, capX + capWidth - 4);
     }
     
@@ -107,7 +117,7 @@ private:
 
 MasterStrip::MasterStrip() {
     leftMeter = std::make_unique<LevelMeter>();
-    leftMeter->setMeterWidth(6);
+    leftMeter->setMeterWidth(8);
     addAndMakeVisible(*leftMeter);
     
     fader = std::make_unique<MasterFader>();
@@ -128,22 +138,19 @@ MasterStrip::~MasterStrip() = default;
 
 void MasterStrip::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
-    
-    g.fillAll(juce::Colour(0xff1e1e1e));
-    
-    g.setColour(juce::Colour(0xff444444));
-    g.fillRect(0, 0, 3, bounds.getHeight());
-    
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawVerticalLine(0, 0.0f, static_cast<float>(bounds.getHeight()));
-    
-    g.setColour(juce::Colour(0xffaaaaaa));
+
+    g.fillAll(theme::panelBackground);
+
+    g.setColour(theme::border);
+    g.drawVerticalLine(bounds.getWidth() - 1, 0.0f, static_cast<float>(bounds.getHeight()));
+
+    g.setColour(theme::textDefault);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
-    g.drawText("MSTR", 5, 5, bounds.getWidth() - 10, 16, juce::Justification::centred);
-    
-    g.setColour(juce::Colour(0xff888888));
-    g.setFont(juce::Font(9.0f));
-    
+    g.drawText("MSTR", 5, 4, bounds.getWidth() - 10, 15, juce::Justification::centred);
+
+    g.setColour(theme::textFaint);
+    g.setFont(juce::Font(8.0f));
+
     const auto label = volume > 0 ? juce::String(juce::Decibels::gainToDecibels(volume), 1) + " dB" : "-inf dB";
     g.drawText(label, 5, bounds.getHeight() - 18,
                bounds.getWidth() - 10, 14, juce::Justification::centred);
@@ -154,14 +161,15 @@ void MasterStrip::resized() {
 }
 
 void MasterStrip::updateComponentPositions() {
-    auto bounds = getLocalBounds().reduced(4);
-    bounds.removeFromTop(24);
-    muteButton.setBounds(bounds.removeFromTop(20));
+    auto bounds = getLocalBounds().reduced(6);
+    bounds.removeFromTop(22);
+    muteButton.setBounds(bounds.removeFromTop(18));
     bounds.removeFromTop(4);
     bounds.removeFromBottom(20);
-    leftMeter->setBounds(bounds.removeFromRight(20));
+    leftMeter->setBounds(bounds.removeFromRight(18));
     bounds.removeFromRight(4);
     fader->setBounds(bounds);
+    leftMeter->setShowPeakReadout(true);
 }
 
 void MasterStrip::setVolume(float v) {

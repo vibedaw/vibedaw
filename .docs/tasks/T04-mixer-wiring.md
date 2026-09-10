@@ -1,6 +1,12 @@
 # T04: Mixer Wiring
 
-Status: blocked | Milestone: M1 | Depends on: T02, T06
+Status: done | Milestone: M1 | Depends on: T02, T06
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/audible observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user "next" override despite T03/T06/T01/T02
 runtime acceptance blocks. Preserve cumulative work; offline_tests/CTest only,

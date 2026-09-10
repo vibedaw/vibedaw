@@ -1,4 +1,5 @@
 #include "PluginSection.h"
+#include "ui/Theme.h"
 #include "ui/DragPayload.h"
 #include "utils/Logger.h"
 
@@ -9,8 +10,8 @@ PluginSection::PluginSection(PluginScanner& scanner)
       scanner_(scanner)
 {
     treeView_ = std::make_unique<juce::TreeView>();
-    treeView_->setColour(juce::TreeView::backgroundColourId, juce::Colour(0xff252525));
-    treeView_->setColour(juce::TreeView::linesColourId, juce::Colour(0xff333333));
+    treeView_->setColour(juce::TreeView::backgroundColourId, theme::raised);
+    treeView_->setColour(juce::TreeView::linesColourId, theme::hairline);
     treeView_->setDefaultOpenness(true);
     treeView_->setMultiSelectEnabled(false);
     addAndMakeVisible(*treeView_);
@@ -51,24 +52,33 @@ void PluginSection::resizedContent(juce::Rectangle<int> bounds) {
 
 void PluginSection::buildTree() {
     treeView_->setRootItem(nullptr);
-    
+
     rootItem_ = std::make_unique<PluginTreeItem>("Plugins");
     rootItem_->setListener(pluginListener_);
-    
+
+    int shown = 0;
     for (const auto& plugin : scanner_.getScannedPlugins()) {
+        if (filterText_.isNotEmpty() && !plugin.name.containsIgnoreCase(filterText_)) continue;
         auto* pluginItem = new PluginTreeItem(plugin.name, plugin.path, true);
         pluginItem->setListener(pluginListener_);
         pluginItem->setOwnerSection(this);
         rootItem_->addSubItem(pluginItem);
+        ++shown;
     }
-    
-    if (scanner_.getNumScannedPlugins() == 0) {
-        auto* emptyItem = new PluginTreeItem("No plugins found");
+
+    if (shown == 0) {
+        auto* emptyItem = new PluginTreeItem(filterText_.isEmpty() ? "No plugins found" : "No matches");
         emptyItem->setListener(pluginListener_);
         rootItem_->addSubItem(emptyItem);
     }
-    
+
     treeView_->setRootItem(rootItem_.get());
+}
+
+void PluginSection::applyFilter(const juce::String& filter) {
+    if (filterText_ == filter) return;
+    filterText_ = filter;
+    buildTree();
 }
 
 PluginTreeItem::PluginTreeItem(const juce::String& name, const juce::String& path, bool isPlugin)
@@ -88,18 +98,18 @@ void PluginTreeItem::paintItem(juce::Graphics& g, int width, int height) {
     auto bounds = juce::Rectangle<int>(0, 0, width, height);
     
     if (isPlugin_) {
-        g.fillAll(juce::Colour(0xff2a2a2a));
+        g.fillAll(theme::control);
     } else {
-        g.fillAll(juce::Colour(0xff252525));
+        g.fillAll(theme::raised);
     }
     
-    g.setColour(juce::Colours::white);
+    g.setColour(theme::white);
     g.setFont(11.0f);
     
     int indent = 4;
     g.drawText(name_, indent, 0, width - indent - 4, height, juce::Justification::centredLeft, true);
     
-    g.setColour(juce::Colour(0xff333333));
+    g.setColour(theme::hairline);
     g.drawHorizontalLine(height - 1, 0.0f, static_cast<float>(width));
 }
 

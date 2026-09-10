@@ -23,6 +23,8 @@ public:
     
     void setMeterStyle(bool useGradient) { meterStyle = useGradient ? MeterStyle::Gradient : MeterStyle::Solid; }
     void setMeterWidth(int width) { meterWidth = width; }
+    void setShowPeakReadout(bool show) { showPeakReadout = show; }
+    float getPeakDisplay() const { return juce::jmax(leftPeakDisplay, rightPeakDisplay); }
     
     enum class MeterStyle {
         Solid,
@@ -47,6 +49,7 @@ private:
     float decayRate = 80.0f;
     int meterWidth = 6;
     int meterSpacing = 2;
+    bool showPeakReadout = false;
     MeterStyle meterStyle = MeterStyle::Gradient;
     
     double lastTime = 0.0;

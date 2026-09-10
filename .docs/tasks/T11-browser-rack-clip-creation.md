@@ -1,6 +1,12 @@
 # T11: Browser-to-Rack and Clip Creation
 
-Status: blocked | Milestone: M1.5 | Depends on: T10
+Status: done | Milestone: M1.5 | Depends on: T10
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/native observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user authorization to continue T11 end to end
 despite pending earlier manual acceptance. Preserve T10's stock-JUCE initial-testing

@@ -506,3 +506,80 @@ plugin) and a `pluginRestorer_` seam that mirrors the default restore path:
 
 Full build and CTest 1/1 pass with all earlier suites intact; `git diff
 --check` passed. No application build/launch, staging or commit.
+
+## T08 Editor Navigation
+
+The same independent commands compile actual `PianoRollKeyboard`,
+`TimeRulerComponent`, and `PianoRollEditor` alongside the existing
+`NoteGridComponent` (added to the target). `editorNavigationTests` covers:
+
+- Shared `PianoRollGeometry`: all 128 pitch rows round-trip through
+  `yFromPitch`/`pitchFromY` with exact key-height boundaries, pitches 0 and 127
+  reachable, fractional-pixel scrolling resolves the correct row, and
+  `beatFromX`/`xFromBeat` round-trip at 20/80/320 px-per-beat.
+- Content extent: minimum beats dominate short clips, long clips and note ends
+  win, and non-finite input falls back to the minimum+margin.
+- Arrangement-to-source mapping: half-open placement ends, placement longer
+  than source, source longer than placement, and gaps before/after placements.
+- Follow-band decision (`followedScrollX`): no scroll inside the band,
+  recentering past either edge, and clamping at both content ends.
+- Real `NoteGridComponent` hit testing at pitches 0/60/127 in grid-local
+  coordinates (the viewport would translate the component), plus grid
+  invalidation clearing borrowed selection and `setMidiClip(nullptr)` safely
+  detaching; a `grabKeyboardFocus` guard keeps peerless grids out of a JUCE
+  focus assertion.
+- Keyboard rows line up with the grid at a viewport offset, and a real
+  `PianoRollEditor` + real `TransportState` follow session: resize does not
+  suspend, a far playhead scrolls into the band, following never changes the
+  audio position, manual scroll suspends and the Follow toggle resumes, a
+  no-placement position hides the playhead, and zoom preserves the left-edge
+  beat.
+
+No native peer/window, wheel, scrollbar drag, focus, or audio device is
+created. Watcher/manual alignment before/after scrolling, click/drag/audition
+after scroll, fractional-row and zoom-limit alignment, resize/scrollbar
+behavior, long-clip navigation, and observed follow suspend/resume with audio
+remain manual acceptance. The Follow toolbar button does not visually reflect
+an internal manual-scroll suspension (unchecking disables following). Full
+build and CTest 1/1 pass with all earlier suites intact; `git diff --check`
+passed. No application build/launch, staging or commit.
+
+## T09 External MIDI and Integration
+
+`externalMidiTests` covers the device-selection path end to end. Real hardware
+cannot be opened here (ALSA/JACK are compiled out and JUCE's stubs return an
+empty device list), so `sendMidiMessage` stands in for a connected device's
+callback: it enters `MidiManager::handleIncomingMidiMessage` exactly where an
+open `MidiInput` would. Coverage:
+
+- Selection API without hardware: empty device list, invalid index/out-of-range/
+  unknown-name connects fail and stay disconnected, `disconnect()` with no
+  device and sending/draining with no destination are safe no-ops.
+- Device event -> engine queue -> block -> exactly one attack on the active
+  channel, while a looping arrangement note sounds independently on another
+  destination. Switching the active channel reroutes the next external event
+  without disturbing the arrangement.
+- Feedback drain (`MidiManager::timerCallback`, driven directly - no message
+  loop): marks the on-screen keyboard state and notifies `MidiListener`s, and
+  the `updatingKeyboardFeedback` guard keeps the echo out of the audio queue
+  (plugin receives exactly one attack, asserted across further blocks).
+- Note-off through the same path; wind-down leaves empty per-key held ledgers
+  and `sounding == 0` on both destinations.
+
+`integrationWorkflowTests` is the cross-feature fixture: real `Project` ->
+`ChannelMixer` -> `AudioEngine` wiring with two `StatefulInstrument` channels,
+one shared clip placed on two tracks with different destinations, loop
+`[0, 8)` enabled, and 120 -> 90 BPM changed mid-playback. Asserts the
+volume/master-gain levels of the summed output while playing, muted-channel
+attack suppression with clean unmute (no chase), loop-wrap refiring on both
+destinations, stuck-note-free stop (held ledgers empty), then save/mutate/load
+through `ProjectDocument`: channel IDs/order/routing/tempo/loop/metronome/
+tracks/placements/pool restored, old plugins destroyed quiescently off audio,
+restored plugins prepared and rendering through the SAME mixer, and zero
+callback allocations. Probes are declared before the Project so instrument
+destructors outlive them.
+
+Full build and CTest 1/1 pass with all earlier suites intact. Still manual:
+external MIDI with real hardware (audible delivery to exactly the selected
+instrument, hot-unplug), and a human following `.docs/PLAYING.md`. No
+application build/launch, staging or commit.

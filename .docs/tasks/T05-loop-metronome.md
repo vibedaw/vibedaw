@@ -1,6 +1,12 @@
 # T05: Loop and Metronome
 
-Status: blocked | Milestone: M1 | Depends on: T01, T02, T04
+Status: done | Milestone: M1 | Depends on: T01, T02, T04
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/audible observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user continuation override despite earlier
 T03/T06/T01/T02/T04 runtime blocks. Earlier statuses and existing work are preserved.

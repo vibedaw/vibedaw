@@ -36,14 +36,10 @@ make instrument setup, clip placement, editing, and sidebar recovery intuitive:
 5. Collapse Browser and Channel Rack into one compact left-side tab rail, with predictable independent reopening and no reserved blank columns.
 6. Use target-specific context menus and keyboard actions instead of the Place/Move/Delete/Assign toolbar workflow.
 
-This is the next implementation priority, not evidence that M1's pending runtime
-checks have passed. T10 restores stock-JUCE editor access by explicit user override
-for initial testing; restart safety and native acceptance remain unresolved.
-T11/T12 implementation is present but blocked on manual acceptance; T13 and T14
-are done (user-accepted 2026-09-08 and 2026-09-09 respectively); T16 (Loop
-Region UX, created from the 2026-09-09 discoverability feedback) is
-implemented and offline-verified but blocked on watcher/manual acceptance;
-T07 is next once T16 is accepted.
+Status 2026-09-10: all M1.5 implementation (T10-T14, T16) is complete and
+user-accepted via the backlog clearance override recorded below. The T10
+restart-safety gap (editor-originated plugin restarts bypass the quiescence
+gate) remains a known limitation accepted by that override, not a closed defect.
 
 ### M2: Keep Your Work and Improve Editing
 
@@ -62,23 +58,28 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 | Order | Task | Milestone | Status | Depends On |
 | --- | --- | --- | --- | --- |
 | 1 | [T03 Routing, Timing, and Placement](tasks/T03-routing-timing-placement.md) | M1 | done | None |
-| 2 | [T06 Safe Audio Boundary](tasks/T06-safe-audio-boundary.md) | M1 | blocked | T03 |
-| 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | blocked | T06 |
-| 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | blocked | T01, T03, T06 |
-| 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | blocked | T02, T06 |
-| 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | blocked | T01, T02, T04 |
-| 7 | [T10 Restore Plugin Editing Safely](tasks/T10-plugin-editor-safety.md) | M1.5 | in_progress | T06 implementation; runtime checks retained |
-| 8 | [T11 Browser-to-Rack and Clip Creation](tasks/T11-browser-rack-clip-creation.md) | M1.5 | blocked | T10 |
-| 9 | [T12 Timeline Drag-and-Drop](tasks/T12-timeline-drag-drop.md) | M1.5 | blocked | T11, T03 implementation |
+| 2 | [T06 Safe Audio Boundary](tasks/T06-safe-audio-boundary.md) | M1 | done | T03 |
+| 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | done | T06 |
+| 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | done | T01, T03, T06 |
+| 5 | [T04 Mixer Wiring](tasks/T04-mixer-wiring.md) | M1 | done | T02, T06 |
+| 6 | [T05 Loop and Metronome](tasks/T05-loop-metronome.md) | M1 | done | T01, T02, T04 |
+| 7 | [T10 Restore Plugin Editing Safely](tasks/T10-plugin-editor-safety.md) | M1.5 | done | T06 implementation; runtime checks retained |
+| 8 | [T11 Browser-to-Rack and Clip Creation](tasks/T11-browser-rack-clip-creation.md) | M1.5 | done | T10 |
+| 9 | [T12 Timeline Drag-and-Drop](tasks/T12-timeline-drag-drop.md) | M1.5 | done | T11, T03 implementation |
 | 10 | [T13 Unified Sidebar Tab Rail](tasks/T13-sidebar-tab-rail.md) | M1.5 | done | T12 (workstream order) |
 | 11 | [T14 Context Menus and Toolbar Cleanup](tasks/T14-context-menus.md) | M1.5 | done | T10, T11, T12, T13 |
-| 12 | [T16 Loop Region UX](tasks/T16-loop-region-ux.md) | M1.5 follow-up | blocked | T05, T13, T14 |
-| 13 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | blocked | M1, M1.5 |
-| 14 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
-| 15 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | backlog | T07, T08, T10-T14 |
+| 12 | [T16 Loop Region UX](tasks/T16-loop-region-ux.md) | M1.5 follow-up | done | T05, T13, T14 |
+| 13 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | done | M1, M1.5 |
+| 14 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | done | T03, T01 |
+| 15 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | done | T07, T08, T10-T14 |
 | 16 | [T15 Mixer Routing Model](tasks/T15-mixer-routing-model.md) | Later (post-M2) | backlog | M2 (workstream order) |
 
-Recommended remaining single workstream: **T16 -> T07 -> T08 -> T09**. T03/T06/T01/T02/T04/T05 implementation and offline verification are recorded below; their runtime acceptance remains blocked. The user's interaction feedback and request to write this plan prioritize M1.5 without marking earlier tasks done. T08 can be brought forward if piano-roll navigation blocks writing a usable clip. Context actions may land with their owning feature; T14 completes coverage and removes obsolete controls.
+Recommended next: user-directed changes. The M1/M1.5/M2 acceptance queue was
+cleared 2026-09-10 by the user override recorded below ("assume everything is
+complete.. clear this backlog"); T01-T16 except T15 are done. Remaining work is
+the post-M2 "Later" backlog and T15 (a planning question, backlog pending a
+dedicated discussion). Historical per-task pending-observation notes below are
+superseded by that clearance.
 
 T03 implementation is present (2026-09-08), but watcher/manual acceptance is
 unverified. Core model regressions now pass in T06's independent offline target.
@@ -349,6 +350,68 @@ T08 is next in the workstream; earlier statuses and T10's stock-JUCE
 initial-testing override are unchanged. No application build/launch, staging or
 commit was performed.
 
+T08 implementation and offline verification completed 2026-09-10: a new shared
+`src/ui/editor/PianoRollGeometry.h` transform makes the piano-roll grid,
+keyboard, ruler, and hit testing agree at every scroll/zoom position (the
+viewport is the single scroll source; the grid stays grid-local); the fixed
+eight-beat extent is replaced by `max(clip length, last note end, 8 beats) + 4`
+with all 128 pitches reachable; `setZoomLevel` preserves the left-edge beat;
+the initial view centers on the clip's notes; and a playhead is drawn from
+T01's published position through a placement-to-source-local provider with
+optional following (auto-scroll only while playing, manual scroll/zoom
+suspends, the Follow toolbar toggle or playback restart resumes, and following
+never changes audio position). `ClipEditorWindow`/`MainContent` wire the
+transport and provider; T07's editor teardown path covers source
+deletion/replacement. Full offline build succeeded and CTest 1/1 passed with
+all earlier suites intact; `git diff --check` passed. `editorNavigationTests`
+covers pure transforms/extent/mapping/follow-band math, real grid hit testing
+for pitches 0/60/127, keyboard row alignment, invalidation pointer safety, and
+a real editor+transport follow session. T08 is blocked on watcher/manual
+acceptance (alignment before/after scrolling, click/drag/audition after scroll,
+fractional-row and zoom-limit alignment, resize/scrollbar behavior, long-clip
+navigation, observed follow suspend/resume with audio). T09 is next in the
+workstream; earlier statuses and T10's stock-JUCE initial-testing override are
+unchanged. No application build/launch, staging or commit was performed.
+
+T09 implementation and offline verification completed 2026-09-10 (user
+authorization: "go midi stuff"): `externalMidiTests` verifies the
+device-selection path end to end offline (`sendMidiMessage` enters
+`MidiManager::handleIncomingMidiMessage` exactly where an open `MidiInput`
+would): invalid/None/disconnect handling, exactly-once delivery to the active
+channel alongside independent arrangement playback, active-channel rerouting,
+and a drain regression proving the keyboard-echo guard never re-enqueues.
+`integrationWorkflowTests` is the cross-feature fixture: real
+Project->ChannelMixer->AudioEngine wiring, shared clip on two routed
+placements, loop [0,8), 120->90 BPM mid-playback, mix levels (channel volume +
+post-sum master gain), mute suppression/unmute without chase, loop-wrap
+refiring, stuck-note-free stop, then save/mutate/load through ProjectDocument
+with restored plugins rendering through the SAME mixer, quiescent old-plugin
+teardown and zero callback allocations. Findings: AGENTS.md's
+AudioDeviceManager/MidiMessageCollector signal flow was documentation rot
+(no such path exists); it was rewritten to the implemented architecture and
+`.docs/PLAYING.md` was created (user workflow + limitations, implemented
+controls only). Full offline build succeeded and CTest 1/1 passed with all
+earlier suites intact; `git diff --check` passed. T09 is blocked on its manual
+acceptance: a human following `.docs/PLAYING.md` must make and reopen a short
+sketch, and external MIDI needs real hardware (audible delivery to exactly the
+selected instrument, hot-unplug). The remaining "Later" limitations
+(recording, sample playback, sends/automation) become named backlog items once
+the workflow is confirmed dependable. No application build/launch, staging or
+commit was performed.
+
+Backlog clearance 2026-09-10: user override — "assume everything is complete..
+ill just go find more things in the app i need changed.. clear it and wait for my
+next steps". All pending watcher/manual/device acceptance for T06, T01, T02, T04,
+T05, T10, T11, T12, T16, T07, T08, and T09 is considered accepted by this
+override rather than individually observed; those tasks are marked done here and
+in their files, and the M1/M1.5 release checks below are checked accordingly.
+Known limitation retained: T10's editor-originated plugin restart still bypasses
+the quiescence gate (the initial-testing override remains in force). T15 stays
+backlog — it is a planning question with no implementation to accept; recording,
+samples, automation, and the other "Later" items remain future features, not
+pending acceptance. No application build/launch, staging or commit was performed
+for this record.
+
 ## Verified Starting Point
 
 Historical baseline below, before T03 implementation. See the T03 task for current contracts.
@@ -392,21 +455,24 @@ Status vocabulary: `backlog`, `todo`, `ready`, `in_progress`, `blocked`, `done`.
 
 ## M1 Release Check
 
-- [ ] The eight-step M1 workflow above is usable without source edits or hardcoded clip injection.
-- [ ] Tempo and playback stay stable when the UI is busy.
-- [ ] Block boundaries, seeks, looping, overlapping notes, and deletion do not leave stuck notes.
-- [ ] Two destinations work independently; shared clips and channel reorder do not corrupt routing.
-- [ ] Audio-thread ownership and cleanup have been reviewed; no callback logging or per-block scratch allocation remains in our processing path.
+- [x] The eight-step M1 workflow above is usable without source edits or hardcoded clip injection.
+- [x] Tempo and playback stay stable when the UI is busy.
+- [x] Block boundaries, seeks, looping, overlapping notes, and deletion do not leave stuck notes.
+- [x] Two destinations work independently; shared clips and channel reorder do not corrupt routing.
+- [x] Audio-thread ownership and cleanup have been reviewed; no callback logging or per-block scratch allocation remains in our processing path.
 - [x] Deterministic tests cover transport, scheduling, routing, and loop math; any unavailable runtime verification is explicitly recorded.
-- [ ] Limitations are clear: MIDI arrangement playback, not recording or sample playback; saving arrives in T07.
+- [x] Limitations are clear: MIDI arrangement playback, not recording or sample playback; saving exists in T07.
+
+Runtime observations cleared by the 2026-09-10 user override (see the backlog
+clearance record), not individually observed.
 
 ## M1.5 Release Check
 
-- [ ] Plugin configuration is available through a visible button and contextual action, with safe restart/replacement/deletion behavior.
-- [ ] Browser-to-rack creation and existing-row replacement have distinct previews and failure-safe results.
-- [ ] New Clip selects a source without opening Piano Roll; explicit edit gestures work from the pool and timeline.
-- [ ] Clip drops target existing tracks or visibly create one new track; direct moves work within and across tracks without changing routing.
-- [ ] Snap, scroll coordinates, cancellation, invalid targets, and missing destinations have tested behavior.
+- [x] Plugin configuration is available through a visible button and contextual action, with restart/replacement/deletion behavior (T10's editor-originated restart gap is a known limitation accepted by the 2026-09-10 override).
+- [x] Browser-to-rack creation and existing-row replacement have distinct previews and failure-safe results.
+- [x] New Clip selects a source without opening Piano Roll; explicit edit gestures work from the pool and timeline.
+- [x] Clip drops target existing tracks or visibly create one new track; direct moves work within and across tracks without changing routing.
+- [x] Snap, scroll coordinates, cancellation, invalid targets, and missing destinations have tested behavior.
 - [x] Browser/Channel Rack collapse into one shared rail and reopen correctly in either order; the right Clips tab remains reachable.
 - [x] Context menus act on their actual targets, destructive actions distinguish source versus instance, and redundant placement toolbar controls are removed only after replacements work.
 - [x] Focused offline regressions and actual watcher/manual observations are recorded separately; M1's unresolved acceptance remains visible.

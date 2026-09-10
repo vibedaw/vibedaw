@@ -20,9 +20,14 @@ public:
     
 private:
     std::unique_ptr<PianoComponent> piano_;
-    
+    juce::TextButton octaveDown_{"-"}, octaveUp_{"+"};
+    juce::Label octaveLabel_;
+    juce::Slider velocitySlider_;
+
     void setupFloatingMode();
-    
+    void shiftOctave(int direction);
+    void updateOctaveLabel();
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoPanel)
 };
 

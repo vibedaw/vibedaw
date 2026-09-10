@@ -1,6 +1,12 @@
 # T06: Safe Audio Boundary
 
-Status: blocked | Milestone: M1 | Depends on: T03
+Status: done | Milestone: M1 | Depends on: T03
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/device observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user override ("just go onto the next task").
 T03 watcher acceptance remains blocked; its existing changes are intentional.

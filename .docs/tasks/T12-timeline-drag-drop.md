@@ -1,6 +1,12 @@
 # T12: Timeline Drag-and-Drop
 
-Status: blocked | Milestone: M1.5 | Depends on: T11, T03 implementation
+Status: done | Milestone: M1.5 | Depends on: T11, T03 implementation
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending watcher/native observations are
+accepted by the override rather than individually observed. Unchecked boxes in this
+file are cleared by the same override. See the backlog clearance record in
+`.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user authorization to continue the roadmap
 despite prior watcher acceptance blocks. T15 discovery does not block T12.

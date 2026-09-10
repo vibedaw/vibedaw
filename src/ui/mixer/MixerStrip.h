@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/Theme.h"
 #include "LevelMeter.h"
 #include "project/ClipInstance.h"
 #include <functional>
@@ -56,7 +57,7 @@ private:
     
     const ChannelId channelId;
     juce::String trackName;
-    juce::Colour trackColour{0xff888888};
+    juce::Colour trackColour{theme::headerStripDefault};
     float volume = 1.0f;
     float pan = 0.0f;
     bool muted = false;

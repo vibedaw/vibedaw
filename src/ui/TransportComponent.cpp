@@ -1,5 +1,7 @@
 #include "TransportComponent.h"
+#include "ui/Theme.h"
 #include "utils/Logger.h"
+#include <cmath>
 #include <cstdlib>
 
 namespace vibedaw {
@@ -28,18 +30,59 @@ TimeDisplay::TimeDisplay() {
 
 void TimeDisplay::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
-    
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillRoundedRectangle(bounds, 4.0f);
-    
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
-    
-    g.setColour(juce::Colour(0xff00ff88));
-    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 24.0f, juce::Font::plain));
-    
-    juce::String timeStr = (displayMode_ == 0) ? formatBarsBeatsTicks() : formatTimeCode();
-    g.drawText(timeStr, bounds, juce::Justification::centred);
+
+    g.setColour(theme::windowBackground);
+    g.fillRoundedRectangle(bounds, 6.0f);
+
+    g.setColour(theme::border);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+
+    if (displayMode_ != 0) {
+        g.setColour(theme::accent);
+        g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 22.0f, juce::Font::plain));
+        g.drawText(formatTimeCode(), bounds, juce::Justification::centred);
+        return;
+    }
+
+    // Same decomposition as TransportState::formatBarsBeatsTicks, split so the
+    // BAR/BEAT/TICK captions sit under their own groups.
+    const double units = position_ * timeSigDenominator_ / 4.0;
+    const auto whole = static_cast<juce::int64>(std::floor(units));
+    const juce::String values[] = {
+        juce::String(whole / timeSigNumerator_ + 1),
+        juce::String(whole % timeSigNumerator_ + 1),
+        juce::String(static_cast<int>((units - whole) * 960.0)).paddedLeft('0', 3)
+    };
+    const juce::String captions[] = {"BAR", "BEAT", "TICK"};
+
+    auto captionRow = bounds.removeFromBottom(13).withTrimmedBottom(4);
+    auto digits = bounds.reduced(8, 2);
+    const float columnWidth = digits.getWidth() / 3.0f;
+
+    g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 20.0f, juce::Font::plain));
+    g.setColour(theme::accent);
+    for (int i = 0; i < 3; ++i) {
+        auto column = digits.removeFromLeft(columnWidth);
+        g.drawText(values[i], column, juce::Justification::centred);
+        g.setFont(juce::Font(8.0f, juce::Font::bold));
+        g.setColour(theme::textSecondary);
+        g.drawText(captions[i], juce::Rectangle<float>(column.getX(), captionRow.getY(),
+                                                       columnWidth, captionRow.getHeight()),
+                   juce::Justification::centred);
+        if (i < 2) {
+            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 16.0f, juce::Font::plain));
+            g.setColour(theme::textFaint);
+            g.drawText(":", juce::Rectangle<float>(column.getRight() - 3.0f, digits.getY(),
+                                                   columnWidth, digits.getHeight()),
+                       juce::Justification::centred);
+            g.setFont(juce::Font(juce::Font::getDefaultMonospacedFontName(), 20.0f, juce::Font::plain));
+            g.setColour(theme::accent);
+        }
+    }
+}
+
+void TimeDisplay::mouseDown(const juce::MouseEvent&) {
+    setDisplayMode(displayMode_ == 0 ? 1 : 0);
 }
 
 void TimeDisplay::setPosition(double positionInBeats, double tempo) {
@@ -83,40 +126,54 @@ TransportButton::TransportButton(Type type)
 
 void TransportButton::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat().reduced(2.0f);
-    
-    juce::Colour bgColour = juce::Colour(0xff2a2a2a);
-    juce::Colour iconColour = juce::Colour(0xffaaaaaa);
-    
+
+    juce::Colour bgColour = borderless_ ? theme::transparent : theme::control;
+    juce::Colour iconColour = theme::textDefault;
+    juce::Colour outlineColour = borderless_ ? theme::transparent : theme::border;
+
     if (active_) {
         switch (type_) {
             case Type::Play:
-                bgColour = juce::Colour(0xff4a8a4a);
-                iconColour = juce::Colour(0xff00ff88);
+                bgColour = theme::toggleActiveBackground;
+                iconColour = theme::accent;
                 break;
             case Type::Record:
-                bgColour = juce::Colour(0xff8a4a4a);
-                iconColour = juce::Colour(0xffff4444);
+                bgColour = theme::dangerDim;
+                iconColour = theme::danger;
                 break;
             case Type::Loop:
             case Type::Metronome:
-                bgColour = juce::Colour(0xff3a5a7a);
-                iconColour = juce::Colour(0xff66aaff);
+                bgColour = theme::highlightBackground;
+                iconColour = theme::accentBlue;
                 break;
             default:
+                bgColour = theme::controlSelected;
+                iconColour = theme::white;
                 break;
         }
+    } else if (type_ == Type::Record) {
+        // The stub is disabled, but the affordance reads as record: red at rest.
+        iconColour = theme::danger;
+        outlineColour = theme::dangerDim;
     }
-    
+
+    if (hovered_ && !active_) {
+        bgColour = bgColour.brighter(0.06f);
+        outlineColour = outlineColour.brighter(0.06f);
+    }
     if (pressed_) {
         bgColour = bgColour.brighter(0.1f);
     }
-    
-    g.setColour(bgColour);
-    g.fillRoundedRectangle(bounds, 4.0f);
-    
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
-    
+
+    if (!borderless_ || active_ || pressed_) {
+        g.setColour(bgColour);
+        g.fillRoundedRectangle(bounds, 5.0f);
+        if (!borderless_) {
+            g.setColour(outlineColour);
+            g.drawRoundedRectangle(bounds, 5.0f, 1.0f);
+        }
+    }
+
     g.setColour(iconColour);
     auto iconBounds = bounds.reduced(4.0f);
     Icons::draw(g, iconForType(type_), iconColour, iconBounds);
@@ -146,55 +203,228 @@ void TransportButton::setActive(bool active) {
     }
 }
 
+void TransportButton::mouseEnter(const juce::MouseEvent&) {
+    if (!hovered_) {
+        hovered_ = true;
+        repaint();
+    }
+}
+
+void TransportButton::mouseExit(const juce::MouseEvent&) {
+    if (hovered_) {
+        hovered_ = false;
+        repaint();
+    }
+}
+
 TempoControl::TempoControl() {
-    setInterceptsMouseClicks(true, false);
+    // Children must stay clickable: the inline editor overlays the box while
+    // it is open (the parent's mouseDown ignores clicks while editing).
+    setInterceptsMouseClicks(true, true);
+    setComponentID("tempoControl");
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    editor_.setComponentID("tempoEditor");
+    editor_.setSelectAllWhenFocused(true);
+    editor_.setJustification(juce::Justification::centred);
+    editor_.setFont(juce::Font(14.0f, juce::Font::bold));
+    editor_.setIndents(4, 0);
+    editor_.setColour(juce::TextEditor::backgroundColourId, theme::windowBackground);
+    editor_.setColour(juce::TextEditor::outlineColourId, theme::transparent);
+    editor_.setColour(juce::TextEditor::focusedOutlineColourId, theme::transparent);
+    editor_.setColour(juce::TextEditor::textColourId, theme::textBright);
+    editor_.setColour(juce::TextEditor::highlightColourId, theme::highlightBackground);
+    editor_.setInputFilter(new juce::TextEditor::LengthAndCharacterRestriction(8, "0123456789."), true);
+    editor_.addListener(this);
+    addChildComponent(editor_);
+}
+
+TempoControl::~TempoControl() {
+    editor_.removeListener(this);
 }
 
 void TempoControl::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
-    
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillRoundedRectangle(bounds, 4.0f);
-    
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
-    
-    g.setColour(juce::Colour(0xffcccccc));
-    g.setFont(juce::Font(14.0f, juce::Font::bold));
+    const bool captioned = getHeight() >= 40 && getWidth() >= 88;
+    auto box = captioned ? bounds.removeFromBottom(13) : bounds;
+    const float captionY = box.getY();
+
+    g.setColour(theme::windowBackground);
+    g.fillRoundedRectangle(bounds, 5.0f);
+
+    g.setColour(isInvalidEntry() ? theme::dangerText : theme::border);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 5.0f, 1.0f);
+
+    g.setColour(theme::textBright);
+    g.setFont(juce::Font(17.0f, juce::Font::bold));
     g.drawText(juce::String(tempo_, 1), bounds, juce::Justification::centred);
-    
-    g.setColour(juce::Colour(0xff666666));
-    g.setFont(juce::Font(10.0f));
-    g.drawText("BPM", bounds.removeFromBottom(12), juce::Justification::centred);
-}
 
-void TempoControl::resized() {
-}
-
-void TempoControl::mouseDown(const juce::MouseEvent& e) {
-    if (e.mods.isRightButtonDown() || e.mods.isPopupMenu()) {
-        if (onTempoTapped) onTempoTapped();
-    } else if (e.mods.isLeftButtonDown()) {
-        juce::PopupMenu menu;
-        menu.addItem(1, "Tap Tempo...", true, false);
-        menu.addSeparator();
-        menu.addItem(2, "120 BPM", true, tempo_ == 120.0);
-        menu.addItem(3, "140 BPM", true, tempo_ == 140.0);
-        menu.addItem(4, "160 BPM", true, tempo_ == 160.0);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
-            [this](int result) {
-                if (result > 0) {
-                    if (result == 1 && onTempoTapped) onTempoTapped();
-                    else if (result == 2 && onTempoChanged) onTempoChanged(120.0);
-                    else if (result == 3 && onTempoChanged) onTempoChanged(140.0);
-                    else if (result == 4 && onTempoChanged) onTempoChanged(160.0);
-                }
-            });
+    if (captioned) {
+        g.setColour(theme::textSecondary);
+        g.setFont(juce::Font(8.0f, juce::Font::bold));
+        g.drawText("BPM", juce::Rectangle<float>(0, captionY, bounds.getWidth(), 12),
+                   juce::Justification::centred);
     }
 }
 
+void TempoControl::resized() {
+    editor_.setBounds(getLocalBounds().reduced(3));
+}
+
+void TempoControl::mouseDown(const juce::MouseEvent& e) {
+    if (editing_) return; // The inline editor owns clicks while it is open.
+    if (e.mods.isRightButtonDown() || e.mods.isPopupMenu()) {
+        showContextMenu();
+        return;
+    }
+    if (e.mods.isLeftButtonDown()) {
+        dragStartY_ = e.y;
+        dragStartTempo_ = tempo_;
+        moved_ = false;
+        scrubbing_ = false;
+    }
+}
+
+void TempoControl::mouseDrag(const juce::MouseEvent& e) {
+    if (editing_ || !e.mods.isLeftButtonDown()) return;
+    const int dy = e.y - dragStartY_;
+    if (!moved_) {
+        if (std::abs(dy) < dragThreshold) return;
+        moved_ = true;
+        scrubbing_ = true;
+    }
+    // Dragging up (negative dy) increases the value.
+    const double raw = dragStartTempo_ - dy * bpmPerPx;
+    const double value = e.mods.isShiftDown()
+        ? std::round(raw * 10.0) / 10.0
+        : std::round(raw);
+    const double clamped = juce::jlimit(minTempo, maxTempo, value);
+    if (clamped != tempo_) {
+        tempo_ = clamped;
+        if (onTempoChanged) onTempoChanged(clamped);
+        repaint();
+    }
+}
+
+void TempoControl::mouseUp(const juce::MouseEvent& e) {
+    if (editing_) return;
+    if (scrubbing_ || moved_) {
+        scrubbing_ = false;
+        moved_ = false;
+        return;
+    }
+    if (e.mods.isLeftButtonDown() && !e.mods.isRightButtonDown()) beginEdit();
+}
+
+void TempoControl::mouseMove(const juce::MouseEvent&) {
+    setMouseCursor(editing_ ? juce::MouseCursor::NormalCursor
+                            : juce::MouseCursor::UpDownResizeCursor);
+}
+
+void TempoControl::mouseExit(const juce::MouseEvent&) {
+    if (!editing_) setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+}
+
 void TempoControl::setTempo(double tempo) {
+    if (editing_) return; // Never clobber text being typed.
     tempo_ = tempo;
+    repaint();
+}
+
+const std::vector<double>& TempoControl::presetTempos() {
+    static const std::vector<double> presets {
+        70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 128.0,
+        140.0, 150.0, 160.0, 174.0, 180.0, 200.0
+    };
+    return presets;
+}
+
+juce::PopupMenu TempoControl::buildMenu(double currentTempo) {
+    juce::PopupMenu menu;
+    menu.addItem(1, "Tap Tempo...", true, false);
+    menu.addSeparator();
+    int id = 2;
+    for (const double preset : presetTempos()) {
+        menu.addItem(id++, juce::String(preset, 0) + " BPM", true,
+                     juce::approximatelyEqual(currentTempo, preset));
+    }
+    return menu;
+}
+
+void TempoControl::handleMenuAction(int actionId) {
+    if (actionId <= 0) return;
+    if (actionId == 1) {
+        if (onTempoTapped) onTempoTapped();
+        return;
+    }
+    const auto& presets = presetTempos();
+    const int index = actionId - 2;
+    if (index >= 0 && index < static_cast<int>(presets.size()) && onTempoChanged)
+        onTempoChanged(presets[static_cast<std::size_t>(index)]);
+}
+
+void TempoControl::showContextMenu() {
+    if (showMenuOverride) {
+        showMenuOverride();
+        return;
+    }
+    auto menu = buildMenu(tempo_);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
+        [safe = juce::Component::SafePointer<TempoControl>(this)](int result) {
+            if (safe != nullptr && result > 0) safe->handleMenuAction(result);
+        });
+}
+
+bool TempoControl::parseTempoText(const juce::String& text, double& value) {
+    const auto trimmed = text.trim();
+    const char* start = trimmed.toRawUTF8();
+    char* end = nullptr;
+    value = std::strtod(start, &end);
+    return end != start && *end == '\0';
+}
+
+bool TempoControl::isInvalidEntry() const {
+    if (!editing_) return false;
+    double value = 0.0;
+    return !parseTempoText(editor_.getText().trim(), value) ||
+           value < minTempo || value > maxTempo;
+}
+
+void TempoControl::beginEdit() {
+    if (editing_) return;
+    editing_ = true;
+    invalid_ = false;
+    editor_.setText(juce::String(tempo_, 1), juce::dontSendNotification);
+    editor_.setVisible(true);
+    editor_.selectAll();
+    if (isShowing()) editor_.grabKeyboardFocus();
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void TempoControl::commitEdit() {
+    if (!editing_) return;
+    double value = 0.0;
+    if (!parseTempoText(editor_.getText().trim(), value) ||
+        value < minTempo || value > maxTempo) {
+        invalid_ = true; // Retained and tinted; the editor stays open.
+        repaint();
+        return;
+    }
+    editing_ = false;
+    invalid_ = false;
+    editor_.setVisible(false);
+    tempo_ = value;
+    if (onTempoChanged) onTempoChanged(value);
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    repaint();
+}
+
+void TempoControl::cancelEdit() {
+    if (!editing_) return;
+    editing_ = false;
+    invalid_ = false;
+    editor_.setVisible(false);
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
     repaint();
 }
 
@@ -204,16 +434,25 @@ TimeSignatureControl::TimeSignatureControl() {
 
 void TimeSignatureControl::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat();
-    
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillRoundedRectangle(bounds, 4.0f);
-    
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
-    
-    g.setColour(juce::Colour(0xffcccccc));
-    g.setFont(juce::Font(14.0f, juce::Font::bold));
-    g.drawText(juce::String(numerator_) + "/" + juce::String(denominator_), bounds, juce::Justification::centred);
+    const bool captioned = getHeight() >= 40 && getWidth() >= 88;
+    auto box = captioned ? bounds.removeFromBottom(13) : bounds;
+
+    g.setColour(theme::windowBackground);
+    g.fillRoundedRectangle(box, 5.0f);
+
+    g.setColour(theme::border);
+    g.drawRoundedRectangle(box.reduced(0.5f), 5.0f, 1.0f);
+
+    g.setColour(theme::textBright);
+    g.setFont(juce::Font(16.0f, juce::Font::bold));
+    g.drawText(juce::String(numerator_) + "/" + juce::String(denominator_), box, juce::Justification::centred);
+
+    if (captioned) {
+        g.setColour(theme::textSecondary);
+        g.setFont(juce::Font(8.0f, juce::Font::bold));
+        g.drawText("TIME SIGNATURE", juce::Rectangle<float>(0, box.getBottom(), bounds.getWidth(), 12),
+                   juce::Justification::centred);
+    }
 }
 
 void TimeSignatureControl::mouseDown(const juce::MouseEvent&) {
@@ -319,6 +558,10 @@ void TransportComponent::setupButtons() {
     metronomeBtn_->setTitle("Enable audible metronome");
     metronomeBtn_->setComponentID("metronomeToggle");
     recordBtn_->setComponentID("record");
+    for (auto* button : {returnToStartBtn_.get(), rewindBtn_.get(), stopBtn_.get(),
+                         playBtn_.get(), recordBtn_.get(), fastForwardBtn_.get()}) {
+        button->setBorderless(true);
+    }
     
     fastForwardBtn_->onClick = [this]() {
         double currentPos = transportState_.getPosition();
@@ -350,50 +593,71 @@ void TransportComponent::setupButtons() {
 
 void TransportComponent::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
-    
-    g.setColour(juce::Colour(0xff252525));
+
+    g.setColour(theme::raised);
     g.fillRect(bounds);
-    
-    g.setColour(juce::Colour(0xff1a1a1a));
+
+    g.setColour(theme::windowBackground);
     g.fillRect(bounds.removeFromBottom(1));
+
+    if (!buttonGroupBounds_.isEmpty()) {
+        auto pill = buttonGroupBounds_.toFloat().expanded(8.0f, 6.0f);
+        g.setColour(theme::windowBackground);
+        g.fillRoundedRectangle(pill, 8.0f);
+        g.setColour(theme::border);
+        g.drawRoundedRectangle(pill.reduced(0.5f), 8.0f, 1.0f);
+    }
 }
 
 void TransportComponent::resized() {
-    auto bounds = getLocalBounds().reduced(10, 5);
-    auto rightSection = bounds.removeFromRight(250);
+    auto bounds = getLocalBounds().reduced(10, 8);
     const bool compact = getWidth() < 800;
-    timeDisplay_->setBounds(bounds.removeFromLeft(compact ? 130 : 180).withTrimmedTop(2).withTrimmedBottom(2));
-    
-    bounds.removeFromLeft(20);
-    
-    auto transportButtons = bounds.removeFromLeft(compact ? 120 : 240);
-    int btnWidth = 36;
-    int btnHeight = 28;
-    
+    auto rightSection = bounds.removeFromRight(compact ? 250 : 300);
+    timeDisplay_->setBounds(bounds.removeFromLeft(compact ? 130 : 200));
+
+    bounds.removeFromLeft(compact ? 10 : 16);
+
+    auto transportButtons = bounds;
+    const int btnWidth = 38;
+    const int btnHeight = 32;
+    buttonGroupBounds_ = juce::Rectangle<int>();
     returnToStartBtn_->setVisible(!compact);
     rewindBtn_->setVisible(!compact);
     fastForwardBtn_->setVisible(!compact);
+    auto place = [&](TransportButton& button) {
+        auto cell = transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight);
+        button.setBounds(cell);
+        buttonGroupBounds_ = buttonGroupBounds_.isEmpty() ? cell : buttonGroupBounds_.getUnion(cell);
+        transportButtons.removeFromLeft(2);
+    };
     if (!compact) {
-        returnToStartBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-        transportButtons.removeFromLeft(4);
-        rewindBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-        transportButtons.removeFromLeft(4);
+        place(*returnToStartBtn_);
+        place(*rewindBtn_);
     }
-    stopBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    transportButtons.removeFromLeft(4);
-    playBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    transportButtons.removeFromLeft(4);
-    recordBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    transportButtons.removeFromLeft(4);
-    if (!compact) fastForwardBtn_->setBounds(transportButtons.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    
+    place(*stopBtn_);
+    place(*playBtn_);
+    place(*recordBtn_);
+    if (!compact) place(*fastForwardBtn_);
+
+    if (compact) {
+        auto rightControls = rightSection;
+        timeSigControl_->setBounds(rightControls.removeFromLeft(50).withSizeKeepingCentre(50, btnHeight));
+        rightControls.removeFromLeft(10);
+        tempoControl_->setBounds(rightControls.removeFromLeft(70).withSizeKeepingCentre(70, btnHeight));
+        rightControls.removeFromLeft(10);
+        loopBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+        rightControls.removeFromLeft(4);
+        metronomeBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
+        return;
+    }
+
     auto rightControls = rightSection;
-    timeSigControl_->setBounds(rightControls.removeFromLeft(50).withSizeKeepingCentre(50, btnHeight));
+    timeSigControl_->setBounds(rightControls.removeFromLeft(104).withSizeKeepingCentre(104, 44));
     rightControls.removeFromLeft(10);
-    tempoControl_->setBounds(rightControls.removeFromLeft(70).withSizeKeepingCentre(70, btnHeight));
-    rightControls.removeFromLeft(10);
+    tempoControl_->setBounds(rightControls.removeFromLeft(92).withSizeKeepingCentre(92, 44));
+    rightControls.removeFromLeft(12);
     loopBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
-    rightControls.removeFromLeft(4);
+    rightControls.removeFromLeft(2);
     metronomeBtn_->setBounds(rightControls.removeFromLeft(btnWidth).withSizeKeepingCentre(btnWidth, btnHeight));
 }
 
@@ -485,7 +749,7 @@ LoopEditorPopover::LoopEditorPopover(TransportState& state)
         addAndMakeVisible(editor);
         editor->setSelectAllWhenFocused(true);
         editor->setTextToShowWhenEmpty(editor == &start_ ? "Start (qn)" : "End (qn)",
-                                      juce::Colour(0xff777777));
+                                      theme::textMuted);
     }
     start_.setComponentID("loopStart");
     end_.setComponentID("loopEnd");
@@ -505,7 +769,7 @@ void LoopEditorPopover::refreshFromState() {
     const auto loop = transportState_.getLoopRegion();
     start_.setText(juce::String(loop.startBeats, 9), false);
     end_.setText(juce::String(loop.endBeats, 9), false);
-    validation_.setColour(juce::Label::textColourId, juce::Colour(0xffbbbbbb));
+    validation_.setColour(juce::Label::textColourId, theme::textBright);
     validation_.setText("Quarter notes; min 1/64. Enter or Apply.", juce::dontSendNotification);
 }
 
@@ -520,7 +784,7 @@ void LoopEditorPopover::commit() {
     double start = 0, end = 0;
     if (!parse(start_.getText(), start) || !parse(end_.getText(), end) ||
         !TransportState::validLoopRegion(start, end)) {
-        validation_.setColour(juce::Label::textColourId, juce::Colour(0xffff8888));
+        validation_.setColour(juce::Label::textColourId, theme::dangerText);
         validation_.setText("Invalid: 0 <= start; end <= 1e9; length >= 1/64 qn", juce::dontSendNotification);
         return;
     }
@@ -530,7 +794,7 @@ void LoopEditorPopover::commit() {
 }
 
 void LoopEditorPopover::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff252525));
+    g.fillAll(theme::raised);
 }
 
 void LoopEditorPopover::resized() {

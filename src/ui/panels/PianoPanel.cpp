@@ -1,5 +1,6 @@
 #include "PianoPanel.h"
 #include "ui/PianoComponent.h"
+#include "ui/Theme.h"
 #include "core/MidiManager.h"
 
 namespace vibedaw {
@@ -9,7 +10,34 @@ PianoPanel::PianoPanel(juce::MidiKeyboardState& keyboardState, MidiManager* midi
 {
     piano_ = std::make_unique<PianoComponent>(keyboardState, midiManager);
     setContentComponent(std::move(piano_));
-    
+
+    octaveLabel_.setJustificationType(juce::Justification::centred);
+    octaveLabel_.setColour(juce::Label::textColourId, theme::textDefault);
+    octaveLabel_.setFont(juce::Font(12.0f, juce::Font::bold));
+    addAndMakeVisible(octaveLabel_);
+
+    for (auto* button : {&octaveDown_, &octaveUp_}) {
+        button->setColour(juce::TextButton::buttonColourId, theme::control);
+        button->setColour(juce::TextButton::textColourOffId, theme::textDefault);
+        addAndMakeVisible(*button);
+    }
+    octaveDown_.onClick = [this] { shiftOctave(-1); };
+    octaveUp_.onClick = [this] { shiftOctave(1); };
+
+    velocitySlider_.setRange(1.0, 127.0, 1.0);
+    velocitySlider_.setValue(100.0, juce::dontSendNotification);
+    velocitySlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 30, 18);
+    velocitySlider_.setColour(juce::Slider::backgroundColourId, theme::control);
+    velocitySlider_.setColour(juce::Slider::trackColourId, theme::actionGreen);
+    velocitySlider_.setColour(juce::Slider::thumbColourId, theme::accent);
+    if (auto* piano = dynamic_cast<PianoComponent*>(getContentComponent()))
+        piano->setVelocity(100.0f / 127.0f, false);
+    velocitySlider_.onValueChange = [this] {
+        if (auto* piano = dynamic_cast<PianoComponent*>(getContentComponent()))
+            piano->setVelocity(static_cast<float>(velocitySlider_.getValue()) / 127.0f, false);
+    };
+    addAndMakeVisible(velocitySlider_);
+
     setPreferredHeight(150);
     setExpandedHeight(150);
     setMinHeight(24);
@@ -21,15 +49,36 @@ PianoPanel::~PianoPanel() = default;
 
 void PianoPanel::paint(juce::Graphics& g) {
     Panel::paint(g);
+    auto bounds = getLocalBounds();
+    bounds.removeFromTop(getTitleBarHeight());
+    auto controls = bounds.removeFromLeft(150).reduced(8, 4);
+
+    g.setColour(theme::textSecondary);
+    g.setFont(juce::Font(10.0f));
+    g.drawText("Octave", controls.removeFromTop(12), juce::Justification::centredLeft);
+
+    controls.removeFromTop(24);
+    controls.removeFromTop(4);
+
+    g.drawText("Velocity", controls.removeFromTop(12), juce::Justification::centredLeft);
 }
 
 void PianoPanel::resized() {
     Panel::resized();
-    
+
+    auto bounds = getLocalBounds();
+    bounds.removeFromTop(getTitleBarHeight());
+    auto controls = bounds.removeFromLeft(150).reduced(8, 4);
+
+    auto octaveRow = controls.removeFromTop(24);
+    octaveDown_.setBounds(octaveRow.removeFromLeft(24).reduced(1));
+    octaveUp_.setBounds(octaveRow.removeFromRight(24).reduced(1));
+    octaveLabel_.setBounds(octaveRow.reduced(2, 0));
+    controls.removeFromTop(6);
+
+    velocitySlider_.setBounds(controls.removeFromTop(22));
+
     if (auto* content = getContentComponent()) {
-        auto bounds = getLocalBounds();
-        bounds.removeFromTop(getTitleBarHeight());
-        
         if (auto* piano = dynamic_cast<PianoComponent*>(content)) {
             int pianoWidth = piano->getTotalKeyboardWidth();
             int xOffset = juce::jmax(10, (bounds.getWidth() - pianoWidth) / 2);
@@ -37,6 +86,20 @@ void PianoPanel::resized() {
         } else {
             content->setBounds(bounds);
         }
+    }
+    updateOctaveLabel();
+}
+
+void PianoPanel::shiftOctave(int direction) {
+    if (auto* piano = dynamic_cast<PianoComponent*>(getContentComponent())) {
+        piano->setLowestVisibleKey(juce::jlimit(0, 127, piano->getLowestVisibleKey() + direction * 12));
+        updateOctaveLabel();
+    }
+}
+
+void PianoPanel::updateOctaveLabel() {
+    if (auto* piano = dynamic_cast<PianoComponent*>(getContentComponent())) {
+        octaveLabel_.setText(juce::String(piano->getLowestVisibleKey() / 12 - 1), juce::dontSendNotification);
     }
 }
 

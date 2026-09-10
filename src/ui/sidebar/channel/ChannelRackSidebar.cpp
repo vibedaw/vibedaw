@@ -1,7 +1,9 @@
 #include "ChannelRackSidebar.h"
+#include "ui/Theme.h"
 #include "project/Project.h"
 #include "project/ChannelList.h"
 #include "project/Channel.h"
+#include "core/MixerState.h"
 #include "plugins/PluginHost.h"
 #include "ui/components/PluginButton.h"
 #include "ui/components/TextPrompt.h"
@@ -22,39 +24,82 @@ void ChannelRow::setSelected(bool selected) {
     }
 }
 
+void ChannelRow::pollMeter(const StereoMeter& source) {
+    meterLeft_ = source.getLeft();
+    meterRight_ = source.getRight();
+    repaint();
+}
+
 void ChannelRow::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
-    
+
     if (isDragOver_) {
-        g.fillAll(juce::Colour(0xff3a5a3a));
+        g.fillAll(theme::actionGreen);
     } else if (isSelected_) {
-        g.fillAll(juce::Colour(0xff3a3a4a));
+        g.fillAll(theme::selectedSurface);
     } else {
-        g.fillAll(juce::Colour(0xff2a2a2a));
+        g.fillAll(theme::control);
     }
-    
-    g.setColour(juce::Colours::white);
-    g.setFont(12.0f);
-    
+
+    // Icon tile tinted with the channel colour, carrying the initial.
+    auto icon = juce::Rectangle<int>(6, 4, 20, 20);
+    const auto tint = channel_ ? channel_->getColour() : theme::textSecondary;
+    g.setColour(tint.withAlpha(0.55f));
+    g.fillRoundedRectangle(icon.toFloat(), 4.0f);
+    g.setColour(theme::white);
+    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    const auto initial = (channel_ && !channel_->getName().isEmpty())
+        ? juce::String::charToString(channel_->getName().toUpperCase()[0]) : juce::String("#");
+    g.drawText(initial, icon, juce::Justification::centred);
+
     juce::String name = channel_ ? channel_->getName() : "Channel " + juce::String(index_ + 1);
-    
-    if (channel_ && channel_->hasPlugin()) {
-        name += " [" + channel_->getPlugin()->getPluginName() + "]";
-    }
     if (isDragOver_)
         name = pendingDragInfo_.type == DragSourceType::Plugin
             ? "Replace plugin: " + channel_->getName()
             : "Assign sample file (no playback)";
-    
-    g.drawText(name, 8, 0, bounds.getWidth() - 16, bounds.getHeight(), 
-               juce::Justification::centredLeft, true);
-    
+    g.drawText(name, 32, 3, bounds.getWidth() - 54, 16, juce::Justification::centredLeft, true);
+
+    if (channel_ && channel_->hasPlugin()) {
+        g.setColour(theme::textSecondary);
+        g.setFont(9.0f);
+        g.drawText(channel_->getPlugin()->getPluginName(), 32, 17, bounds.getWidth() - 54, 11,
+                   juce::Justification::centredLeft, true);
+    }
+
+    g.setColour(theme::textSecondary);
+    g.setFont(juce::Font(13.0f, juce::Font::bold));
+    g.drawText(juce::String(juce::CharPointer_UTF8("\xe2\x8b\xae")), kebabRect(), juce::Justification::centred);
+
+    auto drawToggle = [&](const juce::Rectangle<int>& rect, const juce::String& label, bool active, juce::Colour activeColour) {
+        auto r = rect.toFloat();
+        g.setColour(active ? activeColour : theme::controlDim);
+        g.fillRoundedRectangle(r, 3.0f);
+        g.setColour(active ? theme::white : theme::textSecondary);
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        g.drawText(label, rect, juce::Justification::centred);
+    };
+    const bool muted = channel_ && channel_->isMuted();
+    const bool soloed = channel_ && channel_->isSolo();
+    drawToggle(muteRect(), "M", muted, theme::muteRed);
+    drawToggle(soloRect(), "S", soloed, theme::muteGreen);
+
+    // Live meter: sample-peak envelope polled by the rack's timer.
+    auto meter = meterRect();
+    g.setColour(theme::deepWell);
+    g.fillRoundedRectangle(meter.toFloat(), 2.0f);
+    const float left = juce::jlimit(0.0f, 1.0f, meterLeft_);
+    const float right = juce::jlimit(0.0f, 1.0f, meterRight_);
+    const int barHeight = meter.getHeight() / 2;
+    g.setColour(theme::meterLow);
+    g.fillRect(meter.getX(), meter.getY(), static_cast<int>(meter.getWidth() * left), barHeight);
+    g.fillRect(meter.getX(), meter.getY() + barHeight + 1, static_cast<int>(meter.getWidth() * right), barHeight);
+
     if (isDragOver_) {
-        g.setColour(juce::Colour(0xff00ff00));
+        g.setColour(theme::dropIndicator);
         g.drawRect(bounds, 2);
     }
-    
-    g.setColour(juce::Colour(0xff444444));
+
+    g.setColour(theme::borderStrong);
     g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
 }
 
@@ -76,6 +121,21 @@ void ChannelRow::mouseDown(const juce::MouseEvent& e) {
         // The action resolves its stable ID through a lifetime-checked rack owner.
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
         return;
+    }
+    if (channel_) {
+        if (kebabRect().contains(e.position.toInt())) {
+            auto menu = createContextMenu();
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+            return;
+        }
+        if (muteRect().contains(e.position.toInt())) {
+            channel_->setMuted(!channel_->isMuted());
+            return;
+        }
+        if (soloRect().contains(e.position.toInt())) {
+            channel_->setSolo(!channel_->isSolo());
+            return;
+        }
     }
     if (listener_ && channel_) {
         listener_->channelSelected(channel_);
@@ -130,8 +190,8 @@ ChannelRackContent::ChannelRackContent(Project& project)
 {
     addChannelButton_.setButtonText("+ Add Channel");
     addChannelButton_.setTooltip("Maximum 128 channels. Structural edits briefly silence audio while callbacks are quiesced.");
-    addChannelButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a3a));
-    addChannelButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    addChannelButton_.setColour(juce::TextButton::buttonColourId, theme::actionGreen);
+    addChannelButton_.setColour(juce::TextButton::textColourOffId, theme::white);
     addChannelButton_.onClick = [this]() {
         if (!project_.getChannelList().addChannel())
             juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Channel not added",
@@ -139,15 +199,22 @@ ChannelRackContent::ChannelRackContent(Project& project)
         rebuildChannelRows();
     };
     addAndMakeVisible(addChannelButton_);
-    
+
     project_.getChannelList().addListener(this);
     project_.addListener(this);
+    juce::MultiTimer::startTimer(0, 33);
     rebuildChannelRows();
 }
 
 ChannelRackContent::~ChannelRackContent() {
+    juce::MultiTimer::stopTimer(0);
     project_.removeListener(this);
     project_.getChannelList().removeListener(this);
+}
+
+void ChannelRackContent::timerCallback(int) {
+    for (auto& row : channelRows_)
+        if (auto* channel = row->getChannel()) row->pollMeter(channel->getMeter());
 }
 
 void ChannelRackContent::refreshChannels() {
@@ -194,17 +261,17 @@ void ChannelRackContent::removeChannelWithConfirmation(ChannelId id) {
 }
 
 void ChannelRackContent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff252525));
+    g.fillAll(theme::raised);
     if (isDragOver_) {
         auto area = getLocalBounds().withTrimmedTop(juce::jmin(
             static_cast<int>(channelRows_.size()) * ChannelRow::rowHeight, juce::jmax(0, getHeight() - 32)));
-        g.setColour(juce::Colour(0xff395875));
+        g.setColour(theme::dropFill);
         g.fillRect(area);
-        g.setColour(juce::Colours::lightblue);
+        g.setColour(theme::dropEdge);
         g.drawRect(area, 2);
         g.drawText("Create instrument channel", area.reduced(6).withHeight(24), juce::Justification::centredLeft);
     } else if (channelRows_.empty()) {
-        g.setColour(juce::Colour(0xff777777));
+        g.setColour(theme::textMuted);
         g.setFont(12.0f);
         g.drawFittedText("Right-click a plugin in the Browser, or drag one here,\nto create an instrument channel.",
             getLocalBounds().reduced(8, 24), juce::Justification::centred, 3);

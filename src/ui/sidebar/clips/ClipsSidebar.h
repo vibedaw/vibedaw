@@ -41,11 +41,12 @@ public:
     std::function<void()> editSource;
     std::function<void()> renameRequested;
     std::function<void()> deleteSourceRequested;
-    
-    static constexpr int rowHeight = 28;
-    
+
+    static constexpr int rowHeight = 56;
+
 private:
     friend struct ClipRowTestAccess;
+    juce::Rectangle<int> kebabRect() const { return {getWidth() - 22, 2, 20, 20}; }
     juce::var dragDescription_;
     bool pressActive_ = false, dragStarted_ = false;
     std::function<void(const juce::var&, bool)> dragStarter_;
@@ -84,7 +85,8 @@ public:
     
     void paint(juce::Graphics& g) override;
     void resized() override;
-    
+    void mouseDown(const juce::MouseEvent& e) override;
+
     void clipAdded(ClipId clipId, Clip* clip) override;
     void clipRemoved(ClipId clipId) override;
     void clipChanged(ClipId clipId, Clip* clip) override;
@@ -100,11 +102,19 @@ private:
     std::vector<std::unique_ptr<ClipRow>> clipRows_;
     juce::TextButton addClipButton_;
     juce::TextButton deleteClipButton_{"Delete Source"};
-    
+
+    // MIDI/AUDIO filter tabs are painted with manual hit-testing (no child
+    // components) so offline child-index contracts stay stable.
+    int filterTab_ = 0; // 0 = MIDI (incl. Pattern), 1 = Audio.
+    juce::Rectangle<int> midiTabBounds_;
+    juce::Rectangle<int> audioTabBounds_;
+    static constexpr int tabRowHeight = 26;
+
     ClipId selectedClipId_ = InvalidClipId;
-    
+
     void rebuildClipRows();
     void selectClip(int index);
+    bool rowMatchesFilter(const ClipRow& row) const;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClipsContent)
 };

@@ -1,10 +1,11 @@
 #include "PanelWindow.h"
+#include "ui/Theme.h"
 #include "Panel.h"
 
 namespace vibedaw {
 
 PanelWindow::PanelWindow(Panel& owner, const juce::String& title)
-    : DocumentWindow(title, juce::Colours::darkgrey, DocumentWindow::closeButton, true),
+    : DocumentWindow(title, theme::control, DocumentWindow::closeButton, true),
       owner_(owner)
 {
     setResizable(true, true);

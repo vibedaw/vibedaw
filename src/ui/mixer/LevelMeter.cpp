@@ -1,4 +1,5 @@
 #include "LevelMeter.h"
+#include "ui/Theme.h"
 #include <cmath>
 
 namespace vibedaw {
@@ -16,38 +17,38 @@ void LevelMeter::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     int width = bounds.getWidth();
     int height = bounds.getHeight();
-    
+
     if (width < 4 || height < 4) return;
-    
+
     int totalMeterWidth = meterWidth * 2 + meterSpacing;
     int startX = (width - totalMeterWidth) / 2;
-    
-    auto bgColour = juce::Colour(0xff1a1a1a);
-    auto meterBgColour = juce::Colour(0xff0d0d0d);
-    auto trackColour = juce::Colour(0xff2a2a2a);
-    
-    g.fillAll(bgColour);
-    
+
+    g.fillAll(theme::windowBackground);
+
+    // A peak readout reserves its own bottom row so it never overlaps the bars.
+    const int readoutHeight = showPeakReadout ? 12 : 0;
+    const int meterHeight = height - 4 - readoutHeight;
+    if (meterHeight < 4) return;
+
     auto drawMeter = [&](float level, float peak, int x) {
-        int meterHeight = height - 4;
         int meterY = 2;
-        
-        g.setColour(meterBgColour);
+
+        g.setColour(theme::deepWell);
         g.fillRect(x, meterY, meterWidth, meterHeight);
-        
-        g.setColour(trackColour);
+
+        g.setColour(theme::control);
         g.drawRect(x, meterY, meterWidth, meterHeight);
-        
+
         float clampedLevel = juce::jlimit(0.0f, 1.0f, level);
         float clampedPeak = juce::jlimit(0.0f, 1.0f, peak);
-        
+
         int levelHeight = static_cast<int>(clampedLevel * meterHeight);
         int peakY = meterY + meterHeight - static_cast<int>(clampedPeak * meterHeight);
         
         if (levelHeight > 0) {
-            juce::Colour lowColour(0xff666666);
-            juce::Colour midColour(0xffaaaaaa);
-            juce::Colour highColour(0xffffffff);
+            juce::Colour lowColour(theme::meterLow);
+            juce::Colour midColour(theme::meterMid);
+            juce::Colour highColour(theme::meterHigh);
             
             float greenZone = 0.6f;
             float yellowZone = 0.85f;
@@ -104,7 +105,7 @@ void LevelMeter::paint(juce::Graphics& g) {
             }
             
             if (peakY > meterY && peakY < meterY + meterHeight - 2) {
-                g.setColour(juce::Colours::white.withAlpha(0.8f));
+                g.setColour(theme::meterPeak.withAlpha(0.8f));
                 g.fillRect(x, peakY, meterWidth, 2);
             }
         }
@@ -112,6 +113,18 @@ void LevelMeter::paint(juce::Graphics& g) {
     
     drawMeter(leftDisplayLevel, leftPeakDisplay, startX);
     drawMeter(rightDisplayLevel, rightPeakDisplay, startX + meterWidth + meterSpacing);
+
+    if (readoutHeight > 0) {
+        g.setColour(theme::border);
+        g.drawHorizontalLine(2, static_cast<float>(startX), static_cast<float>(startX + totalMeterWidth));
+        const float peak = getPeakDisplay();
+        const auto label = peak > 1.0e-4f
+            ? juce::String(juce::Decibels::gainToDecibels(peak), 1)
+            : juce::String("-inf");
+        g.setColour(theme::textSecondary);
+        g.setFont(juce::Font(8.0f));
+        g.drawText(label, 0, height - readoutHeight, width, readoutHeight - 1, juce::Justification::centred);
+    }
 }
 
 void LevelMeter::resized() {

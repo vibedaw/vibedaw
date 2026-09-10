@@ -1,4 +1,5 @@
 #include "Panel.h"
+#include "ui/Theme.h"
 #include "PanelTitleBar.h"
 #include "PanelWindow.h"
 #include "PanelContainer.h"
@@ -16,10 +17,10 @@ Panel::Panel(const juce::String& name)
 Panel::~Panel() = default;
 
 void Panel::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
     
     if (focused_) {
-        g.setColour(juce::Colour(0xff5a8a9a));
+        g.setColour(theme::floatingPanelBorder);
         g.drawRect(getLocalBounds(), 1);
     }
 }

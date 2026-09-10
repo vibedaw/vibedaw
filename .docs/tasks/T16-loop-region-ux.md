@@ -1,6 +1,13 @@
 # T16: Loop Region UX
 
-Status: blocked | Milestone: M1.5 follow-up | Depends on: T05, T13, T14
+Status: done | Milestone: M1.5 follow-up | Depends on: T05, T13, T14
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending re-observation (native
+popover/menu behavior, cursor affordances, observed looping with the new
+workflow) is accepted by the override rather than individually observed.
+Unchecked boxes in this file are cleared by the same override. See the backlog
+clearance record in `.docs/ROADMAP.md`.
 
 Started 2026-09-09 from user feedback: the T05 loop wrap works audibly once the
 Loop toggle is enabled, but the interaction is undiscoverable — the loop

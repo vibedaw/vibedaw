@@ -1,4 +1,5 @@
 #include "BrowserSidebar.h"
+#include "ui/Theme.h"
 #include "../Sidebar.h"
 #include "utils/Logger.h"
 
@@ -7,6 +8,18 @@ namespace vibedaw {
 BrowserSidebar::BrowserSidebar(PluginScanner& scanner)
     : scanner_(scanner)
 {
+    searchBox_.setTextToShowWhenEmpty("Search...", theme::textMuted);
+    searchBox_.setColour(juce::TextEditor::backgroundColourId, theme::control);
+    searchBox_.setColour(juce::TextEditor::outlineColourId, theme::hairline);
+    searchBox_.setColour(juce::TextEditor::focusedOutlineColourId, theme::accent);
+    searchBox_.setColour(juce::TextEditor::textColourId, theme::textBright);
+    searchBox_.setColour(juce::TextEditor::highlightColourId, theme::highlightBackground);
+    searchBox_.setJustification(juce::Justification::centredLeft);
+    searchBox_.onTextChange = [this] {
+        for (auto* section : sections_) section->applyFilter(searchBox_.getText());
+    };
+    addAndMakeVisible(searchBox_);
+
     pluginSection_ = std::make_unique<PluginSection>(scanner_);
     pluginSection_->setListener(this);
     pluginSection_->setPluginListener(this);
@@ -33,7 +46,7 @@ void BrowserSidebar::scanPlugins() {
 }
 
 void BrowserSidebar::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff202020));
+    g.fillAll(theme::browserBackground);
 }
 
 void BrowserSidebar::resized() {
@@ -42,14 +55,15 @@ void BrowserSidebar::resized() {
 
 void BrowserSidebar::updateLayout() {
     auto bounds = getLocalBounds();
-    
+    searchBox_.setBounds(bounds.removeFromTop(26).reduced(2, 1));
+
     for (auto* section : sections_) {
         int height = BrowserSection::titleBarHeight;
-        
+
         if (section->isExpanded()) {
             height += section->getContentHeight();
         }
-        
+
         section->setBounds(bounds.removeFromTop(height));
     }
 }

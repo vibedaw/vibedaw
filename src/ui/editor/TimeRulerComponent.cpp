@@ -1,4 +1,5 @@
 #include "TimeRulerComponent.h"
+#include "ui/Theme.h"
 
 namespace vibedaw {
 
@@ -35,16 +36,16 @@ juce::String TimeRulerComponent::formatTime(double beats) const {
 void TimeRulerComponent::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
-    g.fillAll(juce::Colour(0xff353535));
+    g.fillAll(theme::controlDim);
     
-    g.setColour(juce::Colour(0xff505050));
+    g.setColour(theme::separator);
     g.drawHorizontalLine(bounds.getHeight() - 1, 0.0f, static_cast<float>(bounds.getWidth()));
     
-    g.setColour(juce::Colour(0xff606060));
+    g.setColour(theme::textDim);
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(bounds.getWidth()));
     
     g.setFont(10.0f);
-    g.setColour(juce::Colours::white.withAlpha(0.7f));
+    g.setColour(theme::white.withAlpha(0.7f));
     
     int beatIndex = static_cast<int>(timeOffset_);
     double fracOffset = timeOffset_ - beatIndex;
@@ -57,22 +58,28 @@ void TimeRulerComponent::paint(juce::Graphics& g) {
         bool isDownbeat = beatInMeasure == 0;
         
         if (isDownbeat) {
-            g.setColour(juce::Colour(0xff707070));
+            g.setColour(theme::textSubtle);
             g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
             
-            g.setColour(juce::Colours::white);
+            g.setColour(theme::white);
             g.setFont(11.0f);
             g.drawText(formatTime(beats), x + 3, 2, 40, bounds.getHeight() - 4,
                        juce::Justification::centredLeft, true);
         } else {
-            g.setColour(juce::Colour(0xff454545));
+            g.setColour(theme::gridBarStrong);
             g.drawVerticalLine(x, bounds.getHeight() / 2, static_cast<float>(bounds.getHeight()));
             
-            g.setColour(juce::Colours::white.withAlpha(0.5f));
+            g.setColour(theme::white.withAlpha(0.5f));
             g.setFont(9.0f);
             g.drawText(juce::String(beatInMeasure + 1), x + 2, 2, 20, bounds.getHeight() - 4,
                        juce::Justification::centredLeft, true);
         }
+    }
+
+    if (playheadBeats_ >= 0.0) {
+        const int x = static_cast<int>((playheadBeats_ - timeOffset_) * pixelsPerBeat_);
+        g.setColour(theme::accent);
+        g.fillRect(static_cast<float>(x), 0.0f, 2.0f, static_cast<float>(bounds.getHeight()));
     }
 }
 

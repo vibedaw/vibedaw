@@ -1,4 +1,5 @@
 #include "PanelContainer.h"
+#include "ui/Theme.h"
 #include "Panel.h"
 
 namespace vibedaw {
@@ -135,7 +136,7 @@ void PanelContainer::onPanelMaximized(Panel* panel) {
 }
 
 void PanelContainer::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
     
     auto visiblePanels = getNumVisiblePanels();
     
@@ -146,9 +147,9 @@ void PanelContainer::paint(juce::Graphics& g) {
         int splitterY = panel->getBottom();
         
         if (i == draggedSplitterIndex_) {
-            g.setColour(juce::Colour(0xff555555));
+            g.setColour(theme::controlSelected);
         } else {
-            g.setColour(juce::Colour(0xff333333));
+            g.setColour(theme::hairline);
         }
         
         g.fillRect(0, splitterY, getWidth(), getSplitterHeight());

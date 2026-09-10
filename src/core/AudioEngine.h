@@ -23,6 +23,10 @@ public:
     
     juce::AudioDeviceManager& getDeviceManager() { return deviceManager; }
     const juce::AudioDeviceManager& getDeviceManager() const { return deviceManager; }
+
+    // Message-thread read of the audio callback load (0..1; near -1 before a
+    // device is open). Display-only: UI status bar, never a safety decision.
+    double getCpuUsage() const { return deviceManager.getCpuUsage(); }
     
     double getCurrentSampleRate() const;
     int getCurrentBufferSize() const;

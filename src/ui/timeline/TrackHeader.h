@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/Theme.h"
 #include <functional>
 
 namespace vibedaw {
@@ -44,7 +45,7 @@ private:
     Track* track = nullptr;
     int trackIndex = 0;
     juce::String trackName;
-    juce::Colour trackColour{0xffaaaaaa};
+    juce::Colour trackColour{theme::trackHeaderDefault};
     bool muted = false;
     bool solo = false;
     bool selected = false;

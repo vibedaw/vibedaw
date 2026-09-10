@@ -1,4 +1,5 @@
 #include "TimeRuler.h"
+#include "ui/Theme.h"
 #include <cmath>
 
 namespace vibedaw {
@@ -6,7 +7,7 @@ namespace vibedaw {
 TimeRuler::TimeRuler() { setOpaque(true); }
 
 void TimeRuler::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff2a2a2a));
+    g.fillAll(theme::control);
     const auto drawRegion = [&](const LoopRegion& region, juce::Colour fill,
                                 juce::Colour edge, float barHeight) {
         const float left = static_cast<float>(juce::jlimit(0.0, static_cast<double>(getWidth()),
@@ -22,18 +23,18 @@ void TimeRuler::paint(juce::Graphics& g) {
     // A set region paints blue when enabled, dim when disabled; a cleared
     // (non-existent) region paints nothing at all.
     if (loop.exists)
-        drawRegion(loop, juce::Colour(loop.enabled ? 0xff365978 : 0xff383e44),
-                   juce::Colour(loop.enabled ? 0xff66aaff : 0xff667788), 3.0f);
+        drawRegion(loop, juce::Colour(loop.enabled ? theme::loopFillActive : theme::loopFillIdle),
+                   juce::Colour(loop.enabled ? theme::loopEdgeActive : theme::loopEdgeIdle), 3.0f);
     if (previewActive)
-        drawRegion(preview, juce::Colour(0xff3d6e8f), juce::Colour(0xff8fc4ff), 4.0f);
+        drawRegion(preview, theme::loopFillPreview, theme::loopEdgePreview, 4.0f);
     const double interval = pixelsPerBeat < 25.0 ? 4.0 : 1.0;
     const double first = std::ceil(scrollOffset / pixelsPerBeat / interval) * interval;
     const double end = (scrollOffset + getWidth()) / pixelsPerBeat;
     for (double beat = first; beat <= end; beat += interval) {
         int x = static_cast<int>(beat * pixelsPerBeat - scrollOffset);
-        g.setColour(juce::Colour(0xff505050));
+        g.setColour(theme::separator);
         g.drawVerticalLine(x, 0.0f, static_cast<float>(getHeight()));
-        g.setColour(juce::Colour(0xffbbbbbb));
+        g.setColour(theme::textBright);
         g.setFont(11.0f);
         g.drawText("b" + juce::String(beat, 0), x + 3, 2, 70, getHeight() - 4, juce::Justification::left);
     }
@@ -41,7 +42,7 @@ void TimeRuler::paint(juce::Graphics& g) {
         // Edge handles make resize affordance explicit during the gesture.
         const float left = static_cast<float>(preview.startBeats * pixelsPerBeat - scrollOffset);
         const float right = static_cast<float>(preview.endBeats * pixelsPerBeat - scrollOffset);
-        g.setColour(juce::Colour(0xffccddff));
+        g.setColour(theme::rulerBarNumber);
         if (left >= 0.0f && left <= getWidth()) g.fillRect(left - 1.0f, 0.0f, 2.0f, static_cast<float>(getHeight()));
         if (right >= 0.0f && right <= getWidth()) g.fillRect(right - 1.0f, 0.0f, 2.0f, static_cast<float>(getHeight()));
     }

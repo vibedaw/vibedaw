@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "core/TransportState.h"
 #include "ui/Icons.h"
+#include <functional>
+#include <vector>
 
 namespace vibedaw {
 
@@ -12,6 +14,7 @@ public:
     ~TimeDisplay() override = default;
     
     void paint(juce::Graphics& g) override;
+    void mouseDown(const juce::MouseEvent& e) override;
     void setPosition(double positionInBeats, double tempo);
     void setTimeSignature(int numerator, int denominator);
     void setDisplayMode(int mode);
@@ -46,9 +49,14 @@ public:
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
+    void mouseEnter(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
 
     void setActive(bool active);
     bool isActive() const { return active_; }
+    // Borderless buttons render icon-only inside the transport pill; the pill
+    // (drawn by the parent) is their container surface.
+    void setBorderless(bool borderless) { borderless_ = borderless; repaint(); }
 
     std::function<void()> onClick;
     // Right-click/menu-button press; the owner builds the context menu.
@@ -58,26 +66,74 @@ private:
     Type type_;
     bool active_ = false;
     bool pressed_ = false;
+    bool hovered_ = false;
+    bool borderless_ = false;
 };
 
-class TempoControl : public juce::Component {
+// Tempo entry: drag scrubs vertically (Shift = 0.1 fine steps), a tap opens an
+// inline numeric editor in place, right-click shows Tap Tempo plus BPM presets.
+// Every interaction is a live TransportState command; no quiescence required.
+class TempoControl : public juce::Component,
+                     private juce::TextEditor::Listener {
 public:
     TempoControl();
-    ~TempoControl() override = default;
-    
+    ~TempoControl() override;
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent& e) override;
-    
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
+
     void setTempo(double tempo);
-    
+
+    // Preset list and menu model are static so offline tests can inspect them;
+    // dispatch is public like TransportComponent::handleLoopMenuAction.
+    static const std::vector<double>& presetTempos();
+    static juce::PopupMenu buildMenu(double currentTempo);
+    void handleMenuAction(int actionId);
+
+    // Inline editing lifecycle; tests drive these directly (no focus needed).
+    void beginEdit();
+    void commitEdit();
+    void cancelEdit();
+    bool isEditing() const { return editing_; }
+    bool isScrubbing() const { return scrubbing_; }
+    bool isInvalidEntry() const;
+    juce::String editingText() const { return editor_.getText(); }
+    void setEditingText(const juce::String& text) {
+        editor_.setText(text, juce::dontSendNotification);
+    }
+
     std::function<void(double)> onTempoChanged;
     std::function<void()> onTempoTapped;
-    
+    // Set by tests so a right-click never opens a native popup menu.
+    std::function<void()> showMenuOverride;
+
 private:
+    void textEditorReturnKeyPressed(juce::TextEditor&) override { commitEdit(); }
+    void textEditorEscapeKeyPressed(juce::TextEditor&) override { cancelEdit(); }
+    void textEditorFocusLost(juce::TextEditor&) override { commitEdit(); }
+
+    void showContextMenu();
+    static bool parseTempoText(const juce::String& text, double& value);
+
+    static constexpr double minTempo = 20.0;
+    static constexpr double maxTempo = 300.0;
+    static constexpr double bpmPerPx = 0.1; // One BPM per ten pixels of travel.
+    static constexpr int dragThreshold = 4;
+
     double tempo_ = 120.0;
+    bool scrubbing_ = false;
+    bool moved_ = false;
+    int dragStartY_ = 0;
+    double dragStartTempo_ = 120.0;
     bool editing_ = false;
-    
+    bool invalid_ = false;
+    juce::TextEditor editor_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TempoControl)
 };
 
@@ -160,6 +216,7 @@ private:
     std::unique_ptr<TimeSignatureControl> timeSigControl_;
     std::unique_ptr<TransportButton> loopBtn_;
     std::unique_ptr<TransportButton> metronomeBtn_;
+    juce::Rectangle<int> buttonGroupBounds_;
     juce::Component::SafePointer<LoopEditorPopover> openPopover_;
 
     void setupButtons();

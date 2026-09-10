@@ -1,4 +1,5 @@
 #include "IconButton.h"
+#include "ui/Theme.h"
 
 namespace vibedaw {
 
@@ -19,11 +20,11 @@ void IconButton::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds().toFloat().reduced(2);
     
     if (isMouseOver_) {
-        g.setColour(juce::Colour(0xff444444));
+        g.setColour(theme::borderStrong);
         g.fillRoundedRectangle(bounds, 3.0f);
     }
     
-    g.setColour(juce::Colour(0xffaaaaaa));
+    g.setColour(theme::textDefault);
     g.setFont(juce::Font(12.0f, juce::Font::plain));
     g.drawText(symbol_, getLocalBounds(), juce::Justification::centred);
 }

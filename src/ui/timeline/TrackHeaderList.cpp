@@ -1,4 +1,5 @@
 #include "TrackHeaderList.h"
+#include "ui/Theme.h"
 #include "ui/components/TextPrompt.h"
 
 namespace vibedaw {
@@ -19,18 +20,18 @@ TrackHeaderList::~TrackHeaderList() {
 void TrackHeaderList::paint(juce::Graphics& g) {
     auto bounds = getLocalBounds();
     
-    g.fillAll(juce::Colour(0xff252525));
+    g.fillAll(theme::raised);
     
-    g.setColour(juce::Colour(0xff2a2a2a));
+    g.setColour(theme::control);
     g.fillRect(0, 0, getWidth(), headerHeight);
     
-    g.setColour(juce::Colour(0xff3a3a3a));
+    g.setColour(theme::border);
     g.drawHorizontalLine(headerHeight - 1, 0.0f, static_cast<float>(getWidth()));
     
-    g.setColour(juce::Colour(0xff404040));
+    g.setColour(theme::controlActive);
     g.drawVerticalLine(getWidth() - 1, 0.0f, static_cast<float>(headerHeight));
     
-    g.setColour(juce::Colour(0xff888888));
+    g.setColour(theme::textSecondary);
     g.setFont(juce::Font(11.0f));
     g.drawText("Tracks", 4, 2, getWidth() - 8, headerHeight - 4, juce::Justification::centredLeft);
 }

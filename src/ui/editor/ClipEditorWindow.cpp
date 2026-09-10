@@ -1,12 +1,15 @@
 #include "ClipEditorWindow.h"
+#include "ui/Theme.h"
 #include "project/Clip.h"
 #include "core/MidiManager.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
 
-ClipEditorWindow::ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* midiManager)
-    : DocumentWindow("Piano Roll", juce::Colours::darkgrey, DocumentWindow::closeButton | DocumentWindow::minimiseButton, true)
+ClipEditorWindow::ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* midiManager,
+                                   TransportState* transport,
+                                   std::function<bool(double, double&)> localBeatProvider)
+    : DocumentWindow("Piano Roll", theme::control, DocumentWindow::closeButton | DocumentWindow::minimiseButton, true)
     , midiClip_(clip)
     , clipId_(clipId)
 {
@@ -15,6 +18,9 @@ ClipEditorWindow::ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* m
     editor_ = std::make_unique<PianoRollEditor>(midiManager);
     editor_->setListener(this);
     editor_->setMidiClip(clip, clipId);
+    editor_->setTransport(transport);
+    editor_->setLocalBeatProvider(std::move(localBeatProvider));
+    editor_->setFollowEnabled(transport != nullptr);
     
     auto content = std::make_unique<juce::Component>();
     
@@ -23,7 +29,7 @@ ClipEditorWindow::ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* m
     
     clipNameLabel_ = std::make_unique<juce::Label>("clipName", clip ? clip->getName() : "Untitled");
     clipNameLabel_->setBounds(10, 4, 200, 24);
-    clipNameLabel_->setColour(juce::Label::textColourId, juce::Colours::white);
+    clipNameLabel_->setColour(juce::Label::textColourId, theme::white);
     clipNameLabel_->setFont(juce::Font(14.0f, juce::Font::bold));
     toolbar_->addAndMakeVisible(clipNameLabel_.get());
     
@@ -40,6 +46,14 @@ ClipEditorWindow::ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* m
     gridResolutionCombo_->onChange = [this]() { updateGridResolution(); };
     toolbar_->addAndMakeVisible(gridResolutionCombo_.get());
     
+    followButton_.setButtonText("Follow");
+    followButton_.setBounds(332, 4, 80, 24);
+    followButton_.setToggleState(editor_->isFollowEnabled(), juce::dontSendNotification);
+    followButton_.onClick = [this]() {
+        editor_->setFollowEnabled(followButton_.getToggleState());
+    };
+    toolbar_->addAndMakeVisible(followButton_);
+
     content->addAndMakeVisible(toolbar_.get());
     
     editor_->setBounds(0, 32, 800, 500);

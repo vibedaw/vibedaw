@@ -29,10 +29,12 @@ public:
     
     void paintContent(juce::Graphics& g, juce::Rectangle<int> bounds) override;
     void resizedContent(juce::Rectangle<int> bounds) override;
-    
+    void applyFilter(const juce::String& filter) override;
+
 private:
     PluginScanner& scanner_;
     Listener* pluginListener_ = nullptr;
+    juce::String filterText_;
     
     std::unique_ptr<juce::TreeView> treeView_;
     std::unique_ptr<PluginTreeItem> rootItem_;

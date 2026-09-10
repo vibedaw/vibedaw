@@ -1,4 +1,5 @@
 #include "BrowserSection.h"
+#include "ui/Theme.h"
 
 namespace vibedaw {
 
@@ -6,7 +7,7 @@ BrowserSection::BrowserSection(const juce::String& name)
     : sectionName_(name)
 {
     titleLabel_.setText(sectionName_, juce::dontSendNotification);
-    titleLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+    titleLabel_.setColour(juce::Label::textColourId, theme::white);
     titleLabel_.setJustificationType(juce::Justification::centredLeft);
     titleLabel_.setFont(juce::Font(12.0f, juce::Font::bold));
     addAndMakeVisible(titleLabel_);
@@ -59,13 +60,13 @@ void BrowserSection::setContentComponent(juce::Component* comp) {
 }
 
 void BrowserSection::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff2a2a2a));
+    g.fillAll(theme::control);
     
     auto titleBounds = getLocalBounds().removeFromTop(titleBarHeight);
-    g.setColour(juce::Colour(0xff333333));
+    g.setColour(theme::hairline);
     g.fillRect(titleBounds);
     
-    g.setColour(juce::Colour(0xff444444));
+    g.setColour(theme::borderStrong);
     g.drawHorizontalLine(titleBarHeight, 0.0f, static_cast<float>(getWidth()));
     
     if (expanded_) {

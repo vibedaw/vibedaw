@@ -1,4 +1,5 @@
 #include "TimelinePanel.h"
+#include "ui/Theme.h"
 #include "project/Clip.h"
 #include <cmath>
 
@@ -14,17 +15,17 @@ public:
         auto bounds = getLocalBounds().toFloat();
         
         if (isDown) {
-            g.fillAll(juce::Colour(0xff404040));
+            g.fillAll(theme::controlActive);
         } else if (isOver) {
-            g.fillAll(juce::Colour(0xff353535));
+            g.fillAll(theme::controlDim);
         } else {
-            g.fillAll(juce::Colour(0xff2a2a2a));
+            g.fillAll(theme::control);
         }
         
-        g.setColour(juce::Colour(0xff666666));
+        g.setColour(theme::textFaint);
         g.drawRect(bounds, 1.0f);
         
-        g.setColour(juce::Colour(0xffaaaaaa));
+        g.setColour(theme::textDefault);
         g.setFont(juce::Font(16.0f, juce::Font::bold));
         g.drawText("+", bounds, juce::Justification::centred);
     }
@@ -182,7 +183,7 @@ void TimelinePanel::trackListChanged() {
 }
 
 void TimelinePanel::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff1a1a1a));
+    g.fillAll(theme::windowBackground);
 }
 
 void TimelinePanel::resized() {

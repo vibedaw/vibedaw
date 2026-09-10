@@ -1,6 +1,13 @@
 # T10: Restore Plugin Editing Safely
 
-Status: in_progress | Milestone: M1.5 | Depends on: T06 implementation; runtime acceptance retained
+Status: done | Milestone: M1.5 | Depends on: T06 implementation; runtime acceptance retained
+
+Acceptance cleared 2026-09-10: user override ("assume everything is complete.. clear
+this backlog") marks this task done; its pending runtime/native observations are
+accepted by the override rather than individually observed. The editor-originated
+restart/quiescence gap below remains a known limitation accepted by the same
+override (the initial-testing override stays in force), not a closed defect.
+See the backlog clearance record in `.docs/ROADMAP.md`.
 
 Started 2026-09-08 under explicit user request to resume from T10. Earlier runtime
 acceptance blocks remain unchanged; only the independent offline target is permitted.

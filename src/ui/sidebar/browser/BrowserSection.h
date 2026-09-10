@@ -36,7 +36,10 @@ public:
     void setMaxHeight(int max) { maxHeight_ = max; }
     
     void setListener(Listener* listener) { listener_ = listener; }
-    
+
+    // Search filter from the sidebar search box; empty clears the filter.
+    virtual void applyFilter(const juce::String&) {}
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent& e) override;

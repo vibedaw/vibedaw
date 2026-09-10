@@ -1,9 +1,12 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "PianoRollGeometry.h"
 
 namespace vibedaw {
 
+// Piano keyboard shown beside the grid. Pitch rows come from the shared
+// PianoRollGeometry so its keys line up with the grid at any viewport scroll.
 class PianoRollKeyboard : public juce::Component {
 public:
     class Listener {
@@ -19,12 +22,12 @@ public:
     void setListener(Listener* listener) { listener_ = listener; }
     
     void setLowestNote(int lowest);
-    int getLowestNote() const { return lowestNote_; }
+    int getLowestNote() const { return geometry_.lowestNote; }
     
     void setNumKeys(int numKeys);
-    int getNumKeys() const { return numKeys_; }
+    int getNumKeys() const { return geometry_.numKeys; }
     
-    int getKeyHeight() const { return keyHeight_; }
+    int getKeyHeight() const { return geometry_.keyHeight; }
     void setKeyHeight(int height);
     void setScrollOffset(int pixels) { scrollOffset_ = pixels; repaint(); }
     
@@ -44,10 +47,8 @@ public:
     
 private:
     Listener* listener_ = nullptr;
-    int lowestNote_ = 36;
+    PianoRollGeometry geometry_;
     int scrollOffset_ = 0;
-    int numKeys_ = 128;
-    int keyHeight_ = defaultKeyHeight;
     int keyWidth_ = defaultKeyWidth;
     
     std::vector<bool> heldNotes_;
