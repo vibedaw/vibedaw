@@ -462,3 +462,47 @@ checks on a dim region (wide region so the body exceeds the 0.1-beat edge
 tolerance), cleared background pixels, drag-creates-on-empty, default-region
 blue paint, and menu/button round-trips. Full build and CTest 1/1 pass with
 all earlier suites intact; `git diff --check` passed.
+
+## T07 Project Save and Load
+
+`projectFileTests` exercises the versioned project document end to end using a
+`StatefulInstrument` fake plugin (real state capture/restore, no third-party
+plugin) and a `pluginRestorer_` seam that mirrors the default restore path:
+
+- Serialize/parse/stage round trip: two channels with distinct plugin state,
+  names, mix state (volume/pan/mute/solo/mixer track/colour), a master gain,
+  three pooled clips (MIDI notes with velocity/channel, audio file reference,
+  pattern fields), a shared clip placed on two tracks plus an unresolved
+  source placeholder, transport tempo/meter/loop (`exists`+`enabled`)/
+  metronome. Every field is asserted after commit; plugin identity round-trips
+  beyond the bundle path (`uniqueId`, format, fileOrIdentifier, manufacturer,
+  version, isInstrument) and the opaque `STATE-BYTES` blob arrives intact.
+- Save-then-load into the same project: post-save mutations (tempo change, an
+  extra "Doomed" channel) are discarded, IDs/order/names/routing are restored,
+  the active channel resolves to the restored stable ID, ID counters advance
+  past restored maxima (new clip/channel get non-colliding IDs), and channel
+  reorder preserves per-instance routing.
+- Two-phase load contract: `prepareLoad` of a nonexistent or corrupt file
+  fails with an actionable error and leaves the live session untouched;
+  `commitLoad` without a successful prepare is a no-op; a successful prepare
+  stages the document without mutating anything (a cancelled discard prompt
+  simply never calls `commitLoad`).
+- Validation rejections (whole file, session untouched): unsupported
+  `formatVersion`, non-array channels, duplicate channel IDs, corrupt base64
+  plugin blobs, out-of-range volume, out-of-range tempo, malformed loop
+  object.
+- Missing plugins: a restorer that refuses the plugin leaves a visible
+  unresolved channel named after the saved channel, carrying the identity and
+  state blob; re-saving preserves the identity+blob for recovery.
+- Failed saves: writing over a directory and saving with no chosen path both
+  fail with errors and leave the dirty state intact (no false success).
+- Dirty tracking: channel/clip/transport edits mark the document dirty; save
+  and New clear it; New resets the models, transport defaults, loop region
+  (`exists == false`) and the project file path.
+- No native dialogs are involved: file selection and confirmations run through
+  the same interceptor seams the UI uses (`fileDialogInterceptor`,
+  `confirmInterceptor`), so real FileChooser/AlertWindow behavior remains
+  watcher/manual acceptance, as does plugin state through a real restart.
+
+Full build and CTest 1/1 pass with all earlier suites intact; `git diff
+--check` passed. No application build/launch, staging or commit.

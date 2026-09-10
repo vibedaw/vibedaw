@@ -1,7 +1,10 @@
 #include "MainContent.h"
+#include "MainWindow.h"
 #include "plugins/PluginHost.h"
 #include "core/Constants.h"
 #include "utils/Logger.h"
+#include "components/FileDialog.h"
+#include "components/TextPrompt.h"
 #include "sidebar/Sidebar.h"
 #include "sidebar/SidebarContainer.h"
 #include "sidebar/channel/ChannelRackSidebar.h"
@@ -67,7 +70,11 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
         openPluginWindow();
     };
     addAndMakeVisible(pluginButton_);
-    
+
+    fileButton_.setTooltip("Project file: New, Open, Save, Save As");
+    fileButton_.onClick = [this]() { showProjectMenu(); };
+    addAndMakeVisible(fileButton_);
+
     midiLabel_.setText("MIDI:", juce::dontSendNotification);
     addAndMakeVisible(midiLabel_);
     
@@ -105,7 +112,7 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
 
 MainContent::~MainContent() {
     stopTimer();
-    while (!openClipEditors_.empty()) openClipEditors_.back()->closeButtonPressed();
+    closeAllClipEditors();
     project_.getClipPool().removeListener(this);
     project_.removeListener(this);
     LOG_INFO("MainContent: Destroyed");
@@ -154,6 +161,7 @@ void MainContent::updateLayout() {
     midiLabel_.setBounds(statusBar.removeFromLeft(40));
     midiDeviceCombo_.setBounds(statusBar.removeFromLeft(150));
     pluginButton_.setBounds(statusBar.removeFromRight(70));
+    fileButton_.setBounds(statusBar.removeFromRight(48));
     statusLabel_.setBounds(statusBar);
 }
 
@@ -176,7 +184,18 @@ bool MainContent::handleKeyPress(const juce::KeyPress& key) {
         transportState_.reset();
         return true;
     }
-    
+
+    if (key.getModifiers().isCtrlDown()) {
+        const auto code = key.getKeyCode();
+        if (code == 'N' || code == 'n') { actionNewProject(); return true; }
+        if (code == 'O' || code == 'o') { actionOpenProject(); return true; }
+        if (code == 'S' || code == 's') {
+            if (key.getModifiers().isShiftDown()) actionSaveProjectAs();
+            else actionSaveProject();
+            return true;
+        }
+    }
+
     auto* focused = panelContainer_->getFocusedPanel();
     double now = juce::Time::getMillisecondCounterHiRes();
     
@@ -359,6 +378,123 @@ void MainContent::clipEditorClosed(ClipEditorWindow* window) {
     if (it != openClipEditors_.end()) {
         openClipEditors_.erase(it);
     }
+}
+
+void MainContent::projectDocumentChanged() {
+    if (auto* window = findParentComponentOfClass<MainWindow>()) window->updateProjectTitle();
+}
+
+void MainContent::closeAllClipEditors() {
+    while (!openClipEditors_.empty()) openClipEditors_.back()->closeButtonPressed();
+}
+
+void MainContent::showError(const juce::String& text) {
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Project", text);
+}
+
+void MainContent::confirmDiscardThen(std::function<void()> action) {
+    if (!project_.isDirty()) {
+        action();
+        return;
+    }
+    confirmAsync("Unsaved changes", "The current project has unsaved changes. Discard them and continue?",
+        "Discard", this, [safe = juce::Component::SafePointer<MainContent>(this), action = std::move(action)]() {
+            if (safe != nullptr) action();
+        });
+}
+
+void MainContent::showProjectMenu() {
+    juce::PopupMenu menu;
+    menu.addItem(1, "New (Ctrl+N)", true, false);
+    menu.addItem(2, "Open... (Ctrl+O)", true, false);
+    menu.addSeparator();
+    menu.addItem(3, "Save (Ctrl+S)", true, false);
+    menu.addItem(4, "Save As... (Ctrl+Shift+S)", true, false);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&fileButton_),
+        [safe = juce::Component::SafePointer<MainContent>(this)](int result) {
+            if (safe != nullptr) safe->runFileAction(result);
+        });
+}
+
+void MainContent::runFileAction(int actionId) {
+    switch (actionId) {
+        case 1: actionNewProject(); break;
+        case 2: actionOpenProject(); break;
+        case 3: actionSaveProject(); break;
+        case 4: actionSaveProjectAs(); break;
+        default: break;
+    }
+}
+
+void MainContent::actionNewProject() {
+    confirmDiscardThen([safe = juce::Component::SafePointer<MainContent>(this)]() {
+        if (safe == nullptr) return;
+        safe->closeAllClipEditors();
+        safe->project_.newProject();
+        safe->updateStatusLabel();
+    });
+}
+
+void MainContent::actionOpenProject() {
+    chooseProjectFile(false, [safe = juce::Component::SafePointer<MainContent>(this)](const juce::File& file) {
+        if (safe == nullptr || file.getFullPathName().isEmpty()) return; // Cancelled selection.
+        juce::String error;
+        // Parse and validate before any discard prompt: a failed load must
+        // leave the current session completely untouched.
+        if (!safe->project_.prepareLoad(file, error)) {
+            safe->showError("The project could not be opened.\n\n" + error);
+            return;
+        }
+        safe->confirmDiscardThen([safe]() {
+            if (safe == nullptr) return;
+            safe->closeAllClipEditors();
+            safe->project_.commitLoad();
+            safe->updateStatusLabel();
+        });
+    });
+}
+
+void MainContent::actionSaveProject() {
+    if (project_.getProjectFile().getFullPathName().isEmpty()) {
+        actionSaveProjectAs();
+        return;
+    }
+    juce::String error;
+    if (!project_.saveProject(error)) showError("The project could not be saved.\n\n" + error);
+}
+
+void MainContent::actionSaveProjectAs() {
+    chooseProjectFile(true, [safe = juce::Component::SafePointer<MainContent>(this)](const juce::File& file) {
+        if (safe == nullptr || file.getFullPathName().isEmpty()) return; // Cancelled selection.
+        juce::String error;
+        if (!safe->project_.saveProjectAs(file, error))
+            safe->showError("The project could not be saved.\n\n" + error);
+    });
+}
+
+void MainContent::chooseProjectFile(bool forSaving, std::function<void(const juce::File&)> onChosen) {
+    if (auto& intercept = fileDialogInterceptor(); intercept) {
+        intercept(forSaving, this, std::move(onChosen));
+        return;
+    }
+    if (fileDialogActive_) return; // One pending chooser per thread; a second request is ignored.
+    const auto extension = juce::String(Constants::PROJECT_FILE_EXTENSION);
+    fileDialog_ = std::make_unique<juce::FileChooser>(
+        forSaving ? "Save project" : "Open project",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+        "*" + extension, true);
+    const int flags = juce::FileBrowserComponent::canSelectFiles |
+        (forSaving ? juce::FileBrowserComponent::saveMode : juce::FileBrowserComponent::openMode);
+    fileDialogActive_ = true;
+    fileDialog_->launchAsync(flags,
+        [safe = juce::Component::SafePointer<MainContent>(this), onChosen = std::move(onChosen), extension, forSaving]
+        (const juce::FileChooser& chooser) {
+            if (safe != nullptr) safe->fileDialogActive_ = false;
+            auto file = chooser.getResult();
+            if (forSaving && file.getFullPathName().isNotEmpty() && !file.hasFileExtension(extension))
+                file = file.withFileExtension(extension);
+            onChosen(file);
+        });
 }
 
 } // namespace vibedaw

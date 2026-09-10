@@ -5,8 +5,9 @@
 
 namespace vibedaw {
 
-Track::Track(const juce::String& trackName)
-    : name(trackName)
+Track::Track(const juce::String& trackName, const juce::String& restoredId)
+    : id_(restoredId.isNotEmpty() ? restoredId : juce::Uuid().toString())
+    , name(trackName)
 {
     LOG_INFO("Track: Created '" + name + "'");
 }

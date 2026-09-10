@@ -19,6 +19,7 @@ add_executable(offline_tests offline_tests.cpp
     ../src/project/Note.cpp ../src/project/Clip.cpp ../src/project/ClipInstance.cpp
     ../src/project/ClipPool.cpp ../src/project/Track.cpp ../src/project/TrackList.cpp
     ../src/project/Channel.cpp ../src/project/ChannelList.cpp ../src/project/Project.cpp
+    ../src/project/ProjectDocument.cpp
     ../src/project/Settings.cpp ../src/core/TransportState.cpp ../src/core/ChannelMixer.cpp
     ../src/core/AudioEngine.cpp ../src/core/MidiManager.cpp
     ../src/plugins/PluginHost.cpp ../src/plugins/PluginWindow.cpp ../src/utils/Logger.cpp

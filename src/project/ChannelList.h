@@ -26,6 +26,10 @@ public:
     ~ChannelList();
     
     Channel* addChannel(const juce::String& name = {}, Channel::Type type = Channel::Type::Instrument);
+    // Project-load restore: creates a channel with an exact saved ID (T07).
+    // Validates id >= 0, uniqueness and capacity; advances the ID counter past
+    // the restored ID. Message thread; caller holds any required quiescence.
+    Channel* restoreChannel(ChannelId id, const juce::String& name, Channel::Type type);
     void removeChannel(int index);
     void clearChannels();
     
@@ -34,6 +38,7 @@ public:
     Channel* getChannelById(ChannelId id) const;
     const std::vector<std::unique_ptr<Channel>>& getChannels() const { return channels; }
     MasterBus& getMasterBus() { return masterBus; }
+    const MasterBus& getMasterBus() const { return masterBus; }
     
     void moveChannel(int fromIndex, int toIndex);
     

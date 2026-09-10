@@ -61,7 +61,7 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 
 | Order | Task | Milestone | Status | Depends On |
 | --- | --- | --- | --- | --- |
-| 1 | [T03 Routing, Timing, and Placement](tasks/T03-routing-timing-placement.md) | M1 | blocked | None |
+| 1 | [T03 Routing, Timing, and Placement](tasks/T03-routing-timing-placement.md) | M1 | done | None |
 | 2 | [T06 Safe Audio Boundary](tasks/T06-safe-audio-boundary.md) | M1 | blocked | T03 |
 | 3 | [T01 Audio-Clocked Transport](tasks/T01-audio-clocked-transport.md) | M1 | blocked | T06 |
 | 4 | [T02 MIDI Arrangement Playback](tasks/T02-midi-arrangement-playback.md) | M1 | blocked | T01, T03, T06 |
@@ -73,7 +73,7 @@ Task numbers retain the original discussion's IDs; execute in the order below, n
 | 10 | [T13 Unified Sidebar Tab Rail](tasks/T13-sidebar-tab-rail.md) | M1.5 | done | T12 (workstream order) |
 | 11 | [T14 Context Menus and Toolbar Cleanup](tasks/T14-context-menus.md) | M1.5 | done | T10, T11, T12, T13 |
 | 12 | [T16 Loop Region UX](tasks/T16-loop-region-ux.md) | M1.5 follow-up | blocked | T05, T13, T14 |
-| 13 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | backlog | M1, M1.5 |
+| 13 | [T07 Project Save and Load](tasks/T07-project-save-load.md) | M2 | blocked | M1, M1.5 |
 | 14 | [T08 Editor Navigation](tasks/T08-editor-navigation.md) | M2 | backlog | T03, T01 |
 | 15 | [T09 Integration and Documentation](tasks/T09-integration-documentation.md) | M2 | backlog | T07, T08, T10-T14 |
 | 16 | [T15 Mixer Routing Model](tasks/T15-mixer-routing-model.md) | Later (post-M2) | backlog | M2 (workstream order) |
@@ -305,6 +305,49 @@ region — all with offline regressions, CTest 1/1, `git diff --check`
 passed. Re-observation pending. T07 remains next;
 earlier statuses and T10's stock-JUCE initial-testing override are unchanged.
 No application build/launch, staging or commit.
+
+T03 watcher/manual acceptance was observed and accepted by the user 2026-09-09:
+four-beat placement timing/beat units with tempo changes holding musical position,
+shared-source edits updating both placements, placement deletion preserving the
+source, two-destinations-on-one-track and one-destination-across-two-tracks
+assignments, missing-destination rejection, removed-source unresolved placeholders
+with editor teardown, invalid input handling, and instance display on existing and
+new tracks. Channel reorder has no UI, so its assignment-retention case remains
+covered by the T06 offline suite rather than watcher observation. T03 is done.
+T06 is next in the acceptance walkthrough; all other statuses unchanged. No
+application build/launch, staging or commit was performed for this record.
+
+User override 2026-09-10: "next task.. i will do testing later" authorizes T07
+end to end despite T16's pending re-observation and the T06 acceptance walkthrough
+remaining deferred. T07 marked in_progress; all existing work, earlier statuses,
+and T10's stock-JUCE initial-testing override remain intact. Only the independent
+offline_tests target may be built/run; no application build/launch, staging or
+commit. Implementation plan: versioned JSON project format separate from Settings,
+plugin identity retained via PluginDescription with opaque base64 state, missing
+plugins become unresolved channels preserving identity/blob, parse-validate-stage
+before any live mutation, in-place clear+repopulate under AudioQuiescence so
+ChannelMixer/ArrangementPublisher references survive, dirty tracking via existing
+listener plumbing, New/Open/Save/Save As through a status-bar File menu button and
+Ctrl+N/O/S/Ctrl+Shift+S with confirmAsync unsaved-work prompts and a FileChooser
+test seam. T07 implementation and offline verification completed 2026-09-10:
+versioned JSON schema v1 (`.docs/PROJECT_FORMAT.md`) with stable channel IDs and
+order, plugin identity captured as a specific PluginDescription (not just bundle
+path) plus opaque base64 state, channel/master mix state, tracks and instances
+with restoreable UUIDs, pooled MIDI/audio/pattern clips, tempo/meter/loop
+(`exists`)/metronome; parse-validate-stage before any live mutation with
+two-phase prepareLoad/commitLoad (failed load leaves the session intact);
+atomic temp-file saves that never report false success; missing plugins become
+visible unresolved channels preserving identity/blob for recovery (re-save
+round-trips them); in-place clear+repopulate under AudioQuiescence so
+ChannelMixer/ArrangementPublisher references survive; dirty tracking via
+existing listener plumbing with discard prompts before New/Open/quit; status-bar
+File menu button plus Ctrl+N/O/S/Ctrl+Shift+S. Full offline build succeeded and
+CTest 1/1 passed with all earlier suites intact; `git diff --check` passed.
+T07 is blocked on watcher/manual acceptance (native FileChooser flows, prompts,
+editors across load, plugin state through a real restart, audible workflow).
+T08 is next in the workstream; earlier statuses and T10's stock-JUCE
+initial-testing override are unchanged. No application build/launch, staging or
+commit was performed.
 
 ## Verified Starting Point
 

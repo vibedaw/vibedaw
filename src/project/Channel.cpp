@@ -43,6 +43,7 @@ void Channel::setPlugin(std::unique_ptr<PluginHost> pluginHost) {
     startTimerHz(60);
     plugin = std::move(pluginHost);
     if (plugin) {
+        missingPlugin.reset();
         channelType = Type::Instrument;
         LOG_INFO("Channel: Plugin set on '" + name + "': " + plugin->getName());
         if (isPrepared_) {

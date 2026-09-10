@@ -32,6 +32,23 @@ ClipId ClipPool::addClip(std::unique_ptr<Clip> clip) {
     return id;
 }
 
+ClipId ClipPool::restoreClip(ClipId clipId, std::unique_ptr<Clip> clip) {
+    if (clipId < 0 || clipId == std::numeric_limits<ClipId>::max()) return InvalidClipId;
+    if (!clip || !std::isfinite(clip->getStartTime()) || clip->getStartTime() < 0.0 ||
+        !std::isfinite(clip->getDuration()) || clip->getDuration() <= 0.0 || !std::isfinite(clip->getEndTime())) {
+        return InvalidClipId;
+    }
+    if (getClip(clipId) != nullptr) return InvalidClipId;
+    if (nextId_ <= clipId) nextId_ = static_cast<ClipId>(clipId + 1);
+
+    clips_.emplace_back(clipId, std::move(clip));
+    Clip* ptr = clips_.back().second.get();
+    ptr->addListener(this);
+    notifyClipAdded(clipId, ptr);
+    LOG_INFO("ClipPool: Restored clip with ID " + juce::String(clipId));
+    return clipId;
+}
+
 void ClipPool::removeClip(ClipId clipId) {
     auto it = std::find_if(clips_.begin(), clips_.end(),
         [clipId](const auto& pair) { return pair.first == clipId; });

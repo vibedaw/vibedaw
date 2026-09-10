@@ -23,6 +23,9 @@ public:
     ~TrackList();
     
     Track* addTrack(const juce::String& name = {});
+    // Project-load restore: creates a track with an exact saved UUID (T07/T12).
+    // Validates id non-empty and unique. Message thread only.
+    Track* restoreTrack(const juce::String& id, const juce::String& name);
     Track* getTrackById(const juce::String& id) const;
     // Message thread only. Empty target creates a lane; empty source requires a
     // candidate whose source/routing the caller has validated. Moves allow placeholders.

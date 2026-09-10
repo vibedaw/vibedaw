@@ -16,7 +16,13 @@ public:
     ~PluginHost() override;
     
     bool loadPlugin(const juce::String& pluginPath);
+    // Re-instantiates from a saved description (T07); bundle paths alone are
+    // ambiguous, so the specific description captured at load time is authoritative.
+    bool createFromDescription(const juce::PluginDescription& description);
     bool isLoaded() const { return pluginInstance != nullptr; }
+    // Valid whenever a plugin is loaded; empty fields only for injected test fakes.
+    const juce::PluginDescription& getPluginDescription() const { return pluginDescription_; }
+    bool hasPluginDescription() const { return hasDescription_; }
     
     void prepareToPlay(double sampleRate, int blockSize) override;
     void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi) override;
@@ -43,6 +49,8 @@ private:
     std::vector<PluginWindow*> windows;
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
+    juce::PluginDescription pluginDescription_;
+    bool hasDescription_ = false;
     juce::String currentPluginPath;
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;

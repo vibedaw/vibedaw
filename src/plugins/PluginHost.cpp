@@ -12,7 +12,12 @@ PluginHost::PluginHost() {
 }
 
 PluginHost::PluginHost(std::unique_ptr<juce::AudioPluginInstance> instance)
-    : pluginInstance(std::move(instance)) {}
+    : pluginInstance(std::move(instance)) {
+    if (pluginInstance) {
+        pluginInstance->fillInPluginDescription(pluginDescription_);
+        hasDescription_ = true;
+    }
+}
 
 PluginHost::~PluginHost() {
     JUCE_ASSERT_MESSAGE_THREAD
@@ -63,7 +68,9 @@ bool PluginHost::loadPlugin(const juce::String& pluginPath) {
         LOG_ERROR("PluginHost: No valid plugin found in file");
         return false;
     }
-    
+    pluginDescription_ = description;
+    hasDescription_ = true;
+
     juce::String error;
     pluginInstance = formatManager.createPluginInstance(description, currentSampleRate, currentBlockSize, error);
     
@@ -81,6 +88,33 @@ bool PluginHost::loadPlugin(const juce::String& pluginPath) {
         return false;
     }
     
+    return true;
+}
+
+bool PluginHost::createFromDescription(const juce::PluginDescription& description) {
+    JUCE_ASSERT_MESSAGE_THREAD
+    AudioQuiescence::Edit edit;
+    closeWindows();
+    LOG_INFO("PluginHost: Creating plugin from description: " + description.name);
+
+    releaseResources();
+    pluginInstance.reset();
+    pluginDescription_ = description;
+    hasDescription_ = true;
+    currentPluginPath = description.fileOrIdentifier;
+
+    juce::String error;
+    pluginInstance = formatManager.createPluginInstance(description, currentSampleRate, currentBlockSize, error);
+    if (pluginInstance == nullptr) {
+        LOG_ERROR("PluginHost: Failed to create plugin instance from description: " + error);
+        return false;
+    }
+    if (pluginInstance->getTotalNumInputChannels() > 2 || pluginInstance->getTotalNumOutputChannels() > 2) {
+        LOG_ERROR("PluginHost: Only mono/stereo plugins are supported by the bounded audio path");
+        pluginInstance.reset();
+        return false;
+    }
+    LOG_INFO("PluginHost: Successfully created plugin: " + pluginInstance->getName());
     return true;
 }
 

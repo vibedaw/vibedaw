@@ -20,7 +20,9 @@ public:
     // Quarter-note beats. Source beat zero maps to startTime. Play once, truncate
     // at min(source length, placement length); a longer placement ends in silence.
     ClipInstance();
-    ClipInstance(ClipId clipId, ChannelId channelId, double startTime, double duration = 1.0);
+    // An explicit id restores a saved instance identity across sessions (T07/T12).
+    ClipInstance(ClipId clipId, ChannelId channelId, double startTime, double duration = 1.0,
+                 const juce::String& id = {});
     ~ClipInstance() = default;
     const juce::String& getId() const { return id_; }
     

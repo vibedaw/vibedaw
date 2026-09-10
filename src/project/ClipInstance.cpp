@@ -4,8 +4,10 @@ namespace vibedaw {
 
 ClipInstance::ClipInstance() = default;
 
-ClipInstance::ClipInstance(ClipId clipId, ChannelId channelId, double startTime, double duration)
-    : clipId_(clipId)
+ClipInstance::ClipInstance(ClipId clipId, ChannelId channelId, double startTime, double duration,
+                           const juce::String& restoredId)
+    : id_(restoredId.isNotEmpty() ? restoredId : juce::Uuid().toString())
+    , clipId_(clipId)
     , channelId_(channelId)
     , startTime_(startTime)
     , duration_(duration)

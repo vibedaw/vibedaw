@@ -69,6 +69,19 @@ Track* TrackList::addTrack(const juce::String& name) {
     return tracks.back().get();
 }
 
+Track* TrackList::restoreTrack(const juce::String& id, const juce::String& name) {
+    if (id.isEmpty() || getTrackById(id) != nullptr) return nullptr;
+    auto trackName = name.isEmpty()
+        ? "Track " + juce::String(tracks.size() + 1)
+        : name;
+    auto track = std::make_unique<Track>(trackName, id);
+    auto* ptr = track.get();
+    tracks.push_back(std::move(track));
+    notifyTrackAdded(ptr);
+    notifyTrackListChanged();
+    return ptr;
+}
+
 void TrackList::removeTrack(int index) {
     if (index >= 0 && index < static_cast<int>(tracks.size())) {
         tracks.erase(tracks.begin() + index);

@@ -60,28 +60,45 @@ private:
     void clipRemoved(ClipId) override {}
     void clipChanged(ClipId, Clip*) override {}
     void clipWillBeRemoved(ClipId id) override;
+    void projectDocumentChanged() override;
     void timerCallback() override;
     void updateStatusLabel();
     void handlePanelFocusHotkey(int panelIndex, double currentTime);
     std::vector<ClipEditorWindow*> openClipEditors_;
-    
+
+    // T07 project document actions. Each guard confirms unsaved work first;
+    // cancelled prompts/dialogs change nothing.
+    void confirmDiscardThen(std::function<void()> action);
+    void actionNewProject();
+    void actionOpenProject();
+    void actionSaveProject();
+    void actionSaveProjectAs();
+    void chooseProjectFile(bool forSaving, std::function<void(const juce::File&)> onChosen);
+    void closeAllClipEditors();
+    void showProjectMenu();
+    void runFileAction(int actionId);
+    void showError(const juce::String& text);
+
     void updateLayout();
-    
+
     MidiManager& midiManager_;
     Project& project_;
     TransportState& transportState_;
     PluginScanner pluginScanner_;
-    
+
     std::unique_ptr<TransportComponent> transport_;
     std::unique_ptr<SidebarContainer> leftSidebarContainer_;
     std::unique_ptr<SidebarContainer> rightSidebarContainer_;
     std::unique_ptr<PanelContainer> panelContainer_;
-    
+
     TimelinePanel* timelinePanel_ = nullptr;
     MixerPanel* mixerPanel_ = nullptr;
     PianoPanel* pianoPanel_ = nullptr;
-    
+
     PluginButton pluginButton_;
+    juce::TextButton fileButton_ { "File" };
+    std::unique_ptr<juce::FileChooser> fileDialog_;
+    bool fileDialogActive_ = false;
     juce::ComboBox midiDeviceCombo_;
     juce::Label statusLabel_;
     juce::Label midiLabel_;

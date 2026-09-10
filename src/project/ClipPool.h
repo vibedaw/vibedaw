@@ -23,6 +23,10 @@ public:
     ~ClipPool();
     
     ClipId addClip(std::unique_ptr<Clip> clip);
+    // Project-load restore: inserts a pooled clip with an exact saved ID (T07).
+    // Validates id >= 0, uniqueness and clip validity; advances the ID counter
+    // past the restored ID. Message thread only.
+    ClipId restoreClip(ClipId clipId, std::unique_ptr<Clip> clip);
     void removeClip(ClipId clipId);
     void clearClips();
     

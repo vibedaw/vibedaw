@@ -32,6 +32,26 @@ Channel* ChannelList::addChannel(const juce::String& name, Channel::Type type) {
     return ptr;
 }
 
+Channel* ChannelList::restoreChannel(ChannelId id, const juce::String& name, Channel::Type type) {
+    AudioQuiescence::Edit edit;
+    if (id < 0 || id == std::numeric_limits<ChannelId>::max()) return nullptr;
+    if (getNumChannels() >= maxChannels) return nullptr;
+    if (getChannelById(id) != nullptr) return nullptr;
+    if (nextId_ <= id) nextId_ = static_cast<ChannelId>(id + 1);
+    int index = static_cast<int>(channels.size());
+    juce::String channelName = name.isNotEmpty() ? name : "Channel " + juce::String(index + 1);
+
+    auto channel = std::make_unique<Channel>(channelName, type, id);
+    auto* ptr = channel.get();
+    channels.push_back(std::move(channel));
+    ptr->addChangeListener(this);
+
+    notifyChannelAdded(ptr);
+    LOG_INFO("ChannelList: Restored channel '" + channelName + "' with ID " + juce::String(id));
+
+    return ptr;
+}
+
 void ChannelList::removeChannel(int index) {
     AudioQuiescence::Edit edit;
     if (index >= 0 && index < static_cast<int>(channels.size())) {

@@ -6,6 +6,7 @@
 #include "core/ProcessorBase.h"
 #include "ClipInstance.h"
 #include <atomic>
+#include <optional>
 #include <vector>
 #include "core/AudioBoundary.h"
 #include "core/MixerState.h"
@@ -33,6 +34,17 @@ public:
     void setPlugin(std::unique_ptr<PluginHost> pluginHost);
     PluginHost* getPlugin() const { return plugin.get(); }
     bool hasPlugin() const { return plugin != nullptr; }
+
+    // Unresolved-plugin recovery: a channel whose plugin could not be
+    // instantiated on load keeps the saved identity and opaque state blob so a
+    // later save can still restore it once the plugin is available (T07).
+    struct MissingPlugin {
+        juce::PluginDescription description;
+        juce::MemoryBlock state;
+    };
+    void setMissingPlugin(MissingPlugin info) { missingPlugin = std::move(info); notifyChanged(); }
+    void clearMissingPlugin() { missingPlugin.reset(); }
+    const MissingPlugin* getMissingPlugin() const { return missingPlugin ? &*missingPlugin : nullptr; }
     
     void setSampleFile(const juce::File& file);
     const juce::File& getSampleFile() const { return sampleFile; }
@@ -96,6 +108,7 @@ private:
     Type channelType;
     
     std::unique_ptr<PluginHost> plugin;
+    std::optional<MissingPlugin> missingPlugin;
     juce::File sampleFile;
     
     int mixerTrackId = -1;

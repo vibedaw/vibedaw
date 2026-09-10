@@ -15,6 +15,7 @@
 #include "ui/sidebar/browser/BrowserSidebar.h"
 #include "ui/sidebar/SidebarContainer.h"
 #include "ui/sidebar/SidebarTab.h"
+#include "core/Constants.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -42,6 +43,10 @@ namespace vibedaw {
 struct ProjectTestAccess {
     static void loader(Project& project, std::function<std::unique_ptr<PluginHost>(const juce::String&)> load) {
         project.pluginLoader_ = std::move(load);
+    }
+    static void restorer(Project& project,
+        std::function<std::unique_ptr<PluginHost>(const juce::PluginDescription&, const juce::MemoryBlock&)> restore) {
+        project.pluginRestorer_ = std::move(restore);
     }
 };
 struct TimelineContentTestAccess {
@@ -268,6 +273,28 @@ public:
         };
         return new Editor(*this);
     }
+};
+
+// T07: fake plugin with real state capture so project round-trips exercise
+// opaque plugin blobs without any third-party plugin.
+class StatefulInstrument : public OfflineInstrument {
+public:
+    explicit StatefulInstrument(Probe& p) : OfflineInstrument(p) {}
+    juce::MemoryBlock received;
+    void fillInPluginDescription(juce::PluginDescription& description) const override {
+        description.name = "Stateful instrument";
+        description.descriptiveName = "Stateful instrument (offline)";
+        description.pluginFormatName = "Offline";
+        description.fileOrIdentifier = "/offline/stateful.vst3";
+        description.manufacturerName = "vibedaw tests";
+        description.version = "1.2.3";
+        description.uniqueId = 0x7ea77;
+        description.isInstrument = true;
+        description.numInputChannels = 0;
+        description.numOutputChannels = 2;
+    }
+    void getStateInformation(juce::MemoryBlock& block) override { block.append("STATE-BYTES", 11); }
+    void setStateInformation(const void* data, int size) override { received.append(data, static_cast<std::size_t>(juce::jmax(0, size))); }
 };
 
 static void pluginEditorCreationTests() {
@@ -3539,6 +3566,422 @@ static void contextMenuTests() {
     CHECK(juce::Component::getNumCurrentlyModalComponents() == 0);
 }
 
+static void projectFileTests() {
+    const juce::File home(VIBEDAW_TEST_HOME);
+    CHECK(home.isDirectory());
+    const auto extension = juce::String(Constants::PROJECT_FILE_EXTENSION);
+    juce::String error;
+
+    // ---- Build a two-channel sketch with a shared clip and full document state.
+    Project project;
+    auto& channels = project.getChannelList();
+    auto& pool = project.getClipPool();
+    auto& tracks = project.getTrackList();
+    auto& transport = project.getTransportState();
+
+    CHECK(!project.isDirty() && project.getProjectName() == juce::String("Untitled"));
+    Probe first, second;
+    // Restore seam: only the fake offline format resolves; state is applied
+    // exactly as the default restorer would (T07 contract).
+    std::vector<std::unique_ptr<Probe>> restoredProbes;
+    int restoreCalls = 0;
+    ProjectTestAccess::restorer(project,
+        [&](const juce::PluginDescription& description, const juce::MemoryBlock& state) -> std::unique_ptr<PluginHost> {
+            ++restoreCalls;
+            CHECK(description.uniqueId == 0x7ea77 && description.isInstrument);
+            auto* probe = restoredProbes.emplace_back(std::make_unique<Probe>()).get();
+            auto instrument = std::make_unique<StatefulInstrument>(*probe);
+            if (state.getSize() > 0)
+                instrument->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+            return std::make_unique<PluginHost>(std::move(instrument));
+        });
+    auto* alpha = channels.addChannel("Alpha");
+    auto* beta = channels.addChannel("Beta");
+    const auto alphaId = alpha->getId();
+    const auto betaId = beta->getId();
+    CHECK(project.isDirty()); // Channel creation is document content.
+    alpha->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(first)));
+    beta->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(second)));
+    alpha->setVolume(0.75f);
+    alpha->setPan(-0.25f);
+    alpha->setSolo(true);
+    alpha->setMixerTrackId(3);
+    beta->setVolume(1.5f);
+    beta->setMuted(true);
+    beta->setColour(juce::Colour(0xffffa500));
+    project.getMasterBus().setGain(0.8f);
+    transport.setTempo(96.0);
+    transport.setTimeSignature(7, 8);
+    transport.setLoopRegion(4, 20);
+    transport.setLoopEnabled(true);
+    transport.setMetronomeEnabled(true);
+
+    auto source = std::make_unique<MidiClip>(0, 4);
+    source->addNote(Note(60, 0, 1, 90));
+    source->addNote(Note(64, 1.5, 2, 111));
+    source->setName("Sketch");
+    const auto midiClipId = pool.addClip(std::move(source));
+    auto audioSource = std::make_unique<AudioClip>(0, 8);
+    const auto audioPath = home.getChildFile("tone.wav");
+    audioSource->setAudioFile(audioPath);
+    const auto audioClipId = pool.addClip(std::move(audioSource));
+    auto patternSource = std::make_unique<PatternClip>(0, 4);
+    patternSource->setPatternLength(2.0);
+    patternSource->setLoopCount(3);
+    const auto patternClipId = pool.addClip(std::move(patternSource));
+
+    auto* trackOne = tracks.addTrack("One");
+    auto* trackTwo = tracks.addTrack("Two");
+    const auto trackOneId = trackOne->getId();
+    const auto trackTwoId = trackTwo->getId();
+    auto placed = std::make_unique<ClipInstance>(midiClipId, alphaId, 8, 4);
+    const auto placedId = placed->getId();
+    trackOne->addClipInstance(std::move(placed));
+    trackOne->addClipInstance(std::make_unique<ClipInstance>(midiClipId, betaId, 16, 2));
+    trackTwo->addClipInstance(std::make_unique<ClipInstance>(audioClipId, alphaId, 8, 4));
+    // Unresolved source placeholder (T03): preserved across save/load.
+    trackTwo->addClipInstance(std::make_unique<ClipInstance>(9999, alphaId, 0, 1));
+
+    // ---- Serialize: the file never carries playback state or selection.
+    transport.setPlaying(true);
+    transport.setPositionInBeats(7);
+    {
+        const auto json = ProjectDocument::serialize(project);
+        CHECK(json.contains("\"channels\"") && json.contains("\"tracks\"") && json.contains("\"clips\""));
+        CHECK(json.contains("\"state\""));
+        ProjectDocument::Staged staged;
+        if (!ProjectDocument::stage(json, staged, error)) {
+            std::cerr << "STAGE-ERR: " << error << "\nJSON: " << json << "\n";
+            CHECK(false);
+        }
+        CHECK(staged.version == ProjectDocument::currentVersion);
+        CHECK(staged.channels.size() == 2 && staged.clips.size() == 3 && staged.tracks.size() == 2);
+        CHECK(!staged.tracks[0].instances[0].id.isEmpty());
+        CHECK(staged.channels[0].plugin.has_value());
+        CHECK(std::memcmp(staged.channels[0].plugin->state.getData(), "STATE-BYTES", 11) == 0);
+    }
+
+    // ---- Save, mutate further, then load the file back into the same project.
+    const auto projectFile = home.getChildFile("roundtrip" + extension);
+    CHECK(project.saveProjectAs(projectFile, error) && error.isEmpty());
+    CHECK(projectFile.existsAsFile() && !project.isDirty());
+    CHECK(project.getProjectName() == juce::String("roundtrip"));
+    transport.setTempo(200.0); // Post-save mutation must be discarded by the load.
+    channels.addChannel("Doomed");
+    CHECK(project.prepareLoad(projectFile, error));
+    project.commitLoad();
+    CHECK(restoreCalls == 2);
+    CHECK(restoredProbes.size() == 2);
+    CHECK(!project.isDirty() && project.getProjectFile() == projectFile);
+    CHECK(project.getProjectName() == juce::String("roundtrip"));
+    CHECK(!transport.isPlaying() && !transport.isRecording());
+
+    // Channels: stable IDs, order, names and mix state. The pre-load channel
+    // pointers died in the replacement; resolve the restored ones by stable ID.
+    CHECK(channels.getNumChannels() == 2);
+    auto* restoredAlpha = channels.getChannelById(alphaId);
+    auto* restoredBeta = channels.getChannelById(betaId);
+    CHECK(restoredAlpha != nullptr && restoredBeta != nullptr);
+    CHECK(channels.getChannel(0)->getId() == alphaId && channels.getChannel(1)->getId() == betaId);
+    CHECK(restoredAlpha->getName() == juce::String("Alpha") && restoredAlpha->getVolume() == 0.75f &&
+          restoredAlpha->getPan() == -0.25f);
+    CHECK(restoredAlpha->isSolo() && !restoredAlpha->isMuted() && restoredAlpha->getMixerTrackId() == 3);
+    CHECK(restoredBeta->getVolume() == 1.5f && restoredBeta->isMuted() && !restoredBeta->isSolo());
+    CHECK(restoredBeta->getColour() == juce::Colour(0xffffa500));
+    CHECK(restoredAlpha->hasPlugin() && restoredBeta->hasPlugin());
+    CHECK(project.getActiveChannelId() == alphaId);
+    {
+        // Plugin identity round-trips beyond the bundle path (T07 contract).
+        auto* restoredHost = restoredAlpha->getPlugin();
+        const auto& description = restoredHost->getPluginDescription();
+        CHECK(description.name == juce::String("Stateful instrument"));
+        CHECK(description.pluginFormatName == juce::String("Offline"));
+        CHECK(description.fileOrIdentifier == juce::String("/offline/stateful.vst3"));
+        CHECK(description.manufacturerName == juce::String("vibedaw tests"));
+        CHECK(description.version == juce::String("1.2.3"));
+        CHECK(description.uniqueId == 0x7ea77 && description.isInstrument);
+        auto* instrument = dynamic_cast<StatefulInstrument*>(restoredHost->getPluginInstance());
+        CHECK(instrument != nullptr);
+        CHECK(instrument->received.getSize() == 11);
+        CHECK(std::memcmp(instrument->received.getData(), "STATE-BYTES", 11) == 0);
+        auto* secondInstrument = dynamic_cast<StatefulInstrument*>(restoredBeta->getPlugin()->getPluginInstance());
+        CHECK(secondInstrument != nullptr);
+        CHECK(secondInstrument->received.getSize() == 11);
+        CHECK(std::memcmp(secondInstrument->received.getData(), "STATE-BYTES", 11) == 0);
+    }
+
+    // Clips: notes, file references, pattern fields.
+    auto* restoredMidi = dynamic_cast<MidiClip*>(pool.getClip(midiClipId));
+    CHECK(restoredMidi != nullptr && restoredMidi->getName() == juce::String("Sketch"));
+    CHECK(restoredMidi->getDuration() == 4.0);
+    CHECK(restoredMidi->getNumNotes() == 2);
+    const auto* note1 = restoredMidi->findNoteAt(0, 60);
+    const auto* note2 = restoredMidi->findNoteAt(1.5, 64);
+    CHECK(note1 != nullptr && note1->getVelocity() == 90 && note1->getChannel() == 1);
+    CHECK(note2 != nullptr && note2->getVelocity() == 111 && note2->getDuration() == 2.0);
+    auto* restoredAudio = dynamic_cast<AudioClip*>(pool.getClip(audioClipId));
+    CHECK(restoredAudio != nullptr && restoredAudio->getAudioFile() == audioPath);
+    auto* restoredPattern = dynamic_cast<PatternClip*>(pool.getClip(patternClipId));
+    CHECK(restoredPattern != nullptr && restoredPattern->getPatternLength() == 2.0 &&
+          restoredPattern->getLoopCount() == 3);
+
+    // Tracks: UUID identities and placements restored exactly.
+    CHECK(tracks.getNumTracks() == 2);
+    CHECK(tracks.getTrack(0)->getId() == trackOneId && tracks.getTrack(1)->getId() == trackTwoId);
+    CHECK(tracks.getTrack(0)->getName() == juce::String("One"));
+    CHECK(tracks.getTrack(0)->getNumClipInstances() == 2);
+    CHECK(tracks.getTrack(0)->getClipInstance(0)->getId() == placedId);
+    CHECK(tracks.getTrack(0)->getClipInstance(0)->getClipId() == midiClipId);
+    CHECK(tracks.getTrack(0)->getClipInstance(0)->getChannelId() == alphaId);
+    CHECK(tracks.getTrack(0)->getClipInstance(0)->getStartTime() == 8.0);
+    CHECK(tracks.getTrack(1)->getClipInstance(1)->getClipId() == 9999); // Unresolved placeholder.
+    CHECK(pool.getClip(9999) == nullptr);
+
+    // Transport and master: musical state restored, playback state not.
+    CHECK(!transport.isPlaying() && !transport.isRecording());
+    CHECK(transport.getTempo() == 96.0);
+    const auto meter = transport.getTimeSignature();
+    CHECK(meter.numerator == 7 && meter.denominator == 8);
+    const auto loop = transport.getLoopRegion();
+    CHECK(loop.exists && loop.enabled && loop.startBeats == 4.0 && loop.endBeats == 20.0);
+    CHECK(transport.isMetronomeEnabled());
+    CHECK(project.getMasterBus().getGain() == 0.8f && !project.getMasterBus().isMuted());
+
+    // ---- Newly created objects receive non-colliding IDs after load.
+    const auto freshClipId = pool.addClip(std::make_unique<MidiClip>());
+    CHECK(freshClipId > midiClipId && freshClipId > audioClipId && freshClipId > patternClipId);
+    auto* freshChannel = channels.addChannel("Fresh");
+    CHECK(freshChannel->getId() > alphaId && freshChannel->getId() > betaId);
+    // Channel reorder preserves per-instance routing identity.
+    auto* restoredTrackOne = tracks.getTrackById(trackOneId);
+    CHECK(restoredTrackOne != nullptr);
+    channels.moveChannel(0, 1);
+    CHECK(channels.getChannel(0)->getId() == betaId);
+    CHECK(restoredTrackOne->getClipInstance(0)->getChannelId() == alphaId);
+    channels.moveChannel(1, 0);
+    pool.removeClip(freshClipId);
+    channels.removeChannel(channels.indexOfChannel(freshChannel));
+
+    // ---- Missing plugins stay as unresolved channels preserving identity+blob.
+    {
+        Project source;
+        auto* channel = source.getChannelList().addChannel("Unavailable");
+        Probe probe;
+        channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(probe)));
+        const auto missingFile = home.getChildFile("missing" + extension);
+        CHECK(source.saveProjectAs(missingFile, error));
+
+        Project target;
+        int refused = 0;
+        ProjectTestAccess::restorer(target,
+            [&](const juce::PluginDescription&, const juce::MemoryBlock&) -> std::unique_ptr<PluginHost> {
+                ++refused;
+                return nullptr; // Simulates an unavailable plugin.
+            });
+        CHECK(target.prepareLoad(missingFile, error));
+        target.commitLoad();
+        CHECK(refused == 1);
+        auto* restored = target.getChannelList().getChannel(channel->getId());
+        CHECK(restored != nullptr && restored->getName() == juce::String("Unavailable"));
+        CHECK(!restored->hasPlugin());
+        const auto* missing = restored->getMissingPlugin();
+        CHECK(missing != nullptr);
+        CHECK(missing->description.name == juce::String("Stateful instrument"));
+        CHECK(missing->state.getSize() == 11);
+        CHECK(std::memcmp(missing->state.getData(), "STATE-BYTES", 11) == 0);
+        // Re-saving preserves the blob for later recovery.
+        const auto resaved = home.getChildFile("missing-resaved" + extension);
+        CHECK(target.saveProjectAs(resaved, error));
+        ProjectDocument::Staged resavedStage;
+        CHECK(ProjectDocument::stage(resaved.loadFileAsString(), resavedStage, error));
+        CHECK(resavedStage.channels.size() == 1 && resavedStage.channels[0].plugin.has_value());
+        CHECK(resavedStage.channels[0].plugin->state.getSize() == 11);
+        CHECK(std::memcmp(resavedStage.channels[0].plugin->state.getData(), "STATE-BYTES", 11) == 0);
+        CHECK(resavedStage.channels[0].plugin->description.uniqueId == 0x7ea77);
+    }
+
+    // ---- Corruption and validation failures never touch the live session.
+    {
+        Project live;
+        auto* keeper = live.getChannelList().addChannel("Keep");
+        const auto keeperId = keeper->getId();
+        auto* lane = live.getTrackList().addTrack("Keep");
+        CHECK(live.isDirty());
+
+        CHECK(!live.prepareLoad(home.getChildFile("does-not-exist" + extension), error));
+        CHECK(error.isNotEmpty());
+        CHECK(live.getChannelList().getNumChannels() == 1 &&
+              live.getChannelList().getChannelById(keeperId) == keeper);
+
+        const auto corruptFile = home.getChildFile("corrupt" + extension);
+        corruptFile.replaceWithText("{ not a complete document");
+        CHECK(!live.prepareLoad(corruptFile, error) && error.isNotEmpty());
+        CHECK(live.getChannelList().getNumChannels() == 1);
+        live.commitLoad(); // Without a successful prepare this is a no-op.
+        CHECK(live.getChannelList().getNumChannels() == 1 && live.getTrackList().getNumTracks() == 1);
+
+        // Complete-but-invalid documents must each be rejected before staging.
+        auto buildDocument = []() {
+            auto* root = new juce::DynamicObject();
+            root->setProperty("formatVersion", ProjectDocument::currentVersion);
+            auto* masterObject = new juce::DynamicObject();
+            masterObject->setProperty("gain", 1.0);
+            masterObject->setProperty("muted", false);
+            root->setProperty("master", juce::var(masterObject));
+            root->setProperty("clips", juce::Array<juce::var>());
+            root->setProperty("tracks", juce::Array<juce::var>());
+            auto* transportObject = new juce::DynamicObject();
+            transportObject->setProperty("tempo", 120.0);
+            transportObject->setProperty("numerator", 4);
+            transportObject->setProperty("denominator", 4);
+            auto* loopObject = new juce::DynamicObject();
+            loopObject->setProperty("exists", false);
+            loopObject->setProperty("enabled", false);
+            transportObject->setProperty("loop", juce::var(loopObject));
+            transportObject->setProperty("metronome", false);
+            root->setProperty("transport", juce::var(transportObject));
+            return root;
+        };
+        auto channelObject = [](int id, const char* state = nullptr) {
+            auto* object = new juce::DynamicObject();
+            object->setProperty("id", id);
+            object->setProperty("name", juce::String("Broken"));
+            object->setProperty("type", juce::String("instrument"));
+            object->setProperty("volume", 1.0);
+            object->setProperty("pan", 0.0);
+            object->setProperty("muted", false);
+            object->setProperty("solo", false);
+            object->setProperty("mixerTrackId", -1);
+            object->setProperty("colour", juce::String("ff6a6aff"));
+            if (state != nullptr) {
+                auto* plugin = new juce::DynamicObject();
+                auto* description = new juce::DynamicObject();
+                description->setProperty("name", juce::String("Broken"));
+                description->setProperty("descriptiveName", juce::String());
+                description->setProperty("format", juce::String("Offline"));
+                description->setProperty("fileOrIdentifier", juce::String("/offline/broken.vst3"));
+                description->setProperty("manufacturer", juce::String("tests"));
+                description->setProperty("version", juce::String("1.0"));
+                description->setProperty("category", juce::String());
+                description->setProperty("uid", 0x7ea77);
+                description->setProperty("isInstrument", true);
+                description->setProperty("numInputChannels", 0);
+                description->setProperty("numOutputChannels", 2);
+                description->setProperty("hasSharedContainer", false);
+                plugin->setProperty("description", juce::var(description));
+                plugin->setProperty("state", juce::String(state));
+                object->setProperty("plugin", juce::var(plugin));
+            }
+            return juce::var(object);
+        };
+
+        ProjectDocument::Staged staged;
+        {
+            auto* future = buildDocument();
+            future->setProperty("formatVersion", ProjectDocument::currentVersion + 1);
+            future->setProperty("channels", juce::Array<juce::var>{channelObject(0)});
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(future)), staged, error));
+            CHECK(error.contains("Unsupported project format version"));
+        }
+        {
+            auto* noChannels = buildDocument();
+            noChannels->setProperty("channels", juce::var(42));
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(noChannels)), staged, error));
+            CHECK(error.isNotEmpty());
+        }
+        {
+            auto* duplicate = buildDocument();
+            duplicate->setProperty("channels", juce::Array<juce::var>{channelObject(0), channelObject(0)});
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(duplicate)), staged, error));
+            CHECK(error.contains("more than once"));
+        }
+        {
+            auto* corruptBlob = buildDocument();
+            corruptBlob->setProperty("channels", juce::Array<juce::var>{channelObject(0, "!!!not base64!!!")});
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(corruptBlob)), staged, error));
+            CHECK(error.contains("state"));
+        }
+        // Out-of-range numeric values must be rejected too.
+        {
+            auto* badVolume = buildDocument();
+            auto channel = channelObject(0);
+            channel.getDynamicObject()->setProperty("volume", 99.0);
+            badVolume->setProperty("channels", juce::Array<juce::var>{channel});
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(badVolume)), staged, error));
+            CHECK(error.contains("volume out of range"));
+        }
+        {
+            auto* badTempo = buildDocument();
+            badTempo->setProperty("channels", juce::Array<juce::var>());
+            auto transport = badTempo->getProperty("transport");
+            transport.getDynamicObject()->setProperty("tempo", 999.0);
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(badTempo)), staged, error));
+            CHECK(error.contains("tempo"));
+        }
+        {
+            auto* badLoop = buildDocument();
+            badLoop->setProperty("channels", juce::Array<juce::var>());
+            auto transport = badLoop->getProperty("transport");
+            transport.getDynamicObject()->setProperty("loop", juce::var(new juce::DynamicObject()));
+            CHECK(!ProjectDocument::stage(juce::JSON::toString(juce::var(badLoop)), staged, error));
+            CHECK(error.isNotEmpty());
+        }
+
+        CHECK(live.getChannelList().getNumChannels() == 1 &&
+              live.getChannelList().getChannelById(keeperId) != nullptr);
+        CHECK(lane->getNumClipInstances() == 0);
+
+        // A successful prepare stages the document without mutating anything:
+        // cancelling the discard prompt simply never calls commitLoad.
+        const auto pendingFile = home.getChildFile("pending" + extension);
+        CHECK(live.saveProjectAs(pendingFile, error));
+        CHECK(!live.isDirty());
+        live.getChannelList().addChannel("Extra");
+        CHECK(live.isDirty());
+        CHECK(live.prepareLoad(pendingFile, error));
+        CHECK(live.getChannelList().getNumChannels() == 2); // Still live; staged not applied.
+    }
+
+    // ---- Unwritable destinations fail without corrupting anything.
+    {
+        Project project;
+        project.getChannelList().addChannel("Saveable");
+        CHECK(project.isDirty());
+        juce::String saveError;
+        CHECK(!project.saveProjectAs(juce::File::getSpecialLocation(juce::File::userHomeDirectory), saveError));
+        CHECK(saveError.isNotEmpty());
+        CHECK(project.isDirty()); // A failed save must not report success.
+        CHECK(!project.saveProject(saveError)); // No path chosen yet.
+        CHECK(saveError.isNotEmpty());
+    }
+
+    // ---- Dirty tracking: mix/transport edits mark dirty; save/new clear it.
+    {
+        Project fresh;
+        CHECK(!fresh.isDirty());
+        const auto file = home.getChildFile("dirty" + extension);
+        juce::String saveError;
+        CHECK(fresh.saveProjectAs(file, saveError));
+        CHECK(!fresh.isDirty() && fresh.getProjectName() == juce::String("dirty"));
+        fresh.getTransportState().setTempo(150.0);
+        CHECK(fresh.isDirty());
+        fresh.getChannelList().addChannel("X")->setVolume(0.5f);
+        CHECK(fresh.isDirty());
+        CHECK(fresh.saveProject(saveError)); // Now has a path.
+        CHECK(!fresh.isDirty());
+        fresh.getClipPool().addClip(std::make_unique<MidiClip>());
+        CHECK(fresh.isDirty());
+        fresh.newProject();
+        CHECK(!fresh.isDirty() && fresh.getProjectName() == juce::String("Untitled"));
+        CHECK(fresh.getChannelList().getNumChannels() == 0);
+        CHECK(fresh.getTrackList().getNumTracks() == 0 && fresh.getClipPool().getNumClips() == 0);
+        CHECK(fresh.getTransportState().getTempo() == 120.0);
+        CHECK(!fresh.getTransportState().isLoopRegionSet() && !fresh.getTransportState().isLoopEnabled());
+        CHECK(!fresh.getTransportState().isMetronomeEnabled());
+        CHECK(fresh.getProjectFile().getFullPathName().isEmpty());
+    }
+}
+
 int main() {
     try {
         // Project's real destructor saves settings. Never touch the user's home.
@@ -3579,8 +4022,9 @@ int main() {
         loopUiTests();
         loopPedalAndLedgerTests();
         loopClickAndClockTests();
+        projectFileTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu and T16 loop UX tests passed\n";
+        std::cout << "T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX and T07 project file tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

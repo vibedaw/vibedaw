@@ -12,7 +12,9 @@ namespace vibedaw {
 
 class Track : public ProcessorBase, public juce::ChangeBroadcaster {
 public:
-    Track(const juce::String& name = "Track");
+    // An explicit id restores a saved track identity across sessions (T07/T12);
+// an empty id generates a fresh session UUID.
+    explicit Track(const juce::String& name = "Track", const juce::String& id = {});
     ~Track() override;
     const juce::String& getId() const { return id_; }
     

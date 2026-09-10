@@ -1,10 +1,12 @@
 # T03: Routing, Timing, and Placement
 
-Status: blocked | Milestone: M1 | Depends on: none
+Status: done | Milestone: M1 | Depends on: none
 
-Implementation present, 2026-09-08. Blocked on watcher/manual acceptance, not marked
-done. Core model cases now pass in T06's offline suite. User override on 2026-09-08
-("just go onto the next task") authorizes T06 without asserting T03 acceptance.
+Implementation present, 2026-09-08. Watcher/manual acceptance was observed and
+accepted by the user 2026-09-09 (record at the end of this file). Core model cases
+pass in T06's offline suite. The 2026-09-08 user override ("just go onto the next
+task") authorized T06 without asserting T03 acceptance; that acceptance was
+observed separately 2026-09-09.
 
 ## Outcome
 
@@ -41,11 +43,11 @@ no scheduler or arrangement audio playback.
 
 ## Acceptance Checks
 
-- [ ] Create a four-beat clip and place it at beat zero. At 120 BPM it spans two seconds, not four; a tempo change leaves its musical position unchanged.
-- [ ] Place one source twice; editing its notes updates both placements. Deleting one placement keeps the source and other placement.
-- [ ] Put two destinations on one track and one destination across two tracks. Both arrangements retain their assignments after channel reorder.
-- [ ] Empty project, missing selection, removed channel, removed source, and invalid duration/start are handled without crashes or silent misrouting.
-- [ ] Existing and newly added tracks display instances; no source edits are needed to populate the timeline.
+- [x] Create a four-beat clip and place it at beat zero. At 120 BPM it spans two seconds, not four; a tempo change leaves its musical position unchanged. (User-observed 2026-09-09.)
+- [x] Place one source twice; editing its notes updates both placements. Deleting one placement keeps the source and other placement. (User-observed 2026-09-09.)
+- [x] Put two destinations on one track and one destination across two tracks. Both arrangements retain their assignments after channel reorder. (User-observed 2026-09-09, except channel reorder itself: no reorder UI exists, so that retention case remains covered by the T06 offline suite.)
+- [x] Empty project, missing selection, removed channel, removed source, and invalid duration/start are handled without crashes or silent misrouting. (User-observed 2026-09-09 for missing-destination rejection, removed-source unresolved placeholders with editor teardown, and invalid input retention; empty-project/removed-channel sub-cases fall under the user's overall acceptance.)
+- [x] Existing and newly added tracks display instances; no source edits are needed to populate the timeline. (User-observed 2026-09-09.)
 
 ## Verification and Boundaries
 
@@ -126,3 +128,21 @@ Add model regression cases for ID stability, deletion policy, and timing convers
   refresh/layout and actual plugin loading still need the watcher. T03 remains
   truthfully blocked. T06 additionally fixes plugin window teardown and graph
   mutation contracts; those changes are not claimed as T03 runtime observations.
+
+### Watcher Acceptance Record (2026-09-09)
+
+The user walked a scripted T03 workflow through the running watcher and accepted
+it: a four-beat clip placed at beat zero draws four beats (two seconds at 120 BPM)
+and keeps its musical position across tempo changes; editing a shared source
+updates both placements and deleting one placement preserves the source and the
+other placement; two destinations on one track and one destination across two
+tracks display their correct assignments; missing-destination placement is
+rejected with actionable feedback, removed sources leave safe unresolved
+placeholders with editor teardown, and invalid start/duration input is rejected
+with previous values retained; existing and newly added tracks display instances
+without extra steps. Not separately observed: channel reorder (no reorder UI
+exists; that retention case remains covered by the T06 offline suite) and the
+removed-channel/unresolved-assignment display as an isolated sub-case (accepted
+under the user's overall confirmation). This records model/placement UI acceptance
+only; no audible arrangement playback is claimed here (T02 owns that checkpoint).
+No application build/launch, staging or commit was performed for this record.

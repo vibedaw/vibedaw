@@ -84,6 +84,7 @@ set(SOURCES
     src/project/Channel.cpp
     src/project/ChannelList.cpp
     src/project/Settings.cpp
+    src/project/ProjectDocument.cpp
     src/plugins/PluginHost.cpp
     src/plugins/PluginWindow.cpp
     src/plugins/PluginScanner.cpp

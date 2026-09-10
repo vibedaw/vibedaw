@@ -12,6 +12,7 @@
 #include "project/Settings.h"
 #include "plugins/PluginHost.h"
 #include "ui/MainWindow.h"
+#include "ui/components/TextPrompt.h"
 #include "utils/Logger.h"
 
 class VibeDawApplication : public juce::JUCEApplication,
@@ -69,6 +70,15 @@ public:
     
     void systemRequestedQuit() override {
         LOG_INFO("VibeDAW: System requested quit");
+        // Prompt before discarding unsaved project work; the asynchronous
+        // confirm keeps the message loop alive until the user decides.
+        if (project && project->isDirty()) {
+            vibedaw::confirmAsync("Unsaved changes", "The current project has unsaved changes. Quit without saving?",
+                "Quit without saving", nullptr, []() {
+                    if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
+                });
+            return;
+        }
         quit();
     }
     
