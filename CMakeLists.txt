@@ -89,6 +89,7 @@ set(SOURCES
     src/plugins/PluginWindow.cpp
     src/plugins/PluginScanner.cpp
     src/ui/MainWindow.cpp
+    src/ui/DawWindow.cpp
     src/ui/MainContent.cpp
     src/ui/TransportComponent.cpp
     src/ui/Icons.cpp

@@ -6,8 +6,8 @@
 
 namespace vibedaw {
 
-PluginWindow::PluginWindow(PluginHost* host, const juce::String& title)
-    : DocumentWindow(title, juce::Colours::darkgrey, DocumentWindow::closeButton, true),
+PluginWindow::PluginWindow(PluginHost* host, const juce::String& title, bool addToDesktop)
+    : DawWindow(title, DocumentWindow::closeButton, addToDesktop),
       pluginHost(host)
 {
     LOG_INFO("PluginWindow: Creating window for: " + title);
@@ -27,8 +27,6 @@ PluginWindow::PluginWindow(PluginHost* host, const juce::String& title)
         setContentOwned(warning.release(), true);
     }
     
-    setResizable(true, true);
-    setUsingNativeTitleBar(true);
     centreWithSize(getWidth(), getHeight());
     setVisible(true);
     

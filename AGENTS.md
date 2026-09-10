@@ -94,6 +94,10 @@ destination so each plugin is processed once per block.
   the quiescence gate.
 
 ## UI (`src/ui/`)
+- `DawWindow` - shared custom title bar/border for MainWindow, ClipEditorWindow,
+  and PluginWindow. Linux/XWayland maximize uses EWMH requests and polled WM state
+  (not JUCE fullscreen bounds), leaving KDE panel avoidance/restore geometry to
+  the WM. Client drag/resize is suspended while maximized; native calls stay off audio.
 - `MainWindow`/`MainContent` - DocumentWindow; status bar (File menu button,
   MIDI device combo, status label), transport bar (`TransportComponent` with
   vendored Tabler icons, loop menu/popover), `PluginButton`, hotkeys

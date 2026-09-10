@@ -2,9 +2,11 @@
 #include "core/ChannelMixer.h"
 #include "project/Project.h"
 #include "plugins/PluginHost.h"
+#include "plugins/PluginWindow.h"
 #include "ui/panels/MixerPanel.h"
 #include "ui/TransportComponent.h"
 #include "ui/DawLookAndFeel.h"
+#include "ui/DawWindow.h"
 #include "ui/PianoComponent.h"
 #include "ui/panels/TimelinePanel.h"
 #include "ui/timeline/TimelineGeometry.h"
@@ -13,6 +15,7 @@
 #include "ui/editor/PianoRollKeyboard.h"
 #include "ui/editor/TimeRulerComponent.h"
 #include "ui/editor/PianoRollEditor.h"
+#include "ui/editor/ClipEditorWindow.h"
 #include "ui/components/PluginButton.h"
 #include "ui/components/TextPrompt.h"
 #include "ui/sidebar/channel/ChannelRackSidebar.h"
@@ -47,6 +50,15 @@ using namespace vibedaw;
 #define CHECK(x) do { if (!(x)) throw std::runtime_error(std::string(__FILE__) + ":" + std::to_string(__LINE__) + ": " #x); } while (false)
 
 namespace vibedaw {
+struct DawWindowTestAccess {
+    static void poll(DawWindow& window) { window.pollNativeState(juce::Time::getMillisecondCounterHiRes()); }
+    static void expire(DawWindow& window) { window.pollNativeState(window.requestStarted_ + 1600.0); }
+};
+struct PluginWindowTestAccess {
+    static std::unique_ptr<PluginWindow> create(PluginHost* host) {
+        return std::unique_ptr<PluginWindow>(new PluginWindow(host, "Offline plugin", false));
+    }
+};
 struct ProjectTestAccess {
     static void loader(Project& project, std::function<std::unique_ptr<PluginHost>(const juce::String&)> load) {
         project.pluginLoader_ = std::move(load);
@@ -2923,6 +2935,231 @@ static void sharedControlPaintTests(DawLookAndFeel& lookAndFeel) {
     CHECK(paintThumb(false, false, 0).getPixelAt(40, 5) == theme::deepWell);
 }
 
+static void windowChromeTests() {
+    struct TestWindow : DawWindow {
+        TestWindow() : DawWindow("Untitled * - VibeDAW", allButtons, false) {}
+        void closeButtonPressed() override { ++closes; }
+        void minimiseButtonPressed() override { ++minimises; }
+        void maximiseButtonPressed() override { ++maximises; }
+        int closes = 0, minimises = 0, maximises = 0;
+    } window; // No desktop peer, native window, or application launch.
+    juce::Component content;
+    window.setContentNonOwned(&content, false);
+    for (int width : {600, 1000, 1560}) {
+        window.setSize(width, 400);
+        CHECK(!window.isUsingNativeTitleBar() && window.getPeer() == nullptr);
+        CHECK(window.getBorderThickness() == juce::BorderSize<int>(4));
+        CHECK(content.getBounds() == juce::Rectangle<int>(4, 36, width - 8, 360));
+        auto* minimise = window.getMinimiseButton();
+        auto* maximise = window.getMaximiseButton();
+        auto* close = window.getCloseButton();
+        CHECK(minimise && maximise && close);
+        for (auto* button : {minimise, maximise, close}) {
+            CHECK(window.getTitleBarArea().contains(button->getBounds()));
+            CHECK(button->getWidth() == 36 && button->getHeight() == 28);
+            CHECK(!button->getWantsKeyboardFocus());
+        }
+        CHECK(minimise->getRight() <= maximise->getX() && maximise->getRight() <= close->getX());
+    }
+
+    const auto paintButton = [](juce::Button& button, juce::Button::ButtonState state) {
+        button.setState(state);
+        juce::Image image(juce::Image::ARGB, button.getWidth(), button.getHeight(), true);
+        juce::Graphics g(image);
+        static_cast<juce::Component&>(button).paint(g);
+        return image;
+    };
+    for (auto* button : {window.getMinimiseButton(), window.getMaximiseButton(), window.getCloseButton()}) {
+        button->setEnabled(true); // Peerless windows are inactive by default.
+        const auto idle = paintButton(*button, juce::Button::buttonNormal);
+        const auto hover = paintButton(*button, juce::Button::buttonOver);
+        const auto down = paintButton(*button, juce::Button::buttonDown);
+        CHECK(idle.getPixelAt(8, 8).isTransparent());
+        CHECK(hover.getPixelAt(8, 8).isOpaque());
+        CHECK(down.getPixelAt(8, 8).getBrightness() < hover.getPixelAt(8, 8).getBrightness());
+        CHECK(hover.getPixelAt(0, 0).isTransparent());
+        int glyphPixels = 0;
+        for (int y = 0; y < idle.getHeight(); ++y)
+            for (int x = 0; x < idle.getWidth(); ++x)
+                if (idle.getPixelAt(x, y).getAlpha() > 0) ++glyphPixels;
+        CHECK(glyphPixels > 8);
+        button->setState(juce::Button::buttonNormal);
+        button->triggerClick();
+    }
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+    CHECK(window.closes == 1 && window.minimises == 1 && window.maximises == 1);
+
+    auto* maximise = window.getMaximiseButton();
+    const auto normal = paintButton(*maximise, juce::Button::buttonNormal);
+    maximise->setToggleState(true, juce::dontSendNotification);
+    const auto restore = paintButton(*maximise, juce::Button::buttonNormal);
+    int changedPixels = 0;
+    for (int y = 0; y < normal.getHeight(); ++y)
+        for (int x = 0; x < normal.getWidth(); ++x)
+            if (normal.getPixelAt(x, y) != restore.getPixelAt(x, y)) ++changedPixels;
+    CHECK(changedPixels > 10);
+
+    juce::Image chrome(juce::Image::RGB, window.getWidth(), 40, true);
+    juce::Graphics g(chrome);
+    window.paint(g);
+    CHECK(chrome.getPixelAt(0, 0) == theme::border); // Inactive hairline; resize gutter stays navy.
+    CHECK(chrome.getPixelAt(2, 2) == theme::windowBackground);
+    CHECK(chrome.getPixelAt(300, 35) == theme::hairline);
+    CHECK(chrome.getPixelAt(300, 8).getBrightness() > chrome.getPixelAt(300, 30).getBrightness());
+    window.clearContentComponent();
+}
+
+static void nativeMaximizeTests() {
+#if JUCE_LINUX
+    struct TestWindow : DawWindow {
+        TestWindow() : DawWindow("WM test", allButtons, false) {}
+        void closeButtonPressed() override {}
+        std::optional<MaximizedState> state = MaximizedState{};
+        std::vector<bool> requests;
+        bool accept = true;
+        void observe(bool horizontal, bool vertical) { state = MaximizedState{horizontal, vertical}; }
+        std::optional<MaximizedState> readNativeMaximizedState() override { return state; }
+        bool requestNativeMaximizedState(bool maximized) override {
+            requests.push_back(maximized);
+            return accept;
+        }
+    } window;
+    window.setBounds(30, 40, 800, 600);
+    const auto originalBounds = window.getBounds();
+    CHECK((window.getDesktopWindowStyleFlags() & juce::ComponentPeer::windowIsResizable) != 0);
+    juce::ResizableBorderComponent* border = nullptr;
+    for (auto* child : window.getChildren())
+        if (auto* candidate = dynamic_cast<juce::ResizableBorderComponent*>(child))
+            if (candidate->isVisible()) border = candidate;
+    CHECK(border && border->isVisible());
+
+    window.maximiseButtonPressed();
+    CHECK(window.requests == std::vector<bool>{true});
+    CHECK(window.getMaximiseButton()->getToggleState() && !border->isVisible());
+    CHECK(window.getBounds() == originalBounds && !window.isFullScreen()); // Geometry belongs to the WM.
+    window.maximiseButtonPressed(); // Queue restore before KDE acknowledges maximize.
+    CHECK(window.requests.size() == 1 && !window.getMaximiseButton()->getToggleState());
+    window.observe(true, true);
+    DawWindowTestAccess::poll(window);
+    CHECK((window.requests == std::vector<bool>{true, false}));
+    window.observe(true, false); // Partial restore is not acknowledgement of removing both axes.
+    DawWindowTestAccess::poll(window);
+    CHECK(!border->isVisible() && window.requests.size() == 2);
+    window.observe(false, false);
+    DawWindowTestAccess::poll(window);
+    CHECK(border->isVisible() && !window.getMaximiseButton()->getToggleState());
+
+    window.observe(true, true); // External KDE shortcut/taskbar action.
+    DawWindowTestAccess::poll(window);
+    window.resized();
+    CHECK(window.getMaximiseButton()->getToggleState() && !border->isVisible());
+    window.lookAndFeelChanged();
+    CHECK(window.getMaximiseButton()->getToggleState());
+    window.observe(false, false);
+    DawWindowTestAccess::poll(window);
+    CHECK(!window.getMaximiseButton()->getToggleState() && border->isVisible());
+
+    window.observe(true, false);
+    DawWindowTestAccess::poll(window);
+    window.maximiseButtonPressed(); // Partial maximize becomes fully maximized, never flips axes.
+    CHECK(window.requests.back());
+    DawWindowTestAccess::expire(window); // WM refuses: stop waiting/retrying.
+    CHECK(!window.getMaximiseButton()->getToggleState());
+    const auto count = window.requests.size();
+    DawWindowTestAccess::poll(window);
+    CHECK(window.requests.size() == count);
+
+    window.observe(false, false);
+    window.accept = false;
+    window.maximiseButtonPressed();
+    CHECK(!window.getMaximiseButton()->getToggleState() && border->isVisible());
+    window.accept = true;
+    window.maximiseButtonPressed();
+    window.state.reset(); // Failed/unknown query is not a restored state.
+    DawWindowTestAccess::poll(window);
+    CHECK(window.getMaximiseButton()->getToggleState() && !border->isVisible());
+    DawWindowTestAccess::expire(window);
+    CHECK(!window.getMaximiseButton()->getToggleState() && border->isVisible());
+    const auto beforeUnknown = window.requests.size();
+    window.maximiseButtonPressed();
+    CHECK(window.requests.size() == beforeUnknown && window.getBounds() == originalBounds);
+    window.observe(true, true); // Late acknowledgement is still observed after timeout.
+    DawWindowTestAccess::poll(window);
+    CHECK(window.getMaximiseButton()->getToggleState());
+
+    window.observe(false, false);
+    DawWindowTestAccess::poll(window);
+    window.requests.clear();
+    window.maximiseButtonPressed();
+    window.maximiseButtonPressed();
+    DawWindowTestAccess::expire(window); // A queued restore must survive a delayed maximize.
+    CHECK((window.requests == std::vector<bool>{true, false}));
+    window.observe(true, true);
+    DawWindowTestAccess::poll(window);
+    CHECK(!window.getMaximiseButton()->getToggleState());
+    window.observe(false, false);
+    DawWindowTestAccess::poll(window);
+    CHECK(border->isVisible() && !window.getMaximiseButton()->getToggleState());
+
+    const auto mouse = [&](juce::Point<float> point) {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), point,
+            juce::ModifierKeys::leftButtonModifier, 1, 0, 0, 0, 0, border, border,
+            juce::Time::getCurrentTime(), {799, 599}, juce::Time::getCurrentTime(), 1, true);
+    };
+    auto& resizeTarget = static_cast<juce::Component&>(*border);
+    resizeTarget.mouseDown(mouse({799, 599}));
+    window.observe(true, true); // External maximize while the resize border has mouse capture.
+    DawWindowTestAccess::poll(window);
+    resizeTarget.mouseDrag(mouse({899, 699}));
+    CHECK(window.getBounds() == originalBounds);
+    window.observe(false, false);
+    DawWindowTestAccess::poll(window);
+    resizeTarget.mouseDrag(mouse({899, 699})); // An old drag must not resume after restore either.
+    CHECK(window.getBounds() == originalBounds);
+    resizeTarget.mouseUp(mouse({899, 699}));
+#endif
+}
+
+static void editorWindowChromeTests() {
+    MidiClip clip(0, 4);
+    auto piano = std::make_unique<ClipEditorWindow>(&clip, 0, nullptr, nullptr,
+                                                   std::function<bool(double, double&)>(), false);
+    CHECK(piano->getPeer() == nullptr && !piano->isUsingNativeTitleBar());
+    CHECK(piano->getTitleBarHeight() == 32 && piano->getMaximiseButton());
+    auto* content = piano->getContentComponent();
+    CHECK(content->getWidth() == 800 && content->getHeight() == 532);
+    auto* toolbar = content->getChildComponent(0);
+    auto* editor = dynamic_cast<PianoRollEditor*>(content->getChildComponent(1));
+    CHECK(toolbar && editor);
+    for (const auto size : {juce::Point<int>(500, 300), juce::Point<int>(1200, 800)}) {
+        piano->setSize(size.x, size.y);
+        CHECK(toolbar->getBounds() == content->getLocalBounds().withHeight(32));
+        CHECK(editor->getBounds() == content->getLocalBounds().withTrimmedTop(32));
+        for (auto* control : toolbar->getChildren()) CHECK(toolbar->getLocalBounds().contains(control->getBounds()));
+    }
+    piano.reset();
+
+    Probe probe;
+    auto processor = std::make_unique<EditorInstrument>(probe);
+    auto* instrument = processor.get();
+    PluginHost host(std::move(processor));
+    std::unique_ptr<PluginWindow> plugin;
+    {
+        AudioQuiescence::Edit edit;
+        plugin = PluginWindowTestAccess::create(&host);
+    }
+    CHECK(plugin->getPeer() == nullptr && !plugin->isUsingNativeTitleBar());
+    CHECK(plugin->getTitleBarHeight() == 32 && plugin->getCloseButton());
+    CHECK(plugin->getMaximiseButton() == nullptr); // Don't impose maximize on third-party editors.
+    CHECK(plugin->getContentComponent()->getBounds() == juce::Rectangle<int>(4, 36, 100, 100));
+    plugin->getContentComponent()->setSize(240, 160); // Editor-originated resize retains its requested size.
+    CHECK(plugin->getWidth() == 248 && plugin->getHeight() == 200);
+    plugin.reset();
+    CHECK(instrument->editorDestroyedSafely && instrument->getActiveEditor() == nullptr);
+    auto fallback = PluginWindowTestAccess::create(nullptr);
+    CHECK(fallback->getContentComponent()->getBounds() == juce::Rectangle<int>(4, 36, 420, 80));
+}
+
 static void keyboardPaintTests() {
     const auto paint = [](juce::Component& component) {
         juce::Image image(juce::Image::RGB, component.getWidth(), component.getHeight(), true);
@@ -4768,6 +5005,9 @@ int main() {
             ~ClearDefaultLookAndFeel() { juce::LookAndFeel::setDefaultLookAndFeel(nullptr); }
         } clearDefaultLookAndFeel; // Clear before lookAndFeel dies, including assertion failures.
         sharedControlPaintTests(lookAndFeel);
+        windowChromeTests();
+        nativeMaximizeTests();
+        editorWindowChromeTests();
         keyboardPaintTests();
         boundaryTests();
         modelTests();

@@ -2,12 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "MainContent.h"
+#include "DawWindow.h"
 
 namespace vibedaw {
 
 class Project;
 
-class MainWindow : public juce::DocumentWindow {
+class MainWindow : public DawWindow {
 public:
     MainWindow(juce::String name, juce::MidiKeyboardState& keyboardState,
                MidiManager& midiManager, Project& project, AudioEngine& engine);

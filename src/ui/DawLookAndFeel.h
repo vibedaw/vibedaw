@@ -52,6 +52,114 @@ public:
         setColour(juce::Slider::textBoxOutlineColourId, theme::border);
     }
 
+    juce::Button* createDocumentWindowButton(int type) override {
+        class WindowButton final : public juce::Button {
+        public:
+            explicit WindowButton(int buttonType)
+                : Button(buttonType == juce::DocumentWindow::closeButton ? "Close"
+                         : buttonType == juce::DocumentWindow::minimiseButton ? "Minimize" : "Maximize or restore"),
+                  type(buttonType) {
+                setTooltip(getName());
+                setMouseClickGrabsKeyboardFocus(false);
+            }
+
+            void paintButton(juce::Graphics& g, bool over, bool down) override {
+                const bool close = type == juce::DocumentWindow::closeButton;
+                const auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+                if (isEnabled() && (over || down)) {
+                    const auto fill = close ? theme::dangerDim : theme::controlHover;
+                    theme::drawSurface(g, bounds, down ? fill.darker(0.2f) : fill,
+                                       theme::controlRadius, close ? theme::danger.withAlpha(0.55f) : theme::border);
+                }
+                g.setColour((over && isEnabled() ? theme::textBright : theme::textDefault)
+                                .withMultipliedAlpha(isEnabled() ? 1.0f : 0.45f));
+                const float x = bounds.getCentreX() - 5.0f;
+                const float y = bounds.getCentreY() - 5.0f;
+                if (close) {
+                    g.drawLine(x, y, x + 10.0f, y + 10.0f, 1.3f);
+                    g.drawLine(x + 10.0f, y, x, y + 10.0f, 1.3f);
+                } else if (type == juce::DocumentWindow::minimiseButton) {
+                    g.drawLine(x, y + 7.0f, x + 10.0f, y + 7.0f, 1.3f);
+                } else if (getToggleState()) {
+                    juce::Path back;
+                    back.startNewSubPath(x + 3.0f, y + 2.0f);
+                    back.lineTo(x + 3.0f, y);
+                    back.lineTo(x + 10.0f, y);
+                    back.lineTo(x + 10.0f, y + 7.0f);
+                    back.lineTo(x + 8.0f, y + 7.0f);
+                    g.strokePath(back, juce::PathStrokeType(1.2f));
+                    g.drawRect(x, y + 3.0f, 7.0f, 7.0f, 1.2f);
+                } else {
+                    g.drawRect(x, y, 10.0f, 10.0f, 1.2f);
+                }
+            }
+
+        private:
+            const int type;
+        };
+        return new WindowButton(type);
+    }
+
+    void positionDocumentWindowButtons(juce::DocumentWindow&, int x, int y, int width, int height,
+                                        juce::Button* minimise, juce::Button* maximise,
+                                        juce::Button* close, bool onLeft) override {
+        const int count = (minimise != nullptr) + (maximise != nullptr) + (close != nullptr);
+        if (count == 0) return;
+        const int buttonWidth = juce::jmin(36, juce::jmax(0, width - 8) / count);
+        int nextX = onLeft ? x + 4 : x + width - 4 - buttonWidth;
+        if (onLeft) std::swap(minimise, maximise);
+        for (auto* button : {close, maximise, minimise}) {
+            if (button == nullptr) continue;
+            button->setBounds(nextX, y + 2, buttonWidth, juce::jmax(0, height - 4));
+            nextX += onLeft ? buttonWidth : -buttonWidth;
+        }
+    }
+
+    void drawDocumentWindowTitleBar(juce::DocumentWindow& window, juce::Graphics& g,
+                                    int width, int height, int titleX, int titleWidth,
+                                    const juce::Image* icon, bool onLeft) override {
+        if (width <= 0 || height <= 0) return;
+        g.setGradientFill(juce::ColourGradient(theme::raised, 0.0f, 0.0f,
+                                              theme::windowBackground, 0.0f, static_cast<float>(height), false));
+        g.fillRect(0, 0, width, height);
+        g.setColour(theme::hairline);
+        g.drawHorizontalLine(height - 1, 0.0f, static_cast<float>(width));
+
+        juce::Graphics::ScopedSaveState save(g);
+        auto title = juce::Rectangle<int>(titleX + 4, 0, juce::jmax(0, titleWidth - 8), height);
+        g.reduceClipRegion(title);
+        auto mark = title.removeFromLeft(18).withSizeKeepingCentre(16, 16).toFloat();
+        const bool active = window.isActiveWindow();
+        if (icon != nullptr && icon->isValid()) {
+            g.setOpacity(active ? 1.0f : 0.55f);
+            g.drawImageWithin(*icon, static_cast<int>(mark.getX()), static_cast<int>(mark.getY()),
+                              16, 16, juce::RectanglePlacement::centred);
+        } else {
+            g.setColour(theme::accent.withAlpha(active ? 0.9f : 0.4f));
+            g.drawRoundedRectangle(mark.reduced(0.5f), 3.0f, 1.2f);
+            juce::Path wave;
+            wave.startNewSubPath(mark.getX() + 3.0f, mark.getCentreY());
+            wave.lineTo(mark.getX() + 5.0f, mark.getCentreY());
+            wave.lineTo(mark.getX() + 6.5f, mark.getY() + 4.0f);
+            wave.lineTo(mark.getX() + 9.0f, mark.getBottom() - 4.0f);
+            wave.lineTo(mark.getX() + 10.5f, mark.getCentreY());
+            wave.lineTo(mark.getRight() - 3.0f, mark.getCentreY());
+            g.strokePath(wave, juce::PathStrokeType(1.2f, juce::PathStrokeType::curved));
+        }
+        title.removeFromLeft(8);
+        g.setColour(active ? theme::textBright : theme::textSecondary);
+        g.setFont(juce::Font(13.0f));
+        g.drawText(window.getName(), title, onLeft ? juce::Justification::centredLeft : juce::Justification::centred, true);
+    }
+
+    void drawResizableWindowBorder(juce::Graphics& g, int width, int height,
+                                    const juce::BorderSize<int>&, juce::ResizableWindow& window) override {
+        if (window.isUsingNativeTitleBar() || window.isKioskMode()) return;
+        // The JUCE resize border stays four pixels wide; only its outside edge is visible.
+        g.setColour(window.isActiveWindow() ? theme::borderStrong : theme::border);
+        g.drawRect(0, 0, width, height);
+    }
+
     juce::Font getTextButtonFont(juce::TextButton&, int height) override {
         return juce::Font(juce::jlimit(10.0f, 13.0f, height * 0.48f));
     }

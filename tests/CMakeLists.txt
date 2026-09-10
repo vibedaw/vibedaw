@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(vibedaw_offline_tests LANGUAGES CXX)
+find_package(X11 REQUIRED)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(JUCE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../build/_deps/juce-src" CACHE PATH "Existing JUCE checkout, no download")
@@ -19,6 +20,7 @@ add_executable(offline_tests offline_tests.cpp
     ../src/ui/editor/PianoRollKeyboard.cpp ../src/ui/editor/TimeRulerComponent.cpp
     ../src/ui/editor/PianoRollEditor.cpp
     ../src/ui/PianoComponent.cpp ../src/ui/panels/PianoPanel.cpp
+    ../src/ui/DawWindow.cpp ../src/ui/editor/ClipEditorWindow.cpp
     ../src/project/Note.cpp ../src/project/Clip.cpp ../src/project/ClipInstance.cpp
     ../src/project/ClipPool.cpp ../src/project/Track.cpp ../src/project/TrackList.cpp
     ../src/project/Channel.cpp ../src/project/ChannelList.cpp ../src/project/Project.cpp
@@ -34,7 +36,7 @@ target_compile_definitions(offline_tests PRIVATE JUCE_GLOBAL_MODULE_SETTINGS_INC
     VIBEDAW_TEST_HOME="${CMAKE_CURRENT_BINARY_DIR}/home"
     JUCE_STANDALONE_APPLICATION=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_PLUGINHOST_VST3=0 JUCE_ALSA=0 JUCE_JACK=0)
-target_link_libraries(offline_tests PRIVATE juce::juce_audio_utils)
+target_link_libraries(offline_tests PRIVATE juce::juce_audio_utils X11::X11)
 enable_testing()
 add_test(NAME offline_tests COMMAND offline_tests)
 set_tests_properties(offline_tests PROPERTIES FAIL_REGULAR_EXPRESSION "JUCE Assertion failure;Leaked objects detected")

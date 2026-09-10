@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/DawWindow.h"
 #include "PianoRollEditor.h"
 #include "project/ClipInstance.h"
 #include "core/TransportState.h"
@@ -12,7 +12,7 @@ class MidiClip;
 class MidiManager;
 class Project;
 
-class ClipEditorWindow : public juce::DocumentWindow,
+class ClipEditorWindow : public DawWindow,
                         public PianoRollEditor::Listener {
 public:
     class Listener {
@@ -23,7 +23,8 @@ public:
     
     ClipEditorWindow(MidiClip* clip, ClipId clipId, MidiManager* midiManager = nullptr,
                      TransportState* transport = nullptr,
-                     std::function<bool(double, double&)> localBeatProvider = {});
+                     std::function<bool(double, double&)> localBeatProvider = {},
+                     bool addToDesktop = true);
     ~ClipEditorWindow() override;
     
     void setListener(Listener* listener) { listener_ = listener; }
@@ -32,6 +33,7 @@ public:
     ClipId getClipId() const { return clipId_; }
     
     void closeButtonPressed() override;
+    void resized() override;
     
     void clipModified(ClipId clipId) override;
     
@@ -46,7 +48,6 @@ private:
     std::unique_ptr<juce::ComboBox> gridResolutionCombo_;
     juce::ToggleButton followButton_;
 
-    void setupToolbar();
     void updateGridResolution();
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClipEditorWindow)

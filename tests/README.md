@@ -26,6 +26,26 @@ The audition keyboard and PianoPanel are compiled in this independent target.
 These checks are not full-window screenshot comparisons: final desktop/HiDPI
 appearance, native menus and the MainContent layout remain watcher/manual checks.
 
+`windowChromeTests` uses the peerless shared DawWindow to check the custom title
+bar's button layout, hover/press and restore glyphs, button callback dispatch,
+content insets, and thin visible border with a wider resize area. Actual desktop
+dragging, edge/corner resizing, maximize/restore, minimize, and window-manager
+snapping remain manual checks. Main, piano-roll, and plugin windows share these
+decorations; panel pop-out windows retain their existing native title bars.
+
+`nativeMaximizeTests` injects observed window-manager states and records requests
+without opening an X connection or a native window. It covers external maximize,
+partial states, serialized rapid clicks, rejected/delayed requests, timeout with a
+queued inverse, restore-icon synchronization, and captured resize-drag cancellation.
+On Linux the real implementation sends EWMH maximize/restore requests to the WM,
+not JUCE fullscreen requests, so KDE owns panel avoidance and restore geometry.
+`editorWindowChromeTests` constructs the real piano-roll/plugin wrappers peerlessly,
+checking piano-roll resize layout, unchanged plugin content dimensions (including
+editor-originated resizing), and quiescent editor cleanup. Tests link X11 to compile
+the real native request path; actual KWin/XWayland behaviour still needs manual
+verification. Maximized custom windows currently require restoring with the button
+or title double-click before client-side dragging/resizing (no drag-to-restore).
+
 Coverage includes T03 stable IDs/many-to-many routing, selection after reorder and
 deletion, shared sources, unresolved deletion/order, beat conversions, half-open
 bounds and validation, synchronous note invalidation, asynchronous source/track

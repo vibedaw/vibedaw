@@ -7,16 +7,14 @@ namespace vibedaw {
 
 MainWindow::MainWindow(juce::String name, juce::MidiKeyboardState& keyboardState,
                        MidiManager& midiManager, Project& project, AudioEngine& engine)
-    : DocumentWindow(name, theme::control, DocumentWindow::closeButton, true),
+    : DawWindow(name, DocumentWindow::allButtons),
       project_(&project)
 {
     auto content = std::make_unique<MainContent>(keyboardState, midiManager, project, engine);
     mainContent_ = content.get();
     setContentOwned(content.release(), false);
     
-    setResizable(true, true);
     setResizeLimits(600, 400, 10000, 10000);
-    setUsingNativeTitleBar(true);
     
     auto& displays = juce::Desktop::getInstance().getDisplays();
     auto displayArea = displays.getDisplayForPoint(displays.getPrimaryDisplay()->userArea.getCentre())->userArea;
