@@ -27,7 +27,11 @@ add_executable(offline_tests offline_tests.cpp
     ../src/project/ProjectDocument.cpp
     ../src/project/Settings.cpp ../src/core/TransportState.cpp ../src/core/ChannelMixer.cpp
     ../src/core/AudioEngine.cpp ../src/core/MidiManager.cpp
-    ../src/plugins/PluginHost.cpp ../src/plugins/PluginWindow.cpp ../src/utils/Logger.cpp
+    ../src/plugins/PluginHost.cpp ../src/plugins/PluginWindow.cpp ../src/plugins/PluginScanner.cpp
+    ../src/plugins/builtin/InternalPluginFormat.cpp
+    ../src/plugins/builtin/VibeSynthProcessor.cpp
+    ../src/plugins/builtin/VibeSynthEditor.cpp
+    ../src/utils/Logger.cpp
     ../src/ui/mixer/MixerStrip.cpp ../src/ui/mixer/MasterStrip.cpp ../src/ui/mixer/LevelMeter.cpp
     ../src/ui/panels/MixerPanel.cpp ../src/ui/panels/Panel.cpp ../src/ui/panels/PanelTitleBar.cpp
     ../src/ui/panels/PanelContainer.cpp ../src/ui/panels/PanelWindow.cpp ../src/ui/components/IconButton.cpp)

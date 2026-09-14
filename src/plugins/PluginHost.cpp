@@ -1,5 +1,6 @@
 #include "PluginHost.h"
 #include "PluginWindow.h"
+#include "builtin/InternalPluginFormat.h"
 #include "core/AudioBoundary.h"
 #include "utils/Logger.h"
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -8,6 +9,9 @@ namespace vibedaw {
 
 PluginHost::PluginHost() {
     formatManager.addDefaultFormats();
+    // The built-in instrument resolves by identifier; registered so both
+    // loadPlugin and project restore work through the ordinary paths.
+    formatManager.addFormat(new InternalPluginFormat());
     LOG_INFO("PluginHost: Constructed with " + juce::String(formatManager.getNumFormats()) + " plugin formats");
 }
 
@@ -37,9 +41,15 @@ bool PluginHost::loadPlugin(const juce::String& pluginPath) {
     releaseResources();
     pluginInstance.reset();
     currentPluginPath = pluginPath;
-    
-    juce::File pluginFile(pluginPath);
-    if (!pluginFile.exists()) {
+
+    // Built-in and other non-file formats claim identifiers before the
+    // filesystem check; a claimed identifier may exist without a file.
+    bool claimed = false;
+    for (int i = 0; i < formatManager.getNumFormats(); ++i)
+        if (auto* format = formatManager.getFormat(i))
+            claimed = claimed || format->fileMightContainThisPluginType(pluginPath);
+
+    if (!claimed && !juce::File(pluginPath).exists()) {
         LOG_ERROR("PluginHost: Plugin file does not exist: " + pluginPath);
         return false;
     }

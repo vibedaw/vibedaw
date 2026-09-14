@@ -5,6 +5,7 @@
 #include "project/Channel.h"
 #include "core/MixerState.h"
 #include "plugins/PluginHost.h"
+#include "plugins/builtin/InternalPluginFormat.h"
 #include "ui/components/PluginButton.h"
 #include "ui/components/TextPrompt.h"
 #include "utils/Logger.h"
@@ -195,11 +196,13 @@ ChannelRackContent::ChannelRackContent(Project& project)
     : project_(project)
 {
     addChannelButton_.setButtonText("+ Add Channel");
-    addChannelButton_.setTooltip("Maximum 128 channels. Structural edits briefly silence audio while callbacks are quiesced.");
+    addChannelButton_.setTooltip("Maximum 128 channels. New channels start with the built-in VibeSynth. Structural edits briefly silence audio while callbacks are quiesced.");
     addChannelButton_.setColour(juce::TextButton::buttonColourId, theme::actionGreen);
     addChannelButton_.setColour(juce::TextButton::textColourOffId, theme::accent);
     addChannelButton_.onClick = [this]() {
-        if (!project_.getChannelList().addChannel())
+        // New channels start with the built-in instrument so they are playable
+        // without any installed VSTs; dropping a plugin replaces it as before.
+        if (!project_.loadPlugin(InternalPluginFormat::identifier))
             juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Channel not added",
                 "The channel limit has been reached.");
         rebuildChannelRows();

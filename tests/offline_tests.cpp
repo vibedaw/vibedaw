@@ -3,6 +3,9 @@
 #include "project/Project.h"
 #include "plugins/PluginHost.h"
 #include "plugins/PluginWindow.h"
+#include "plugins/builtin/InternalPluginFormat.h"
+#include "plugins/builtin/VibeSynthProcessor.h"
+#include "ui/DragPayload.h"
 #include "ui/panels/MixerPanel.h"
 #include "ui/TransportComponent.h"
 #include "ui/DawLookAndFeel.h"
@@ -4575,6 +4578,101 @@ static void integrationWorkflowTests() {
     CHECK(renderAllocations == 0 && renderDeletions == 0);
 }
 
+static void builtinSynthTests() {
+    // The format claims its identifier end-to-end through the ordinary load path.
+    {
+        PluginHost host;
+        CHECK(!host.isLoaded());
+        CHECK(host.loadPlugin(InternalPluginFormat::identifier));
+        CHECK(host.isLoaded());
+        CHECK(host.hasPluginDescription());
+        CHECK(host.getPluginDescription().pluginFormatName == juce::String("Internal"));
+        CHECK(host.getPluginName() == juce::String("VibeSynth"));
+        CHECK(host.getPluginDescription().isInstrument);
+    }
+
+    // Renders sound from a note-on and decays back to silence after note-off.
+    {
+        auto instance = InternalPluginFormat::createInstance();
+        CHECK(instance != nullptr);
+        instance->prepareToPlay(48000.0, 512);
+        juce::AudioBuffer<float> buffer(2, 512);
+        buffer.clear();
+        juce::MidiBuffer noteOn;
+        noteOn.addEvent(juce::MidiMessage::noteOn(1, 60, 1.0f), 0);
+        instance->processBlock(buffer, noteOn);
+        CHECK(std::abs(buffer.getSample(0, 256)) > 1.0e-4f);
+        CHECK(std::abs(buffer.getSample(1, 256)) > 1.0e-4f);
+
+        juce::MidiBuffer noteOff;
+        noteOff.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        for (int block = 0; block < 120; ++block) {
+            buffer.clear();
+            instance->processBlock(buffer, noteOff);
+        }
+        CHECK(buffer.getMagnitude(0, 0, buffer.getNumSamples()) < 1.0e-4f);
+        CHECK(buffer.getMagnitude(1, 0, buffer.getNumSamples()) < 1.0e-4f);
+    }
+
+    // Opaque state round trip preserves parameter values.
+    {
+        auto source = InternalPluginFormat::createInstance();
+        auto* sourceSynth = dynamic_cast<VibeSynthProcessor*>(source.get());
+        CHECK(sourceSynth != nullptr);
+        if (auto* gain = sourceSynth->getParameterState().getParameter("gain"))
+            gain->setValueNotifyingHost(0.25f);
+        juce::MemoryBlock state;
+        source->getStateInformation(state);
+        CHECK(state.getSize() > 0);
+
+        auto restored = InternalPluginFormat::createInstance();
+        restored->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        auto* restoredSynth = dynamic_cast<VibeSynthProcessor*>(restored.get());
+        CHECK(restoredSynth != nullptr);
+        const auto* gain = restoredSynth->getParameterState().getParameter("gain");
+        CHECK(gain != nullptr && std::abs(gain->getValue() - 0.25f) < 1.0e-3f);
+    }
+
+    // Saved projects restore the built-in instrument through the default
+    // (un-overridden) plugin restorer, like any VST identity.
+    {
+        Project source;
+        CHECK(source.loadPlugin(InternalPluginFormat::identifier));
+        CHECK(source.getChannelList().getNumChannels() == 1);
+        CHECK(source.getActiveChannel() == 0);
+
+        const auto file = juce::File(VIBEDAW_TEST_HOME).getChildFile("builtin-roundtrip.vibedaw");
+        juce::String error;
+        CHECK(source.saveProjectAs(file, error));
+
+        Project target;
+        CHECK(target.prepareLoad(file, error));
+        target.commitLoad();
+        CHECK(target.getChannelList().getNumChannels() == 1);
+        const auto* channel = target.getChannelList().getChannel(0);
+        CHECK(channel != nullptr && channel->getPlugin() != nullptr);
+        CHECK(channel->getPlugin()->getPluginName() == juce::String("VibeSynth"));
+        CHECK(channel->getPlugin()->getPluginDescription().pluginFormatName == juce::String("Internal"));
+        file.deleteFile();
+    }
+
+    // A project load must not overwrite the browser scan path with the
+    // built-in identifier, and new sessions always seed a playable channel.
+    {
+        Project fresh;
+        fresh.newProject();
+        CHECK(fresh.getChannelList().getNumChannels() == 1);
+        CHECK(fresh.getSettings().pluginPath != juce::String(InternalPluginFormat::identifier));
+    }
+
+    // The drag payload accepts the internal identifier alongside file paths.
+    {
+        const auto info = DragDropInfo::fromDragDescription(DragDropInfo::plugin(InternalPluginFormat::identifier));
+        CHECK(info.type == DragSourceType::Plugin);
+        CHECK(info.path == juce::String(InternalPluginFormat::identifier));
+    }
+}
+
 static void projectFileTests() {
     const juce::File home(VIBEDAW_TEST_HOME);
     CHECK(home.isDirectory());
@@ -4983,7 +5081,11 @@ static void projectFileTests() {
         CHECK(fresh.isDirty());
         fresh.newProject();
         CHECK(!fresh.isDirty() && fresh.getProjectName() == juce::String("Untitled"));
-        CHECK(fresh.getChannelList().getNumChannels() == 0);
+        // New sessions seed the built-in instrument so first-time users can play.
+        CHECK(fresh.getChannelList().getNumChannels() == 1);
+        const auto* seeded = fresh.getChannelList().getChannel(0);
+        CHECK(seeded != nullptr && seeded->getPlugin() != nullptr);
+        CHECK(seeded->getPlugin()->getPluginName() == juce::String("VibeSynth"));
         CHECK(fresh.getTrackList().getNumTracks() == 0 && fresh.getClipPool().getNumClips() == 0);
         CHECK(fresh.getTransportState().getTempo() == 120.0);
         CHECK(!fresh.getTransportState().isLoopRegionSet() && !fresh.getTransportState().isLoopEnabled());
@@ -5045,10 +5147,11 @@ int main() {
         loopPedalAndLedgerTests();
         loopClickAndClockTests();
         editorNavigationTests();
+        builtinSynthTests();
         projectFileTests();
         integrationWorkflowTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "Theme/control/keyboard paint, T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, T09 external MIDI and tempo control tests passed\n";
+        std::cout << "Theme/control/keyboard paint, T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, built-in synth, T09 external MIDI and tempo control tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

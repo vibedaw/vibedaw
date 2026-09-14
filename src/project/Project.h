@@ -105,6 +105,8 @@ private:
     std::optional<ProjectDocument::Staged> staged_;
 
     void applyStaged(const ProjectDocument::Staged& staged);
+    // First-run sound: new/empty sessions start with the built-in instrument.
+    void seedDefaultInstrument();
     void notifyDocumentChanged();
 
     // ChannelList::Listener

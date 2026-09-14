@@ -611,3 +611,30 @@ Full build and CTest 1/1 pass with all earlier suites intact. Still manual:
 external MIDI with real hardware (audible delivery to exactly the selected
 instrument, hot-unplug), and a human following `.docs/PLAYING.md`. No
 application build/launch, staging or commit.
+
+## Built-in Instrument (VibeSynth)
+
+`builtinSynthTests` covers the built-in instrument, which rides the ordinary
+plugin pipeline through the `PluginHost` injection seam via an
+`InternalPluginFormat` registered in the host format manager:
+
+- Identity/load: `PluginHost::loadPlugin("internal://vibesynth")` resolves
+  without a file (the format claims identifiers before the filesystem check),
+  filling a stable `Internal`-format instrument description.
+- Audio: a direct note-on renders non-silent stereo output, and after note-off
+  the release tail decays to silence (bounded within 120 blocks).
+- State: the APVTS blob round-trips through
+  `getStateInformation`/`setStateInformation` (gain value preserved).
+- Project round trip through the DEFAULT (un-overridden) `pluginRestorer_`:
+  save/load a project whose channel hosts VibeSynth; identity and state
+  restore via `createFromDescription` like any VST.
+- First-run seeding: `newProject()`/`initialise()` seed exactly one channel
+  with the built-in instrument; the browser scan path
+  (`settings.pluginPath`) is never overwritten with the internal identifier.
+- Drag payload: `DragDropInfo` accepts the `internal://` scheme alongside
+  absolute plugin paths.
+
+New-session seeding also appears in `projectFileTests` (New resets to one
+VibeSynth channel). Manual checks remain: browser "VibeSynth (built-in)"
+entry, "+ Add Channel" auto-load, editor pop-out, and audible playback with
+real hardware.

@@ -1,5 +1,6 @@
 #include "Project.h"
 #include "plugins/PluginHost.h"
+#include "plugins/builtin/InternalPluginFormat.h"
 #include "core/Constants.h"
 #include "utils/Logger.h"
 
@@ -43,6 +44,11 @@ bool Project::initialise(AudioEngine& audioEngine, MidiManager& midiManager) {
         if (!midiManager.connectToDevice(settings.midiInputDevice)) {
             LOG_WARN("Project: Failed to connect to MIDI device: " + settings.midiInputDevice);
         }
+    }
+
+    if (channelList.getNumChannels() == 0) {
+        // First launch: give new users a playable instrument with no VSTs.
+        seedDefaultInstrument();
     }
 
     if (channelList.getNumChannels() > 0) {
@@ -95,7 +101,9 @@ bool Project::loadPlugin(const juce::String& pluginPath, ChannelId target) {
     channel->setPlugin(std::move(pluginHost));
 
     if (creating) {
-        settings.pluginPath = pluginPath;
+        // The built-in instrument is never persisted as a scan path.
+        if (!InternalPluginFormat::claimsIdentifier(pluginPath))
+            settings.pluginPath = pluginPath;
         setActiveChannel(channelList.indexOfChannel(channel));
     }
 
@@ -166,9 +174,17 @@ void Project::newProject() {
     JUCE_ASSERT_MESSAGE_THREAD
     applyStaged(ProjectDocument::Staged{});
     projectFile_ = juce::File();
+    seedDefaultInstrument();
     dirty_ = false;
     notifyDocumentChanged();
     LOG_INFO("Project: New project created");
+}
+
+void Project::seedDefaultInstrument() {
+    JUCE_ASSERT_MESSAGE_THREAD
+    if (channelList.getNumChannels() > 0) return;
+    if (!loadPlugin(InternalPluginFormat::identifier))
+        LOG_WARN("Project: Built-in instrument unavailable; session starts silent");
 }
 
 bool Project::prepareLoad(const juce::File& file, juce::String& error) {

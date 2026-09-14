@@ -88,6 +88,9 @@ set(SOURCES
     src/plugins/PluginHost.cpp
     src/plugins/PluginWindow.cpp
     src/plugins/PluginScanner.cpp
+    src/plugins/builtin/InternalPluginFormat.cpp
+    src/plugins/builtin/VibeSynthProcessor.cpp
+    src/plugins/builtin/VibeSynthEditor.cpp
     src/ui/MainWindow.cpp
     src/ui/DawWindow.cpp
     src/ui/MainContent.cpp

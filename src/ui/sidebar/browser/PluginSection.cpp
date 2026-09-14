@@ -1,6 +1,7 @@
 #include "PluginSection.h"
 #include "ui/Theme.h"
 #include "ui/DragPayload.h"
+#include "plugins/builtin/InternalPluginFormat.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
@@ -59,6 +60,16 @@ void PluginSection::buildTree() {
     rootItem_->setListener(pluginListener_);
 
     int shown = 0;
+
+    // The built-in instrument is always available, even with no VSTs installed.
+    if (filterText_.isEmpty() || juce::String("VibeSynth (built-in)").containsIgnoreCase(filterText_)) {
+        auto* builtinItem = new PluginTreeItem("VibeSynth (built-in)", InternalPluginFormat::identifier, true);
+        builtinItem->setListener(pluginListener_);
+        builtinItem->setOwnerSection(this);
+        rootItem_->addSubItem(builtinItem);
+        ++shown;
+    }
+
     for (const auto& plugin : scanner_.getScannedPlugins()) {
         if (filterText_.isNotEmpty() && !plugin.name.containsIgnoreCase(filterText_)) continue;
         auto* pluginItem = new PluginTreeItem(plugin.name, plugin.path, true);

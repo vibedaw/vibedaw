@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "plugins/builtin/InternalPluginFormat.h"
 
 namespace vibedaw {
 
@@ -44,7 +45,8 @@ struct DragDropInfo {
                 return { DragSourceType::Clip, {}, int(id) };
             if (type.isString() && type.toString() == "vibedaw.plugin" &&
                 path.isString() && path.toString().trim().isNotEmpty() &&
-                juce::File::isAbsolutePath(path.toString()))
+                (juce::File::isAbsolutePath(path.toString()) ||
+                 InternalPluginFormat::claimsIdentifier(path.toString())))
                 return { DragSourceType::Plugin, path.toString() };
         }
         // Preserve the shipped sample-file assignment gesture (not playback).
