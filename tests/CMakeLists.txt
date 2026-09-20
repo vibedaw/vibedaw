@@ -21,12 +21,14 @@ add_executable(offline_tests offline_tests.cpp
     ../src/ui/editor/PianoRollEditor.cpp
     ../src/ui/PianoComponent.cpp ../src/ui/panels/PianoPanel.cpp
     ../src/ui/DawWindow.cpp ../src/ui/editor/ClipEditorWindow.cpp
+    ../src/ui/MainContent.cpp ../src/ui/MainWindow.cpp
     ../src/project/Note.cpp ../src/project/Clip.cpp ../src/project/ClipInstance.cpp
     ../src/project/ClipPool.cpp ../src/project/Track.cpp ../src/project/TrackList.cpp
     ../src/project/Channel.cpp ../src/project/ChannelList.cpp ../src/project/Project.cpp
     ../src/project/ProjectDocument.cpp
     ../src/project/Settings.cpp ../src/core/TransportState.cpp ../src/core/ChannelMixer.cpp
     ../src/core/AudioEngine.cpp ../src/core/MidiManager.cpp
+    ../src/core/MidiRecorder.cpp
     ../src/plugins/PluginHost.cpp ../src/plugins/PluginWindow.cpp ../src/plugins/PluginScanner.cpp
     ../src/plugins/builtin/InternalPluginFormat.cpp
     ../src/plugins/builtin/VibeSynthProcessor.cpp

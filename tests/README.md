@@ -18,6 +18,26 @@ not a third-party plugin runtime test. The engine callback is invoked through a
 friend test seam, without initialising AudioDeviceManager. Settings written by
 the real Project destructor are isolated under the test binary directory's HOME.
 
+## MIDI Recording (T21 Initial Scope)
+
+The current suite includes `midiTimingTests`, `expressiveClipTests`,
+`recorderSessionTests`, and `recordingUiTests`. It tests timestamped ingress and
+feedback exclusion, v3 expression persistence and legacy migration, four modes,
+explicit placement origins, loop playback, held-note/controller boundaries,
+input-loss/reset/work-budget faults, single-level undo conflicts, and UI lifetime
+guards. Allocation counters remain enabled for recorder render calls. MainContent
+and MainWindow are compiled here, but no native main window is constructed.
+
+Verification at handoff: Debug build succeeded; CTest 1/1 passed in 15.26 seconds.
+Live preview, count-in and seamless commit work are deferred, not tested as
+implemented. Real devices, VST3 controller mappings, latency and native interaction
+remain in [TOTEST](../.docs/TOTEST.md). See the narrowed
+[T21 completion record](../.docs/tasks/T21-midi-recording.md), not its original
+full-scope checklist, for the delivered contract.
+
+The older per-milestone evidence below is historical; recording-disable and v2
+writer descriptions are superseded by the current recording/v3 tests.
+
 The UI suites run with the application `DawLookAndFeel`. Offscreen paint checks
 cover button/scrollbar states, rounded controls, surface gradients, enabled-label
 contrast, and white/black held-key feedback in both piano keyboards. Drag and loop
@@ -154,10 +174,11 @@ also fails on JUCE assertion/leak diagnostics, including shutdown diagnostics.
   fit the existing budget and require zero callback C++ allocations/deallocations.
   Suppression forwards non-note controller input (including pedal-up) when the
   destination is not waiting for reset; only live notes/arrangement attacks drop.
-- Real Project/MixerPanel bindings verify current controls/name/colour/selection,
-  master initialization, no model-refresh feedback, stable actions through reorder/
-  deletion, narrow scroll extent, collapse, 20/zero channels, selection mouse path,
-  and listener teardown. These are not native drag/paint/pop-out acceptance tests.
+- Real Project/MixerPanel bindings now target independent mixer channels, verifying
+  controls/name/colour/bus selection without changing the audition instrument,
+  master initialization, no model-refresh feedback, stable actions through rebuild/
+  deletion and instrument reorder, narrow scroll extent, collapse, 20/zero channels,
+  selection mouse path, and listener teardown. Native acceptance remains separate.
 
 The old T06 muted-live reorder test now explicitly unmutes before its fresh attack,
 matching T04's no-attacks-while-suppressed policy; all earlier suites remain enabled.
@@ -168,10 +189,83 @@ interaction remain unverified. No loops, metronome, application build or launch.
 
 T04 independent-review regression extends `mixerBindingTests`: a plain external
 Component simulates pop-out content ownership at 760x480 without a native peer.
-Add/remove/reorder and hidden dock resizing preserve viewport bounds while updating
-strip layout; the actual dock-return hook restores dock layout and further resizing.
+It now reparents the content wrapper (toolbar plus viewport), not the viewport alone.
+Add/remove/instrument reorder and hidden dock resizing preserve wrapper/viewport
+bounds while updating strip layout; the actual dock-return hook restores dock layout
+and further resizing.
 This failed on the original unconditional base resize and passes with the ownership
 guard. Full CTest 1/1 passed; real native pop-out behavior still requires the watcher.
+
+## Independent Mixer Channels
+
+The independent mixer additions and all earlier suites build and pass in the main
+agent's configured offline directory:
+
+```sh
+cmake --build /tmp/opencode/vibedaw-routing-tests --target offline_tests --parallel 4
+ctest --test-dir /tmp/opencode/vibedaw-routing-tests --output-on-failure
+```
+
+Final CTest result: 1/1 passed (11.80 seconds). No application was built or launched.
+
+- `independentMixerModelTests`: exactly one empty default bus, independent
+  instrument/bus lifecycles and capacities, new instruments routed to Master,
+  stable/non-reused IDs, exact-ID restore validation, control clamps/non-finite
+  rejection, many-to-one routing, invalid-route rejection, and removal/clear
+  returning instrument outputs to Master without deleting instruments.
+- `independentMixerSignalTests`: real fake-instrument stereo samples summed into
+  shared buses, direct Master contributions, instrument-before-bus gain/balance,
+  bus gain/pan endpoints/continuity/mono behavior, cancellation, mute/solo precedence,
+  additive bus solos excluding direct Master audio, post-control bus meters,
+  pre-bus instrument meters, master gain/mute, invalid-route fallback, zero buses,
+  all 128 preallocated destinations and current-rate meter decay for buses added
+  after preparation, using sparse IDs larger than the buffer count. Each marked
+  render retains C++ new/delete guards; instruments
+  are asserted to process once, not once per route or bus.
+- `independentMixerNoteTests`: held arrangement and pedal-sustained live notes
+  survive bus mute/solo, rerouting, rename and bus removal without cleanup, reset,
+  retrigger or audition-selection changes. New MIDI attacks/releases still reach
+  a muted or solo-suppressed bus's instrument; final stop proves the original ledgers
+  remain intact.
+  Existing instrument-suppression regressions now run through a shared bus, and
+  metronome/master regressions include a muted solo bus to prove click bypass.
+- `mixerEditEngineTests`: ten scenarios invoke the real engine device callback
+  while edits reject audio admission. Actual bus add/remove/clear/exact-ID restore
+  operations invoke the callback from synchronous `mixerChannelsChanged` listeners
+  inside their structural edits; routing assignment uses an outer PreserveVoices
+  edit around the real setter and callback. Rejected buffers are silent, processing
+  and clock/publication revision remain frozen, and queued live note-offs/attacks
+  survive alongside held live and arrangement voices. Resumed blocks process each
+  instrument once, reflect the new output route and deliver the arrangement release
+  at its original musical boundary, without cleanup CCs or retriggering.
+  Nested default edits upgrade PreserveVoices until outer exit; preserving children
+  cannot downgrade default edits. Explicit pending panic, ingress overflow and a
+  previous destructive rejection all survive later preserving rejections, discard
+  queued attacks and clean held notes exactly once. Every callback retains the
+  C++ allocation/deallocation guards. The overlap is deterministic same-thread
+  callback injection, not an OS scheduling or multithreaded stress claim.
+- `mixerBindingTests` retains the layout/pop-out regressions and adds toolbar
+  add/remove, independent selection, capacity button state, rename/blank-name
+  validation and stale rename callbacks. `mixerRoutingMenuTests` covers row Output
+  controls/context submenu, ticked targets, many-to-one assignment without changing
+  audition selection, rename refresh, actions surviving instrument reorder, stale
+  bus/instrument/owner closures and a Master-only menu with zero buses. Existing
+  rack drag fixtures derive empty-space coordinates from the taller row height,
+  preserving child-first/background dispatch assertions with Output controls present.
+  Live and retained/stale context-menu iterators both account for Audio Output.
+- `projectFileTests` now round-trips v2 mixer IDs/order/name/colour/controls and
+  instrument routes alongside the existing plugin/clip/track/transport assertions.
+  `mixerProjectFileTests` adds many-to-one save/load, zero-bus save/load, dirty tracking,
+  a literal v1 fixture with no mixer section (inert routes discarded, instrument
+  controls retained, one empty bus seeded), reserialization as v2, the exact
+  128-bus capacity boundary and 21 malformed-v2 cases. Invalid lists, IDs, references,
+  capacity, control ranges/types, flags, colour and name must preserve serialized
+  live content, object identities, selection, playback position/state, dirty state
+  and file path, even after a prior successful prepare followed by failed prepare.
+
+Native menus, rename dialogs, real pop-out/dock interactions and audible third-party
+plugin behavior remain watcher/manual checks. Offline tests do not certify plugin
+real-time safety or native GUI behavior.
 
 ## T05 Loop and Metronome
 
@@ -497,8 +591,9 @@ all earlier suites intact; `git diff --check` passed.
 `StatefulInstrument` fake plugin (real state capture/restore, no third-party
 plugin) and a `pluginRestorer_` seam that mirrors the default restore path:
 
-- Serialize/parse/stage round trip: two channels with distinct plugin state,
-  names, mix state (volume/pan/mute/solo/mixer track/colour), a master gain,
+- Serialize/parse/stage v2 round trip: two channels with distinct plugin state,
+  names, instrument controls and output routes, two independent mixer channels
+  (stable IDs/order/name/volume/pan/mute/solo/colour), a master gain,
   three pooled clips (MIDI notes with velocity/channel, audio file reference,
   pattern fields), a shared clip placed on two tracks plus an unresolved
   source placeholder, transport tempo/meter/loop (`exists`+`enabled`)/

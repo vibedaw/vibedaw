@@ -6,11 +6,13 @@
 namespace vibedaw {
 
 ChannelList::ChannelList() {
+    addMixerChannel();
     LOG_INFO("ChannelList: Created");
 }
 
 ChannelList::~ChannelList() {
     clearChannels();
+    clearMixerChannels();
     LOG_INFO("ChannelList: Destroyed");
 }
 
@@ -83,6 +85,60 @@ Channel* ChannelList::getChannelById(ChannelId id) const {
     return nullptr;
 }
 
+MixerChannel* ChannelList::getMixerChannelById(MixerChannelId id) const {
+    for (const auto& channel : mixerChannels)
+        if (channel->getId() == id) return channel.get();
+    return nullptr;
+}
+
+MixerChannel* ChannelList::addMixerChannel(const juce::String& name) {
+    AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+    return restoreMixerChannel(nextMixerId_, name.isNotEmpty() ? name : "Mixer " + juce::String(getNumMixerChannels() + 1));
+}
+
+MixerChannel* ChannelList::restoreMixerChannel(MixerChannelId id, const juce::String& name) {
+    AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+    if (id < 0 || id == std::numeric_limits<MixerChannelId>::max() ||
+        getNumMixerChannels() >= maxMixerChannels || getMixerChannelById(id)) return nullptr;
+    if (nextMixerId_ <= id) nextMixerId_ = id + 1;
+    auto channel = std::make_unique<MixerChannel>(id, name);
+    auto* ptr = channel.get();
+    mixerChannels.push_back(std::move(channel));
+    ptr->addChangeListener(this);
+    listeners.call([](Listener& l) { l.mixerChannelsChanged(); });
+    return ptr;
+}
+
+void ChannelList::removeMixerChannel(MixerChannelId id) {
+    AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+    for (auto it = mixerChannels.begin(); it != mixerChannels.end(); ++it) {
+        if ((*it)->getId() != id) continue;
+        for (const auto& channel : channels)
+            if (channel->getMixerTrackId() == id) channel->setMixerTrackId(MasterDestination);
+        (*it)->removeChangeListener(this);
+        mixerChannels.erase(it);
+        listeners.call([](Listener& l) { l.mixerChannelsChanged(); });
+        return;
+    }
+}
+
+void ChannelList::clearMixerChannels() {
+    AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+    for (const auto& channel : channels)
+        if (channel->getMixerTrackId() != MasterDestination) channel->setMixerTrackId(MasterDestination);
+    for (const auto& channel : mixerChannels) channel->removeChangeListener(this);
+    mixerChannels.clear();
+    listeners.call([](Listener& l) { l.mixerChannelsChanged(); });
+}
+
+bool ChannelList::setChannelMixerDestination(ChannelId channelId, int destination) {
+    AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+    auto* channel = getChannelById(channelId);
+    if (!channel || (destination != MasterDestination && !getMixerChannelById(destination))) return false;
+    channel->setMixerTrackId(destination);
+    return true;
+}
+
 void ChannelList::moveChannel(int fromIndex, int toIndex) {
     AudioQuiescence::Edit edit;
     if (fromIndex < 0 || fromIndex >= static_cast<int>(channels.size()) ||
@@ -131,6 +187,12 @@ void ChannelList::changeListenerCallback(juce::ChangeBroadcaster* source) {
     for (const auto& channel : channels) {
         if (source == channel.get()) {
             notifyChannelChanged(channel.get());
+            return;
+        }
+    }
+    for (const auto& channel : mixerChannels) {
+        if (source == channel.get()) {
+            listeners.call([ptr = channel.get()](Listener& l) { l.mixerChannelChanged(ptr); });
             return;
         }
     }

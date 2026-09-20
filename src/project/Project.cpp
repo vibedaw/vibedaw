@@ -2,11 +2,13 @@
 #include "plugins/PluginHost.h"
 #include "plugins/builtin/InternalPluginFormat.h"
 #include "core/Constants.h"
+#include "core/MidiRecorder.h"
 #include "utils/Logger.h"
 
 namespace vibedaw {
 
 Project::Project() {
+    recorder_ = std::make_unique<MidiRecorder>(*this);
     pluginLoader_ = [](const juce::String& path) -> std::unique_ptr<PluginHost> {
         auto host = std::make_unique<PluginHost>();
         return host->loadPlugin(path) ? std::move(host) : nullptr;
@@ -27,6 +29,8 @@ Project::Project() {
 }
 
 Project::~Project() {
+    recorder_->endSession();
+    recorder_.reset();
     transport.removeListener(this);
     clipPool.removeListener(this);
     trackList.removeListener(this);
@@ -60,6 +64,7 @@ bool Project::initialise(AudioEngine& audioEngine, MidiManager& midiManager) {
 }
 
 void Project::shutdown() {
+    if (recorder_) recorder_->endSession();
     LOG_INFO("Project: Shutting down");
     saveSettings();
     LOG_INFO("Project: Shutdown complete");
@@ -80,6 +85,10 @@ bool Project::loadPlugin(const juce::String& pluginPath, ChannelId target) {
     JUCE_ASSERT_MESSAGE_THREAD
     LOG_INFO("Project: Loading plugin: " + pluginPath);
     const bool creating = target == InvalidChannelId;
+    if (!creating && recorder_ && recorder_->isSessionActive() && recorder_->getChannelId() == target) {
+        recorder_->stop();
+        if (recorder_->hasPendingContent()) return false;
+    }
     if (pluginPath.trim().isEmpty() ||
         (creating ? channelList.getNumChannels() >= ChannelList::maxChannels
                   : channelList.getChannelById(target) == nullptr)) return false;
@@ -164,6 +173,10 @@ void Project::markDirty() {
     notifyDocumentChanged();
 }
 
+bool Project::isDirty() const {
+    return dirty_ || (recorder_ && recorder_->hasPendingContent());
+}
+
 void Project::clearDirty() {
     if (!dirty_) return;
     dirty_ = false;
@@ -172,6 +185,8 @@ void Project::clearDirty() {
 
 void Project::newProject() {
     JUCE_ASSERT_MESSAGE_THREAD
+    recorder_->endSession();
+    if (recorder_->hasPendingContent()) return;
     applyStaged(ProjectDocument::Staged{});
     projectFile_ = juce::File();
     seedDefaultInstrument();
@@ -209,6 +224,8 @@ bool Project::prepareLoad(const juce::File& file, juce::String& error) {
 void Project::commitLoad() {
     JUCE_ASSERT_MESSAGE_THREAD
     if (!staged_) return;
+    recorder_->endSession();
+    if (recorder_->hasPendingContent()) return;
     applyStaged(*staged_);
     projectFile_ = pendingProjectFile_;
     staged_.reset();
@@ -225,6 +242,11 @@ bool Project::saveProject(juce::String& error) {
 
 bool Project::saveProjectAs(const juce::File& file, juce::String& error) {
     JUCE_ASSERT_MESSAGE_THREAD
+    recorder_->stop();
+    if (recorder_->hasPendingContent()) {
+        error = "Recording could not be finalized. Resolve the recorder error before saving.";
+        return false;
+    }
     if (!ProjectDocument::writeToFile(*this, file, error)) {
         LOG_ERROR("Project: Save failed: " + error);
         return false;
@@ -247,10 +269,27 @@ void Project::applyStaged(const ProjectDocument::Staged& staged) {
         AudioQuiescence::Edit edit;
         restoring_ = true; // Restore-time notifications must not mark the document dirty.
 
-        // Dependency order: placements reference pooled clips and channels.
+        // Dependency order: placements reference clips/instruments, instruments
+        // reference independent mixer destinations.
         trackList.clearTracks();
         clipPool.clearClips();
         channelList.clearChannels();
+        channelList.clearMixerChannels();
+
+        for (const auto& data : staged.mixerChannels) {
+            auto* channel = channelList.restoreMixerChannel(data.id, data.name);
+            if (channel == nullptr) {
+                LOG_ERROR("Project: Failed to restore mixer channel ID " + juce::String(data.id));
+                continue;
+            }
+            channel->setVolume(data.volume);
+            channel->setPan(data.pan);
+            channel->setMuted(data.muted);
+            channel->setSolo(data.solo);
+            channel->setColour(data.colour);
+            // Consume restore-time notifications while dirty tracking is suspended.
+            channel->dispatchPendingMessages();
+        }
 
         for (const auto& data : staged.channels) {
             auto* channel = channelList.restoreChannel(data.id, data.name, data.type);
@@ -263,7 +302,7 @@ void Project::applyStaged(const ProjectDocument::Staged& staged) {
             channel->setMuted(data.muted);
             channel->setSolo(data.solo);
             channel->setColour(data.colour);
-            if (data.mixerTrackId >= 0) channel->setMixerTrackId(data.mixerTrackId);
+            channelList.setChannelMixerDestination(data.id, data.mixerTrackId);
             if (data.type == Channel::Type::Sampler && !data.sampleFile.getFullPathName().isEmpty())
                 channel->setSampleFile(data.sampleFile);
             if (data.plugin) {
@@ -288,7 +327,7 @@ void Project::applyStaged(const ProjectDocument::Staged& staged) {
                 case Clip::Type::Midi: {
                     auto midi = std::make_unique<MidiClip>(data.startBeats, data.durationBeats);
                     midi->setLoopEnabled(data.loopEnabled);
-                    for (const auto& note : data.notes) midi->addNote(note);
+                    midi->replaceContent(data.notes, data.expressionEvents);
                     clip = std::move(midi);
                     break;
                 }

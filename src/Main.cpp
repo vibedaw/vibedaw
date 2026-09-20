@@ -42,7 +42,8 @@ public:
         project->initialise(*audioEngine, *midiManager);
         
         channelMixer = std::make_unique<vibedaw::ChannelMixer>(project->getChannelList(),
-            project->getTrackList(), project->getClipPool(), project->getTransportState());
+            project->getTrackList(), project->getClipPool(), project->getTransportState(),
+            &project->getMidiRecorder());
         channelMixer->setActiveChannel(project->getActiveChannel());
         audioEngine->setProcessor(channelMixer.get());
         

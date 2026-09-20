@@ -2,9 +2,14 @@
 
 #include "AudioBoundary.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_events/juce_events.h>
+#include <juce_graphics/juce_graphics.h>
 #include <cmath>
 
 namespace vibedaw {
+
+using MixerChannelId = int;
+constexpr MixerChannelId MasterDestination = -1;
 
 // Sample-peak envelope, instantaneous attack and -40 dB / 0.5 s release.
 // The recurrence is sample-based, so splitting a buffer cannot change the result.
@@ -32,6 +37,69 @@ private:
     std::atomic<float> left{0}, right{0};
     std::atomic<unsigned> revision{0};
     float decay = 0;
+};
+
+// Independent destination, always feeding Master. Model access is message-thread
+// only; acquireControls and meter updates belong to the sole render consumer.
+class MixerChannel : public juce::ChangeBroadcaster {
+public:
+    MixerChannel(MixerChannelId id, const juce::String& name) : id_(id), name_(name) {}
+    MixerChannelId getId() const { return id_; }
+    const juce::String& getName() const { return name_; }
+    void setName(const juce::String& value) {
+        if (name_ == value) return;
+        name_ = value;
+        sendChangeMessage();
+    }
+
+    struct Controls { float volume = 1, pan = 0; bool muted = false, solo = false; };
+    float getVolume() const { return state_.volume; }
+    void setVolume(float value) {
+        if (!std::isfinite(value)) return;
+        value = juce::jlimit(0.0f, 2.0f, value);
+        if (state_.volume == value) return;
+        state_.volume = value;
+        publishControls();
+    }
+    float getPan() const { return state_.pan; }
+    void setPan(float value) {
+        if (!std::isfinite(value)) return;
+        value = juce::jlimit(-1.0f, 1.0f, value);
+        if (state_.pan == value) return;
+        state_.pan = value;
+        publishControls();
+    }
+    bool isMuted() const { return state_.muted; }
+    void setMuted(bool value) {
+        if (state_.muted == value) return;
+        state_.muted = value;
+        publishControls();
+    }
+    bool isSolo() const { return state_.solo; }
+    void setSolo(bool value) {
+        if (state_.solo == value) return;
+        state_.solo = value;
+        publishControls();
+    }
+    juce::Colour getColour() const { return colour_; }
+    void setColour(const juce::Colour& value) {
+        if (colour_ == value) return;
+        colour_ = value;
+        sendChangeMessage();
+    }
+    Controls acquireControls() { return controls_.acquire(); } // Render only.
+    StereoMeter meter;
+    const StereoMeter& getMeter() const { return meter; }
+
+private:
+    void publishControls() { controls_.publish(state_); sendChangeMessage(); }
+    const MixerChannelId id_;
+    juce::String name_;
+    juce::Colour colour_{0xff6a6aff};
+    Controls state_;
+    LatestState<Controls> controls_;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixerChannel)
 };
 
 // Master belongs to the instrument graph, not an arrangement Track or a fake channel.

@@ -3,19 +3,19 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "ui/Theme.h"
 #include "LevelMeter.h"
-#include "project/ClipInstance.h"
 #include <functional>
 
 namespace vibedaw {
 
-class MixerStrip : public juce::Component {
+class MixerStrip : public juce::Component, public juce::SettableTooltipClient {
 public:
-    MixerStrip(ChannelId channelId);
+    MixerStrip(int mixerChannelId);
     ~MixerStrip() override;
     
     void paint(juce::Graphics& g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
+    juce::PopupMenu createContextMenu() const;
     
     void setTrackName(const juce::String& name);
     juce::String getTrackName() const { return trackName; }
@@ -40,13 +40,14 @@ public:
     void setSelected(bool selected);
     bool isSelected() const { return selected; }
     
-    ChannelId getChannelId() const { return channelId; }
+    int getChannelId() const { return mixerChannelId; }
     
     std::function<void(float)> onVolumeChanged;
     std::function<void(float)> onPanChanged;
     std::function<void(bool)> onMuteToggled;
     std::function<void(bool)> onSoloToggled;
     std::function<void()> onStripSelected;
+    std::function<void()> onRenameRequested;
     
 private:
     class FaderComponent;
@@ -55,7 +56,7 @@ private:
     
     void updateComponentPositions();
     
-    const ChannelId channelId;
+    const int mixerChannelId; // Stable mixer ID, not an instrument ChannelId or index.
     juce::String trackName;
     juce::Colour trackColour{theme::headerStripDefault};
     float volume = 1.0f;

@@ -1,6 +1,6 @@
 # T20: UI Visual Overhaul
 
-Status: in_progress | Milestone: M4 (new) | Depends on: none (T17 explicitly out of scope)
+Status: done (implementation complete; manual acceptance deferred to [TOTEST](../TOTEST.md)) | Milestone: M4 (new) | Depends on: none (T17 explicitly out of scope)
 
 Progress 2026-09-10: All phases (0-6) are implemented and the offline suite
 passes (fresh build, all checks green). Remaining: the final acceptance sweep.

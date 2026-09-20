@@ -202,6 +202,11 @@ public:
     // Set by tests so "Edit Loop..." never opens a native CallOutBox.
     std::function<void()> openLoopEditorOverride;
 
+    // Optional recorder integration; standalone transport users keep song controls.
+    void setRecordAction(std::function<void()> action, std::function<void()> setupAction = {});
+    void setPlaybackActions(std::function<void()> play, std::function<void()> stop);
+    void setRecorderState(bool active, bool recording, bool playing);
+
 private:
     TransportState& transportState_;
 
@@ -218,6 +223,8 @@ private:
     std::unique_ptr<TransportButton> metronomeBtn_;
     juce::Rectangle<int> buttonGroupBounds_;
     juce::Component::SafePointer<LoopEditorPopover> openPopover_;
+    std::function<void()> recordAction_, recordSetupAction_, playAction_, stopAction_;
+    bool recorderActive_ = false, recorderRecording_ = false, recorderPlaying_ = false;
 
     void setupButtons();
     void updateButtonStates();

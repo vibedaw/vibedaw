@@ -33,16 +33,21 @@ public:
     int getIndex() const { return index_; }
     
     void paint(juce::Graphics& g) override;
+    void resized() override;
     void mouseEnter(const juce::MouseEvent&) override { repaint(); }
     void mouseExit(const juce::MouseEvent&) override { repaint(); }
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
     juce::PopupMenu createContextMenu() const;
+    juce::PopupMenu createOutputMenu() const;
+    void setOutputName(const juce::String& name);
+    juce::TextButton& getOutputButton() { return outputButton_; }
     // Delayed menu actions resolve stable IDs through the lifetime-checked rack.
     std::function<void()> openEditor;
     std::function<void()> selectAsActive;
     std::function<void()> renameRequested;
     std::function<void()> removeRequested;
+    std::function<juce::PopupMenu()> outputMenuRequested;
     
     bool isInterestedInDragSource(const SourceDetails& dragSourceDetails) override;
     void itemDragEnter(const SourceDetails& dragSourceDetails) override;
@@ -51,7 +56,7 @@ public:
 
     void pollMeter(const StereoMeter& source);
 
-    static constexpr int rowHeight = 40;
+    static constexpr int rowHeight = 66;
 
 private:
     juce::Rectangle<int> kebabRect() const { return {getWidth() - 20, 2, 18, 18}; }
@@ -65,6 +70,7 @@ private:
     bool isSelected_ = false;
     bool isDragOver_ = false;
     DragDropInfo pendingDragInfo_;
+    juce::TextButton outputButton_;
 };
 
 class ChannelRackContent : public juce::Component,
@@ -94,6 +100,8 @@ public:
     void renameChannelById(ChannelId id, const juce::String& name);
     void removeChannelById(ChannelId id);
     void removeChannelWithConfirmation(ChannelId id);
+    juce::PopupMenu createOutputMenuForChannel(ChannelId id);
+    bool setChannelOutputById(ChannelId id, int mixerChannelId);
     int countPlacementsToChannel(ChannelId id) const;
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -108,6 +116,8 @@ public:
     void channelRemoved(int index) override;
     void channelChanged(Channel* channel) override;
     void channelListChanged() override;
+    void mixerChannelsChanged() override { refreshOutputs(); }
+    void mixerChannelChanged(MixerChannel*) override { refreshOutputs(); }
     
     void channelSelected(Channel* channel) override;
     void pluginDroppedOnChannel(Channel* channel, const juce::String& pluginPath) override;
@@ -127,6 +137,7 @@ private:
     bool isDragOver_ = false;
     
     void rebuildChannelRows();
+    void refreshOutputs();
     void selectChannel(int index);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelRackContent)

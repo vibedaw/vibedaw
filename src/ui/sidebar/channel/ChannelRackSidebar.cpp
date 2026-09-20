@@ -15,7 +15,29 @@ namespace vibedaw {
 ChannelRow::ChannelRow(Channel* channel, int index)
     : channel_(channel), index_(index)
 {
-    setInterceptsMouseClicks(true, false);
+    setInterceptsMouseClicks(true, true);
+    outputButton_.setColour(juce::TextButton::buttonColourId, theme::deepWell);
+    outputButton_.setColour(juce::TextButton::textColourOffId, theme::textSecondary);
+    setOutputName("Master");
+    outputButton_.onClick = [this] {
+        createOutputMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&outputButton_));
+    };
+    addAndMakeVisible(outputButton_);
+}
+
+void ChannelRow::resized() {
+    outputButton_.setBounds(10, 30, juce::jmax(0, getWidth() - 20), 18);
+    outputButton_.setVisible(getHeight() >= rowHeight);
+}
+
+void ChannelRow::setOutputName(const juce::String& name) {
+    outputButton_.setButtonText("Output: " + name);
+    outputButton_.setTitle("Instrument audio output");
+    outputButton_.setTooltip("Audio output: " + name + ". Route directly to Master or to an independent mixer channel shared by multiple instruments. This does not change the live audition instrument.");
+}
+
+juce::PopupMenu ChannelRow::createOutputMenu() const {
+    return outputMenuRequested ? outputMenuRequested() : juce::PopupMenu{};
 }
 
 void ChannelRow::setSelected(bool selected) {
@@ -75,7 +97,7 @@ void ChannelRow::paint(juce::Graphics& g) {
         subtitle = "Sample assigned (no playback)";
     g.setColour(channel_ && channel_->getMissingPlugin() ? theme::dangerText : theme::textSecondary);
     g.setFont(10.0f);
-    g.drawText(subtitle, 36, 18, juce::jmax(0, muteRect().getX() - 40), 11,
+    g.drawText(subtitle, 36, 18, juce::jmax(0, kebabRect().getX() - 40), 11,
                juce::Justification::centredLeft, true);
 
     g.setColour(theme::textSecondary);
@@ -117,6 +139,7 @@ juce::PopupMenu ChannelRow::createContextMenu() const {
     if (reason.isNotEmpty()) menu.addSectionHeader(reason);
     menu.addSeparator();
     menu.addItem("Select for Live Audition & New Placements", true, isSelected_, selectAsActive);
+    menu.addSubMenu("Audio Output", createOutputMenu());
     menu.addItem(juce::String(juce::CharPointer_UTF8("Rename Channel\xe2\x80\xa6")), true, false, renameRequested);
     menu.addItem(juce::String(juce::CharPointer_UTF8("Remove Channel\xe2\x80\xa6")), true, false, removeRequested);
     return menu;
@@ -196,7 +219,7 @@ ChannelRackContent::ChannelRackContent(Project& project)
     : project_(project)
 {
     addChannelButton_.setButtonText("+ Add Channel");
-    addChannelButton_.setTooltip("Maximum 128 channels. New channels start with the built-in VibeSynth. Structural edits briefly silence audio while callbacks are quiesced.");
+    addChannelButton_.setTooltip("Maximum 128 instrument channels. New instruments start with VibeSynth and output directly to Master, independently of mixer selection. Structural edits briefly silence audio while callbacks are quiesced.");
     addChannelButton_.setColour(juce::TextButton::buttonColourId, theme::actionGreen);
     addChannelButton_.setColour(juce::TextButton::textColourOffId, theme::accent);
     addChannelButton_.onClick = [this]() {
@@ -247,6 +270,35 @@ void ChannelRackContent::renameChannelById(ChannelId id, const juce::String& nam
     const auto trimmed = name.trim();
     if (trimmed.isEmpty()) return;
     if (auto* channel = project_.getChannelList().getChannelById(id)) channel->setName(trimmed);
+}
+
+bool ChannelRackContent::setChannelOutputById(ChannelId id, int mixerChannelId) {
+    auto& list = project_.getChannelList();
+    if (!list.getChannelById(id) ||
+        (mixerChannelId != -1 && !list.getMixerChannelById(mixerChannelId))) return false;
+    const bool changed = list.setChannelMixerDestination(id, mixerChannelId);
+    refreshOutputs();
+    return changed;
+}
+
+juce::PopupMenu ChannelRackContent::createOutputMenuForChannel(ChannelId id) {
+    juce::PopupMenu menu;
+    auto& list = project_.getChannelList();
+    auto* channel = list.getChannelById(id);
+    if (!channel) return menu;
+    const auto safe = juce::Component::SafePointer<ChannelRackContent>(this);
+    menu.addItem("Master", true, channel->getMixerTrackId() == -1, [safe, id] {
+        if (safe != nullptr) safe->setChannelOutputById(id, -1);
+    });
+    if (list.getNumMixerChannels() > 0) menu.addSeparator();
+    for (const auto& mixer : list.getMixerChannels()) {
+        const int destination = mixer->getId();
+        menu.addItem(mixer->getName(), true, channel->getMixerTrackId() == destination,
+            [safe, id, destination] {
+                if (safe != nullptr) safe->setChannelOutputById(id, destination);
+            });
+    }
+    return menu;
 }
 
 void ChannelRackContent::removeChannelById(ChannelId id) {
@@ -348,7 +400,9 @@ void ChannelRackContent::channelRemoved(int index) {
 }
 
 void ChannelRackContent::channelChanged(Channel* channel) {
-    rebuildChannelRows();
+    juce::ignoreUnused(channel);
+    refreshOutputs();
+    repaint();
 }
 
 void ChannelRackContent::channelListChanged() {
@@ -413,13 +467,25 @@ void ChannelRackContent::rebuildChannelRows() {
         row->removeRequested = [safe = juce::Component::SafePointer<ChannelRackContent>(this), id = channel->getId()] {
             if (safe != nullptr) safe->removeChannelWithConfirmation(id);
         };
+        row->outputMenuRequested = [safe = juce::Component::SafePointer<ChannelRackContent>(this), id = channel->getId()] {
+            return safe != nullptr ? safe->createOutputMenuForChannel(id) : juce::PopupMenu{};
+        };
         row->setListener(this);
         row->setSelected(i == selectedChannelIndex_);
         addAndMakeVisible(*row);
         channelRows_.push_back(std::move(row));
     }
     
+    refreshOutputs();
     resized();
+}
+
+void ChannelRackContent::refreshOutputs() {
+    for (auto& row : channelRows_) {
+        auto* channel = row->getChannel();
+        auto* mixer = channel ? project_.getChannelList().getMixerChannelById(channel->getMixerTrackId()) : nullptr;
+        row->setOutputName(mixer ? mixer->getName() : juce::String("Master"));
+    }
 }
 
 void ChannelRackContent::selectChannel(int index) {

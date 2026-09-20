@@ -281,10 +281,10 @@ private:
     bool isToggled = false;
 };
 
-MixerStrip::MixerStrip(ChannelId id)
-    : channelId(id)
+MixerStrip::MixerStrip(int id)
+    : mixerChannelId(id)
 {
-    
+    setTooltip("Independent audio mixer channel, output to Master. Multiple instruments can feed this channel. Click to select; right-click to rename. Live instrument selection is unchanged.");
     meter = std::make_unique<LevelMeter>();
     meter->setMeterStyle(true);
     addAndMakeVisible(*meter);
@@ -334,7 +334,17 @@ MixerStrip::MixerStrip(ChannelId id)
 
 MixerStrip::~MixerStrip() = default;
 
+juce::PopupMenu MixerStrip::createContextMenu() const {
+    juce::PopupMenu menu;
+    menu.addItem("Rename Mixer Channel...", true, false, onRenameRequested);
+    return menu;
+}
+
 void MixerStrip::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu()) {
+        createContextMenu().showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this));
+        return;
+    }
     if (e.mods.isLeftButtonDown() && onStripSelected) onStripSelected();
 }
 
@@ -408,6 +418,7 @@ void MixerStrip::updateComponentPositions() {
 
 void MixerStrip::setTrackName(const juce::String& name) {
     trackName = name;
+    setTitle("Mixer channel: " + name);
     repaint();
 }
 

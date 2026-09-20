@@ -55,23 +55,27 @@ private:
 // consistent admission ensures a writer cannot miss an admitted render block.
 class AudioQuiescence {
 public:
+    enum class Interruption { ResetVoices, PreserveVoices };
     class Edit {
     public:
-        Edit() : lock(instance().writers) {
+        explicit Edit(Interruption interruption = Interruption::ResetVoices) : lock(instance().writers) {
             if (depth++ == 0) {
-                instance().blocked.store(true);
+                instance().blocked.store(interruption == Interruption::PreserveVoices ? 1u : 2u);
                 while (instance().active.load()) std::this_thread::yield();
-            }
+            } else if (interruption == Interruption::ResetVoices)
+                instance().blocked.store(2u); // A destructive nested edit wins until outer exit.
         }
-        ~Edit() { if (--depth == 0) instance().blocked.store(false); }
+        ~Edit() { if (--depth == 0) instance().blocked.store(0u); }
     private:
         std::unique_lock<std::recursive_mutex> lock;
         inline static thread_local unsigned depth = 0;
     };
     static AudioQuiescence& instance() { return singleton; }
-    bool enter() noexcept {
+    bool enter(bool* resetVoicesOnRejection = nullptr) noexcept {
         active.store(true);
-        if (!blocked.load()) return true;
+        const auto interruption = blocked.load();
+        if (interruption == 0) return true;
+        if (resetVoicesOnRejection) *resetVoicesOnRejection = interruption == 2u;
         active.store(false);
         return false;
     }
@@ -79,7 +83,8 @@ public:
 private:
     static AudioQuiescence singleton;
     std::recursive_mutex writers;
-    std::atomic<bool> blocked{false}, active{false};
+    std::atomic<unsigned> blocked{0}; // 0: open, 1: audio-only edit, 2: reset on rejection.
+    std::atomic<bool> active{false};
 };
 inline AudioQuiescence AudioQuiescence::singleton;
 static_assert(std::atomic<unsigned>::is_always_lock_free);

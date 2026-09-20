@@ -93,6 +93,21 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioClip)
 };
 
+// Clip-local quarter-note beat and exact three-byte MIDI message. The status
+// includes the channel nibble: CC 0xB0..0xBF or pitch bend 0xE0..0xEF only.
+struct MidiExpressionEvent {
+    double beat = 0.0;
+    int status = 0xb0;
+    int data1 = 0;
+    int data2 = 0;
+
+    int getChannel() const { return (status & 0x0f) + 1; }
+    bool isValid() const;
+    static bool compareByBeat(const MidiExpressionEvent& a, const MidiExpressionEvent& b) {
+        return a.beat < b.beat;
+    }
+};
+
 class MidiClip : public Clip {
 public:
     // Notes use local beat zero, not Clip::startTime. Only ClipInstance positions
@@ -114,12 +129,27 @@ public:
     void clearNotes();
     int getNumNotes() const { return static_cast<int>(notes_.size()); }
     const Note* findNoteAt(double time, int pitch) const;
+
+    static constexpr size_t maxNotes = 65536;
+    static constexpr size_t maxExpressionEvents = 65536;
+    const std::vector<MidiExpressionEvent>& getExpressionEvents() const { return expressionEvents_; }
+    // Message-thread mutations; false means invalid input/capacity and no change
+    // or notification. Events are sorted by beat, preserving input order at ties.
+    // Borrowed expression elements expire on the next expression mutation.
+    bool addExpressionEvent(const MidiExpressionEvent& event);
+    bool setExpressionEvents(std::vector<MidiExpressionEvent> events);
+    void clearExpressionEvents();
+    // Recorder commit: validate both collections before replacing either, then
+    // invalidate note pointers and emit one clipChanged notification. No audio
+    // thread synchronization is implied; source duration is left unchanged.
+    bool replaceContent(std::vector<Note> notes, std::vector<MidiExpressionEvent> events);
     
     std::unique_ptr<Clip> clone() const override;
     
 private:
     bool loopEnabled = false;
     std::vector<Note> notes_;
+    std::vector<MidiExpressionEvent> expressionEvents_;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiClip)
 };

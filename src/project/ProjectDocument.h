@@ -21,7 +21,7 @@ class Project;
 // ledgers, waveform caches, or the audio-device connection.
 namespace ProjectDocument {
 
-constexpr int currentVersion = 1;
+constexpr int currentVersion = 3;
 
 // One channel's saved plugin identity and opaque vendor state.
 struct PluginInfo {
@@ -45,6 +45,16 @@ struct ChannelData {
     std::optional<PluginInfo> plugin;
 };
 
+struct MixerChannelData {
+    MixerChannelId id = 0;
+    juce::String name = "Mixer 1";
+    float volume = 1.0f;
+    float pan = 0.0f;
+    bool muted = false;
+    bool solo = false;
+    juce::Colour colour{0xff6a6aff};
+};
+
 struct ClipData {
     ClipId id = InvalidClipId;
     Clip::Type type = Clip::Type::Midi;
@@ -57,6 +67,7 @@ struct ClipData {
     double patternLength = 1.0; // Pattern clips only.
     int loopCount = 1;
     std::vector<Note> notes;  // Midi clips only; local beats.
+    std::vector<MidiExpressionEvent> expressionEvents; // Midi only; stable beat order.
 };
 
 struct InstanceData {
@@ -89,6 +100,9 @@ struct TransportData {
 struct Staged {
     int version = currentVersion;
     std::vector<ChannelData> channels;
+    // New projects and v1 migration seed one empty destination. V2+ parsing
+    // replaces this list, including when the saved collection is empty.
+    std::vector<MixerChannelData> mixerChannels{MixerChannelData{}};
     float masterGain = 1.0f;
     bool masterMuted = false;
     std::vector<ClipData> clips;
@@ -101,7 +115,7 @@ struct Staged {
 juce::String serialize(const Project& project);
 
 // Parses and validates into a temporary model. Malformed input never throws;
-// returns false with an actionable error message.
+// returns false with an actionable error message, leaving out unchanged.
 bool stage(const juce::String& json, Staged& out, juce::String& error);
 
 // Writes through a temporary file plus safe replacement. Success is reported

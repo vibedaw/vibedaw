@@ -1,9 +1,27 @@
 #include "Clip.h"
 #include "Note.h"
+#include "core/TransportState.h"
 #include <algorithm>
 #include <cmath>
 
 namespace vibedaw {
+
+namespace {
+bool validNote(const Note& note) {
+    return std::isfinite(note.getStartTime()) && note.getStartTime() >= 0.0 &&
+           std::isfinite(note.getDuration()) && note.getDuration() > 0.0 &&
+           std::isfinite(note.getEndTime()) &&
+           note.getPitch() >= Note::minPitch && note.getPitch() <= Note::maxPitch &&
+           note.getVelocity() >= Note::minVelocity && note.getVelocity() <= Note::maxVelocity &&
+           note.getChannel() >= 1 && note.getChannel() <= 16;
+}
+} // namespace
+
+bool MidiExpressionEvent::isValid() const {
+    return std::isfinite(beat) && beat >= 0.0 && beat <= TransportState::maxPositionBeats &&
+           ((status >= 0xb0 && status <= 0xbf) || (status >= 0xe0 && status <= 0xef)) &&
+           data1 >= 0 && data1 <= 127 && data2 >= 0 && data2 <= 127;
+}
 
 Clip::Clip(Type type, double start, double dur)
     : clipType(type)
@@ -86,8 +104,7 @@ MidiClip::MidiClip(double startTime, double duration)
 }
 
 const Note* MidiClip::addNote(const Note& note) {
-    if (!std::isfinite(note.getStartTime()) || note.getStartTime() < 0.0 ||
-        !std::isfinite(note.getDuration()) || note.getDuration() <= 0.0 || !std::isfinite(note.getEndTime())) return nullptr;
+    if (notes_.size() >= maxNotes || !validNote(note)) return nullptr;
     invalidateNotes();
     notes_.push_back(note);
     notifyChanged();
@@ -95,8 +112,7 @@ const Note* MidiClip::addNote(const Note& note) {
 }
 
 void MidiClip::updateNote(const Note* note, const Note& replacement) {
-    if (!std::isfinite(replacement.getStartTime()) || replacement.getStartTime() < 0.0 ||
-        !std::isfinite(replacement.getDuration()) || replacement.getDuration() <= 0.0 || !std::isfinite(replacement.getEndTime())) return;
+    if (!validNote(replacement)) return;
     for (auto& current : notes_) {
         if (&current == note) {
             current = replacement;
@@ -131,6 +147,44 @@ void MidiClip::clearNotes() {
     notifyChanged();
 }
 
+bool MidiClip::addExpressionEvent(const MidiExpressionEvent& event) {
+    if (expressionEvents_.size() >= maxExpressionEvents || !event.isValid()) return false;
+    // Copy first: callers may pass an element borrowed from this collection.
+    const auto copy = event;
+    const auto position = std::upper_bound(expressionEvents_.begin(), expressionEvents_.end(),
+                                           copy, MidiExpressionEvent::compareByBeat);
+    expressionEvents_.insert(position, copy);
+    notifyChanged();
+    return true;
+}
+
+bool MidiClip::setExpressionEvents(std::vector<MidiExpressionEvent> events) {
+    if (events.size() > maxExpressionEvents ||
+        !std::all_of(events.begin(), events.end(), [](const auto& event) { return event.isValid(); })) return false;
+    std::stable_sort(events.begin(), events.end(), MidiExpressionEvent::compareByBeat);
+    expressionEvents_.swap(events);
+    notifyChanged();
+    return true;
+}
+
+void MidiClip::clearExpressionEvents() {
+    if (expressionEvents_.empty()) return;
+    expressionEvents_.clear();
+    notifyChanged();
+}
+
+bool MidiClip::replaceContent(std::vector<Note> notes, std::vector<MidiExpressionEvent> events) {
+    if (notes.size() > maxNotes || events.size() > maxExpressionEvents ||
+        !std::all_of(notes.begin(), notes.end(), validNote) ||
+        !std::all_of(events.begin(), events.end(), [](const auto& event) { return event.isValid(); })) return false;
+    std::stable_sort(events.begin(), events.end(), MidiExpressionEvent::compareByBeat);
+    invalidateNotes();
+    notes_.swap(notes);
+    expressionEvents_.swap(events);
+    notifyChanged();
+    return true;
+}
+
 const Note* MidiClip::findNoteAt(double time, int pitch) const {
     for (const auto& note : notes_) {
         if (note.getPitch() == pitch && note.containsTime(time)) {
@@ -148,6 +202,7 @@ std::unique_ptr<Clip> MidiClip::clone() const {
     cloned->muted = muted;
     cloned->loopEnabled = loopEnabled;
     cloned->notes_ = notes_;
+    cloned->expressionEvents_ = expressionEvents_;
     return cloned;
 }
 

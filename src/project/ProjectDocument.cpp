@@ -32,12 +32,14 @@ bool readNumber(const juce::var& value, float& out) {
 
 bool readInt(const juce::var& value, int& out) {
     if (value.isInt() || value.isInt64()) {
-        out = static_cast<int>(static_cast<juce::int64>(value));
+        const auto raw = static_cast<juce::int64>(value);
+        if (raw < std::numeric_limits<int>::min() || raw > std::numeric_limits<int>::max()) return false;
+        out = static_cast<int>(raw);
         return true;
     }
     double raw = 0;
     if (!readNumber(value, raw)) return false;
-    if (raw != std::floor(raw) || raw < -std::numeric_limits<int>::max() ||
+    if (raw != std::floor(raw) || raw < std::numeric_limits<int>::min() ||
         raw > std::numeric_limits<int>::max()) return false;
     out = static_cast<int>(raw);
     return true;
@@ -192,6 +194,20 @@ juce::String serialize(const Project& project) {
         }
         root->setProperty("channels", channelArray);
 
+        juce::Array<juce::var> mixerChannelArray;
+        for (const auto& channel : channels.getMixerChannels()) {
+            auto* object = new juce::DynamicObject();
+            object->setProperty("id", channel->getId());
+            object->setProperty("name", channel->getName());
+            object->setProperty("volume", channel->getVolume());
+            object->setProperty("pan", channel->getPan());
+            object->setProperty("muted", channel->isMuted());
+            object->setProperty("solo", channel->isSolo());
+            object->setProperty("colour", colourToString(channel->getColour()));
+            mixerChannelArray.add(juce::var(object));
+        }
+        root->setProperty("mixerChannels", mixerChannelArray);
+
         auto* masterObject = new juce::DynamicObject();
         masterObject->setProperty("gain", channels.getMasterBus().getGain());
         masterObject->setProperty("muted", channels.getMasterBus().isMuted());
@@ -224,6 +240,16 @@ juce::String serialize(const Project& project) {
                         noteArray.add(juce::var(noteObject));
                     }
                     object->setProperty("notes", noteArray);
+                    juce::Array<juce::var> expressionArray;
+                    for (const auto& event : midi->getExpressionEvents()) {
+                        auto* eventObject = new juce::DynamicObject();
+                        eventObject->setProperty("beat", event.beat);
+                        eventObject->setProperty("status", event.status);
+                        eventObject->setProperty("data1", event.data1);
+                        eventObject->setProperty("data2", event.data2);
+                        expressionArray.add(juce::var(eventObject));
+                    }
+                    object->setProperty("expressionEvents", expressionArray);
                 }
             } else if (clip->getType() == Clip::Type::Audio) {
                 if (const auto* audio = dynamic_cast<const AudioClip*>(clip))
@@ -283,6 +309,52 @@ namespace {
 
 // Every failure exits with an actionable message; nothing throws on malformed
 // input. The staged snapshot is only mutated after all reads of a section pass.
+bool stageMixerChannels(const juce::var& value, Staged& out, juce::String& error) {
+    if (!value.isArray()) { error = "Project file is missing its mixer channel list."; return false; }
+    if (value.size() > ChannelList::maxMixerChannels) {
+        error = "Project file declares too many mixer channels; at most " +
+                juce::String(ChannelList::maxMixerChannels) + " are supported.";
+        return false;
+    }
+    out.mixerChannels.clear();
+    for (int i = 0; i < value.size(); ++i) {
+        const auto& item = value[i];
+        if (!item.isObject()) { error = "Malformed mixer channel entry " + juce::String(i) + "."; return false; }
+        auto* object = item.getDynamicObject();
+        MixerChannelData data;
+        if (!readInt(object->getProperty("id"), data.id) || data.id < 0 ||
+            data.id == std::numeric_limits<MixerChannelId>::max()) {
+            error = "Mixer channel entry " + juce::String(i) + " has an invalid ID.";
+            return false;
+        }
+        for (const auto& existing : out.mixerChannels)
+            if (existing.id == data.id) {
+                error = "Project file declares mixer channel ID " + juce::String(data.id) + " more than once.";
+                return false;
+            }
+        if (!readString(object->getProperty("name"), data.name) ||
+            !readColour(object->getProperty("colour"), data.colour)) {
+            error = "Mixer channel " + juce::String(data.id) + " has an invalid name or colour.";
+            return false;
+        }
+        double volume = 1.0, pan = 0.0;
+        if (!readNumber(object->getProperty("volume"), volume) || volume < 0.0 || volume > 2.0 ||
+            !readNumber(object->getProperty("pan"), pan) || pan < -1.0 || pan > 1.0) {
+            error = "Mixer channel " + juce::String(data.id) + " has invalid volume (0..2) or pan (-1..1).";
+            return false;
+        }
+        data.volume = static_cast<float>(volume);
+        data.pan = static_cast<float>(pan);
+        if (!readBool(object->getProperty("muted"), data.muted) ||
+            !readBool(object->getProperty("solo"), data.solo)) {
+            error = "Mixer channel " + juce::String(data.id) + " has invalid mute/solo flags.";
+            return false;
+        }
+        out.mixerChannels.push_back(std::move(data));
+    }
+    return true;
+}
+
 bool stageChannels(const juce::var& value, Staged& out, juce::String& error) {
     if (!value.isArray()) { error = "Project file is missing its channel list."; return false; }
     const int count = value.size();
@@ -296,7 +368,8 @@ bool stageChannels(const juce::var& value, Staged& out, juce::String& error) {
         if (!item.isObject()) { error = "Malformed channel entry " + juce::String(i) + "."; return false; }
         auto* object = item.getDynamicObject();
         ChannelData data;
-        if (!readInt(object->getProperty("id"), data.id) || data.id < 0) {
+        if (!readInt(object->getProperty("id"), data.id) || data.id < 0 ||
+            data.id == std::numeric_limits<ChannelId>::max()) {
             error = "Channel entry " + juce::String(i) + " has an invalid ID.";
             return false;
         }
@@ -331,6 +404,19 @@ bool stageChannels(const juce::var& value, Staged& out, juce::String& error) {
         if (!readInt(object->getProperty("mixerTrackId"), data.mixerTrackId)) {
             error = "Channel " + juce::String(data.id) + " has an invalid mixer track ID.";
             return false;
+        }
+        if (out.version == 1) {
+            // V1 stored an inert property, not an audible route.
+            data.mixerTrackId = MasterDestination;
+        } else if (data.mixerTrackId != MasterDestination) {
+            bool found = false;
+            for (const auto& mixer : out.mixerChannels)
+                if (mixer.id == data.mixerTrackId) { found = true; break; }
+            if (!found) {
+                error = "Channel " + juce::String(data.id) + " references missing mixer destination " +
+                        juce::String(data.mixerTrackId) + ".";
+                return false;
+            }
         }
         if (!readColour(object->getProperty("colour"), data.colour)) {
             error = "Channel " + juce::String(data.id) + " has an invalid colour.";
@@ -408,6 +494,10 @@ bool stageClips(const juce::var& value, Staged& out, juce::String& error) {
             }
             const auto notes = object->getProperty("notes");
             if (!notes.isArray()) { error = "MIDI clip " + juce::String(data.id) + " is missing its note list."; return false; }
+            if (static_cast<size_t>(notes.size()) > MidiClip::maxNotes) {
+                error = "MIDI clip " + juce::String(data.id) + " exceeds the 65536-note capacity.";
+                return false;
+            }
             for (int n = 0; n < notes.size(); ++n) {
                 const auto& noteVar = notes[n];
                 if (!noteVar.isObject()) { error = "MIDI clip " + juce::String(data.id) + " has a malformed note."; return false; }
@@ -444,6 +534,35 @@ bool stageClips(const juce::var& value, Staged& out, juce::String& error) {
                 note.setVelocity(velocity);
                 note.setChannel(channel);
                 data.notes.push_back(note);
+            }
+            if (out.version >= 3) {
+                const auto events = object->getProperty("expressionEvents");
+                if (!events.isArray()) {
+                    error = "MIDI clip " + juce::String(data.id) + " is missing its expression event list.";
+                    return false;
+                }
+                if (static_cast<size_t>(events.size()) > MidiClip::maxExpressionEvents) {
+                    error = "MIDI clip " + juce::String(data.id) + " exceeds the 65536-expression-event capacity.";
+                    return false;
+                }
+                for (int e = 0; e < events.size(); ++e) {
+                    const auto* eventObject = events[e].getDynamicObject();
+                    MidiExpressionEvent event;
+                    if (eventObject == nullptr ||
+                        !readNumber(eventObject->getProperty("beat"), event.beat) ||
+                        !readInt(eventObject->getProperty("status"), event.status) ||
+                        !readInt(eventObject->getProperty("data1"), event.data1) ||
+                        !readInt(eventObject->getProperty("data2"), event.data2) || !event.isValid()) {
+                        error = "MIDI clip " + juce::String(data.id) + " has an invalid expression event " +
+                                juce::String(e) + "; expected beat 0..1e9, CC/bend status (channel 1..16), data bytes 0..127.";
+                        return false;
+                    }
+                    if (!data.expressionEvents.empty() && event.beat < data.expressionEvents.back().beat) {
+                        error = "MIDI clip " + juce::String(data.id) + " has expression events out of beat order.";
+                        return false;
+                    }
+                    data.expressionEvents.push_back(event);
+                }
             }
         } else if (data.type == Clip::Type::Audio) {
             juce::String path;
@@ -584,8 +703,9 @@ bool stageTransport(const juce::DynamicObject* object, TransportData& out, juce:
 
 } // namespace
 
-bool stage(const juce::String& json, Staged& out, juce::String& error) {
-    out = Staged{};
+bool stage(const juce::String& json, Staged& result, juce::String& error) {
+    error.clear();
+    Staged out;
     auto parsed = juce::JSON::parse(json);
     if (!parsed.isObject()) {
         error = "Not a valid VibeDAW project file.";
@@ -598,9 +718,9 @@ bool stage(const juce::String& json, Staged& out, juce::String& error) {
         error = "Project file is missing a valid format version.";
         return false;
     }
-    if (version != currentVersion) {
+    if (version < 1 || version > currentVersion) {
         error = "Unsupported project format version " + juce::String(version) +
-                " (this build supports version " + juce::String(currentVersion) + ").";
+                " (this build supports versions 1 through " + juce::String(currentVersion) + ").";
         return false;
     }
     out.version = version;
@@ -619,6 +739,7 @@ bool stage(const juce::String& json, Staged& out, juce::String& error) {
         error = "Project file has invalid master flags.";
         return false;
     }
+    if (version >= 2 && !stageMixerChannels(root->getProperty("mixerChannels"), out, error)) return false;
     if (!stageChannels(root->getProperty("channels"), out, error)) return false;
     if (!stageClips(root->getProperty("clips"), out, error)) return false;
     if (!stageTracks(root->getProperty("tracks"), out, error)) return false;
@@ -627,7 +748,9 @@ bool stage(const juce::String& json, Staged& out, juce::String& error) {
         error = "Project file is missing its transport settings.";
         return false;
     }
-    return stageTransport(transportVar.getDynamicObject(), out.transport, error);
+    if (!stageTransport(transportVar.getDynamicObject(), out.transport, error)) return false;
+    result = std::move(out);
+    return true;
 }
 
 bool writeToFile(const Project& project, const juce::File& file, juce::String& error) {

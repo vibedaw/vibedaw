@@ -19,10 +19,13 @@ public:
         virtual void channelRemoved(int index) = 0;
         virtual void channelChanged(Channel* channel) = 0;
         virtual void channelListChanged() = 0;
+        virtual void mixerChannelsChanged() {}
+        virtual void mixerChannelChanged(MixerChannel*) {}
     };
     
     ChannelList();
     static constexpr int maxChannels = 128;
+    static constexpr int maxMixerChannels = 128;
     ~ChannelList();
     
     Channel* addChannel(const juce::String& name = {}, Channel::Type type = Channel::Type::Instrument);
@@ -39,6 +42,16 @@ public:
     const std::vector<std::unique_ptr<Channel>>& getChannels() const { return channels; }
     MasterBus& getMasterBus() { return masterBus; }
     const MasterBus& getMasterBus() const { return masterBus; }
+
+    int getNumMixerChannels() const { return static_cast<int>(mixerChannels.size()); }
+    const std::vector<std::unique_ptr<MixerChannel>>& getMixerChannels() const { return mixerChannels; }
+    MixerChannel* getMixerChannelById(MixerChannelId id) const;
+    MixerChannel* addMixerChannel(const juce::String& name = {});
+    // Exact-ID restore only; ordinary additions never reuse removed IDs.
+    MixerChannel* restoreMixerChannel(MixerChannelId id, const juce::String& name);
+    void removeMixerChannel(MixerChannelId id);
+    void clearMixerChannels();
+    bool setChannelMixerDestination(ChannelId channelId, int destination);
     
     void moveChannel(int fromIndex, int toIndex);
     
@@ -50,8 +63,10 @@ public:
 private:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     ChannelId nextId_ = 0;
+    MixerChannelId nextMixerId_ = 0;
     MasterBus masterBus;
     std::vector<std::unique_ptr<Channel>> channels;
+    std::vector<std::unique_ptr<MixerChannel>> mixerChannels;
     juce::ListenerList<Listener> listeners;
     
     void notifyChannelAdded(Channel* channel);

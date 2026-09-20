@@ -149,7 +149,7 @@ void TransportButton::paint(juce::Graphics& g) {
                 break;
         }
     } else if (type_ == Type::Record) {
-        // The stub is disabled, but the affordance reads as record: red at rest.
+        // Keep the record affordance red at rest.
         iconColour = theme::danger;
         outlineColour = theme::dangerDim;
     }
@@ -526,17 +526,23 @@ void TransportComponent::setupButtons() {
     };
     
     stopBtn_->onClick = [this]() {
-        transportState_.stop();
+        if (stopAction_) stopAction_();
+        else transportState_.stop();
     };
     
     playBtn_->onClick = [this]() {
-        transportState_.togglePlay();
+        if (playAction_) playAction_();
+        else transportState_.togglePlay();
     };
     
     recordBtn_->setEnabled(false);
     recordBtn_->setAlpha(0.35f);
     recordBtn_->setTitle("Recording unavailable");
-    recordBtn_->setDescription("Recording is not implemented.");
+    recordBtn_->setDescription("No recorder is connected to this transport.");
+    recordBtn_->onClick = [this] { if (recordAction_) recordAction_(); };
+    recordBtn_->onContextMenu = [this](const juce::MouseEvent&) {
+        if (recordSetupAction_) recordSetupAction_();
+    };
     loopBtn_->setTitle("Loop: click to toggle, right-click for options");
     loopBtn_->setComponentID("loopToggle");
     metronomeBtn_->setTitle("Enable audible metronome");
@@ -629,10 +635,42 @@ void TransportComponent::resized() {
 }
 
 void TransportComponent::updateButtonStates() {
-    playBtn_->setActive(transportState_.isPlaying());
-    recordBtn_->setActive(transportState_.isRecording());
+    playBtn_->setActive(recorderActive_ ? recorderPlaying_ : transportState_.isPlaying());
+    recordBtn_->setActive(recordAction_ ? recorderRecording_ : transportState_.isRecording());
     loopBtn_->setActive(transportState_.isLoopEnabled());
     metronomeBtn_->setActive(transportState_.isMetronomeEnabled());
+}
+
+void TransportComponent::setRecordAction(std::function<void()> action, std::function<void()> setupAction) {
+    recordAction_ = std::move(action);
+    recordSetupAction_ = std::move(setupAction);
+    recordBtn_->setEnabled(static_cast<bool>(recordAction_));
+    recordBtn_->setAlpha(recordAction_ ? 1.0f : 0.35f);
+    recordBtn_->setTitle(recordAction_ ? "Record: setup / toggle recording; right-click for setup" : "Recording unavailable");
+    recordBtn_->setDescription(recordAction_ ? "Record off keeps playback running. Right-click for target, modes, takes and recording undo."
+                                           : "No recorder is connected to this transport.");
+    updateButtonStates();
+}
+
+void TransportComponent::setPlaybackActions(std::function<void()> play, std::function<void()> stop) {
+    playAction_ = std::move(play);
+    stopAction_ = std::move(stop);
+}
+
+void TransportComponent::setRecorderState(bool active, bool recording, bool playing) {
+    recorderActive_ = active;
+    recorderRecording_ = recording;
+    recorderPlaying_ = playing;
+    // Song navigation/loop controls must not appear to seek the independent clip clock.
+    for (auto* button : {returnToStartBtn_.get(), rewindBtn_.get(), fastForwardBtn_.get(), loopBtn_.get(), metronomeBtn_.get()}) {
+        button->setEnabled(!active);
+        button->setAlpha(active ? 0.35f : 1.0f);
+    }
+    tempoControl_->setEnabled(!active);
+    timeSigControl_->setEnabled(!active);
+    tempoControl_->setAlpha(active ? 0.35f : 1.0f);
+    timeSigControl_->setAlpha(active ? 0.35f : 1.0f);
+    updateButtonStates();
 }
 
 void TransportComponent::transportPlayingChanged(bool) {

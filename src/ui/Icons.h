@@ -15,7 +15,10 @@ enum class IconId {
     record,        // player-record
     fastForward,   // player-track-next
     loop,          // repeat
-    metronome      // metronome
+    metronome,     // metronome
+    continuous,    // infinity
+    takes,         // stack-2
+    overdub        // playlist-add
 };
 
 class Icons {

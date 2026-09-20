@@ -83,6 +83,10 @@ private:
     void showError(const juce::String& text);
 
     void updateLayout();
+    void openRecordingSetup();
+    void togglePlayback();
+    juce::Component::SafePointer<juce::CallOutBox> recordingPopover_;
+    juce::String recordingError_;
 
     MidiManager& midiManager_;
     Project& project_;

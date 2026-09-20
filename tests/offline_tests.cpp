@@ -90,12 +90,30 @@ struct ClipsContentTestAccess {
     static void clickDeleteSource(ClipsContent& clips) { clips.deleteClipButton_.triggerClick(); }
 };
 struct AudioEngineTestAccess {
-    static void prepare(AudioEngine& engine, double rate, int samples) { engine.prepare(rate, samples); }
+    inline static double nowMs = 1000.0;
+    static double clock() { return nowMs; }
+    static void resetClock() { nowMs = 1000.0; }
+    static void attachClock(AudioEngine& engine) { engine.midiClock = &clock; }
+    static void prepare(AudioEngine& engine, double rate, int samples) {
+        if (engine.midiClock != &clock) {
+            resetClock();
+            attachClock(engine);
+        }
+        engine.prepare(rate, samples);
+    }
+    static void stop(AudioEngine& engine) { engine.audioDeviceStopped(); }
     static void render(AudioEngine& engine, juce::AudioBuffer<float>& buffer) {
-        engine.audioDeviceIOCallbackWithContext(nullptr, 0, buffer.getArrayOfWritePointers(),
-            buffer.getNumChannels(), buffer.getNumSamples(), {});
+        renderSamples(engine, buffer, buffer.getNumSamples());
     }
     static void renderSamples(AudioEngine& engine, juce::AudioBuffer<float>& buffer, int samples) {
+        // Existing routing tests deliver at block start. Round up elapsed time so
+        // their input reliably lands at zero, independent of wall-clock/runtime jitter.
+        if (samples > 0 && engine.sampleRate > 0)
+            nowMs += std::ceil(samples * 1000.0 / engine.sampleRate);
+        renderAt(engine, buffer, samples, nowMs);
+    }
+    static void renderAt(AudioEngine& engine, juce::AudioBuffer<float>& buffer, int samples, double timeMs) {
+        nowMs = timeMs;
         engine.audioDeviceIOCallbackWithContext(nullptr, 0, buffer.getArrayOfWritePointers(),
             buffer.getNumChannels(), samples, {});
     }
@@ -368,7 +386,7 @@ static void rackDropAndClipCreationTests() {
     CHECK(DragDropInfo::fromDragDescription(payload).type == DragSourceType::Plugin);
     CHECK(DragDropInfo::fromDragDescription(payload).path == "/offline/test-plugin");
     using Details = juce::DragAndDropTarget::SourceDetails;
-    Details empty(payload, nullptr, {20, 80});
+    Details empty(payload, nullptr, {20, ChannelRow::rowHeight * 2 + 8});
     juce::Component browserSource;
     const Details sourceDetails(payload, &browserSource, {900, 700});
     juce::DragAndDropTarget* currentTarget = nullptr;
@@ -409,7 +427,7 @@ static void rackDropAndClipCreationTests() {
     }
     CHECK(loads == 0 && project.getActiveChannelId() == InvalidChannelId);
     CHECK(rack.isInterestedInDragSource(empty));
-    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(dispatchMove(empty.localPosition) == &rack);
     juce::Image rackPreview(juce::Image::RGB, 250, 240, true);
     juce::Graphics rackGraphics(rackPreview);
     rack.paint(rackGraphics);
@@ -418,7 +436,7 @@ static void rackDropAndClipCreationTests() {
     rack.paint(rackGraphics);
     CHECK(rackPreview.getPixelAt(3, 100) == theme::raised);
     CHECK(loads == 0 && project.getChannelList().getNumChannels() == 0);
-    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(dispatchMove(empty.localPosition) == &rack);
     auto dropDetails = sourceDetails;
     dropDetails.localPosition = empty.localPosition;
     currentTarget = nullptr; // JUCE clears the current target before itemDropped.
@@ -433,7 +451,7 @@ static void rackDropAndClipCreationTests() {
     CHECK(rack.isInterestedInDragSource(rowDrop)); // Interest must not interpret these coordinates.
     rack.itemDropped(rowDrop); // Even direct parent dispatch cannot also create.
     CHECK(loads == 1);
-    CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {20, 28})));
+    CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {20, ChannelRow::rowHeight})));
     CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {20, 225})));
     CHECK(rack.isInterestedInDragSource(Details(payload, nullptr, {250, 80})));
     rack.itemDropped(Details(payload, nullptr, {250, 80})); // Commit still excludes outside geometry.
@@ -461,7 +479,7 @@ static void rackDropAndClipCreationTests() {
     const auto idleRowColour = preview.getPixelAt(rowInterior.x, rowInterior.y);
     auto* addButton = dynamic_cast<juce::TextButton*>(rack.getChildComponent(0));
     CHECK(addButton);
-    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(dispatchMove(empty.localPosition) == &rack);
     CHECK(addButton->getButtonText() == "Create instrument channel");
     CHECK(dispatchMove({20, 27}) == row); // Accepting child wins over interested parent.
     rack.paint(rackGraphics);
@@ -473,7 +491,7 @@ static void rackDropAndClipCreationTests() {
     CHECK(dispatchMove({300, 80}) == nullptr);
     row->paint(previewGraphics);
     CHECK(preview.getPixelAt(rowInterior.x, rowInterior.y) == idleRowColour);
-    CHECK(dispatchMove({20, 80}) == &rack);
+    CHECK(dispatchMove(empty.localPosition) == &rack);
     CHECK(dispatchMove({300, 80}) == nullptr); // Exit recheck uses zero, which overlaps row 0.
     rack.paint(rackGraphics);
     CHECK(rackPreview.getPixelAt(3, 100) == theme::raised);
@@ -1132,6 +1150,7 @@ static void pluginEditorBindingTests() {
         CHECK(items.next() && items.getItem().isEnabled && !items.getItem().action); // Targets row a.
         CHECK(items.next() && items.getItem().isSeparator);
         CHECK(items.next() && items.getItem().text == "Select for Live Audition & New Placements");
+        CHECK(items.next() && items.getItem().text == "Audio Output");
         CHECK(items.next() && items.getItem().text == "Rename Channel…");
         CHECK(items.next() && items.getItem().text == "Remove Channel…");
         CHECK(!items.next());
@@ -1159,6 +1178,7 @@ static void pluginEditorBindingTests() {
         CHECK(staleItems.next() && staleItems.getItem().isEnabled && !staleItems.getItem().action);
         CHECK(staleItems.next() && staleItems.getItem().isSeparator);
         CHECK(staleItems.next() && staleItems.getItem().text == "Select for Live Audition & New Placements");
+        CHECK(staleItems.next() && staleItems.getItem().text == "Audio Output");
         CHECK(staleItems.next() && staleItems.getItem().text == "Rename Channel…");
         CHECK(staleItems.next() && staleItems.getItem().text == "Remove Channel…");
         CHECK(!staleItems.next());
@@ -1255,9 +1275,10 @@ static void renderTests() {
 
     auto* destination = channels.addChannel();
     auto dense = std::make_unique<MidiClip>(0, 4);
-    for (size_t i = 0; i <= ArrangementSnapshot::maxNotes; ++i) dense->addNote(Note(60, 0, 1));
+    for (size_t i = 0; i < ArrangementSnapshot::maxNotes; ++i) dense->addNote(Note(60, 0, 1));
     auto id = clips.addClip(std::move(dense));
     tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, destination->getId(), 0, 4));
+    tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(id, destination->getId(), 4, 4));
     const auto saturated = compileArrangement(tracks, clips, channels, 9);
     CHECK(saturated.overflow && saturated.notes.empty() && saturated.revision == 9);
 }
@@ -1673,7 +1694,8 @@ static void transportClockTests() {
     CHECK(block.startBeats == 0 && block.playing && block.discontinuity);
     state.setPositionInBeats(0); state.setPositionInBeats(0); // Same-position seeks still acknowledge.
     CHECK(render().discontinuity);
-    state.setRecording(true); CHECK(!state.isRecording());
+    state.setRecording(true); CHECK(state.isRecording());
+    state.setRecording(false); CHECK(!state.isRecording());
     for (double bad : {-1.0, std::numeric_limits<double>::infinity(),
                        std::numeric_limits<double>::quiet_NaN(), 1.0e100}) {
         state.setPositionInBeats(bad); CHECK(state.getPositionInBeats() == 0);
@@ -2322,6 +2344,373 @@ static void arrangementMergedCapacityTests() {
     }
 }
 
+static void independentMixerModelTests() {
+    ChannelList channels;
+    CHECK(channels.getNumChannels() == 0 && channels.getNumMixerChannels() == 1);
+    auto* bus = channels.getMixerChannels().front().get();
+    const auto originalId = bus->getId();
+    CHECK(originalId >= 0 && bus->getName().isNotEmpty());
+    CHECK(bus->getVolume() == 1 && bus->getPan() == 0 && !bus->isMuted() && !bus->isSolo());
+    auto* a = channels.addChannel("A");
+    auto* b = channels.addChannel("B");
+    CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == MasterDestination);
+    CHECK(channels.getNumMixerChannels() == 1);
+    CHECK(channels.setChannelMixerDestination(a->getId(), originalId));
+    CHECK(channels.setChannelMixerDestination(b->getId(), originalId));
+    CHECK(!channels.setChannelMixerDestination(a->getId(), -2));
+    CHECK(!channels.setChannelMixerDestination(a->getId(), originalId + 100));
+    CHECK(!channels.setChannelMixerDestination(InvalidChannelId, originalId));
+    CHECK(a->getMixerTrackId() == originalId && b->getMixerTrackId() == originalId);
+    channels.moveChannel(0, 1);
+    CHECK(channels.getMixerChannelById(originalId) == bus && a->getMixerTrackId() == originalId);
+    bus->setVolume(-1); bus->setPan(9);
+    CHECK(bus->getVolume() == 0 && bus->getPan() == 1);
+    bus->setVolume(9); bus->setPan(-9);
+    CHECK(bus->getVolume() == 2 && bus->getPan() == -1);
+    bus->setVolume(std::numeric_limits<float>::quiet_NaN());
+    bus->setPan(std::numeric_limits<float>::infinity());
+    CHECK(bus->getVolume() == 2 && bus->getPan() == -1);
+    CHECK(a->getVolume() == 1 && a->getPan() == 0);
+    CHECK(!channels.restoreMixerChannel(originalId, "Duplicate"));
+    CHECK(!channels.restoreMixerChannel(-1, "Master is not a bus"));
+    CHECK(!channels.restoreMixerChannel(std::numeric_limits<int>::max(), "Overflow"));
+    auto* other = channels.restoreMixerChannel(42, "Independent"); CHECK(other);
+    channels.removeMixerChannel(originalId);
+    CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == MasterDestination);
+    CHECK(channels.getNumChannels() == 2 && channels.getMixerChannelById(42) == other);
+    auto* fresh = channels.addMixerChannel(); CHECK(fresh && fresh->getId() > 42);
+    const auto freshId = fresh->getId();
+    CHECK(channels.setChannelMixerDestination(a->getId(), freshId));
+    channels.removeMixerChannel(originalId); // Stale removal cannot alias a new bus.
+    CHECK(a->getMixerTrackId() == freshId);
+    channels.removeChannel(channels.indexOfChannel(b));
+    CHECK(channels.getNumMixerChannels() == 2);
+    channels.clearMixerChannels();
+    CHECK(channels.getNumChannels() == 1 && a->getMixerTrackId() == MasterDestination);
+    fresh = channels.addMixerChannel(); CHECK(fresh && fresh->getId() > freshId);
+    channels.clearChannels(); CHECK(channels.getNumMixerChannels() == 1);
+    while (channels.getNumMixerChannels() < ChannelList::maxMixerChannels) CHECK(channels.addMixerChannel());
+    CHECK(!channels.addMixerChannel() && !channels.restoreMixerChannel(999, "Full"));
+    CHECK(channels.addChannel()->getMixerTrackId() == MasterDestination); // Independent capacities.
+    channels.clearMixerChannels();
+    CHECK(channels.getNumMixerChannels() == 0 && channels.getNumChannels() == 1);
+}
+
+static void independentMixerSignalTests() {
+    Probe first, second, third;
+    first.constantOutput = second.constantOutput = third.constantOutput = true;
+    first.rightOutput = 0.5f;
+    second.leftOutput = 0.125f; second.rightOutput = 0.25f;
+    third.leftOutput = 0.0625f; third.rightOutput = 0.125f;
+    ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+    auto* a = channels.addChannel("A"); auto* b = channels.addChannel("B"); auto* c = channels.addChannel("Direct");
+    a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(first)));
+    b->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(second)));
+    c->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(third)));
+    auto* x = channels.getMixerChannels().front().get();
+    auto* y = channels.restoreMixerChannel(42, "Other bus"); CHECK(y); // IDs are not buffer indices.
+    CHECK(channels.setChannelMixerDestination(a->getId(), x->getId()));
+    CHECK(channels.setChannelMixerDestination(b->getId(), x->getId()));
+    ChannelMixer mixer(channels, tracks, clips, state);
+    mixer.prepareToPlay(48000, 127);
+    juce::AudioBuffer<float> buffer(2, 127);
+    juce::MidiBuffer midi; midi.ensureSize(32768);
+    auto& master = channels.getMasterBus();
+    const auto near = [](float actual, float expected) { return std::abs(actual - expected) < 1.0e-5f; };
+    auto render = [&](float left, float right, float xl, float xr, float yl = 0, float yr = 0, int outputs = 2) {
+        master.meter.clear();
+        for (const auto& bus : channels.getMixerChannels()) bus->meter.clear();
+        float* pointers[]{buffer.getWritePointer(0), buffer.getWritePointer(1)};
+        juce::AudioBuffer<float> block(pointers, outputs, 127);
+        const auto calls = first.blocks;
+        rendering = true; mixer.processBlock(block, midi); rendering = false;
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+        CHECK(first.blocks == calls + 1 && second.blocks == first.blocks && third.blocks == first.blocks);
+        for (int i = 0; i < 127; ++i) {
+            CHECK(near(block.getSample(0, i), left));
+            if (outputs == 2) CHECK(near(block.getSample(1, i), right));
+        }
+        CHECK(near(master.meter.getLeft(), std::abs(left)) && near(master.meter.getRight(), std::abs(right)));
+        CHECK(near(x->getMeter().getLeft(), std::abs(xl)) && near(x->getMeter().getRight(), std::abs(xr)));
+        CHECK(near(y->getMeter().getLeft(), std::abs(yl)) && near(y->getMeter().getRight(), std::abs(yr)));
+    };
+    render(0.4375f, 0.875f, 0.375f, 0.75f); // Two instruments summed once into x, c bypasses it.
+    x->setVolume(0.5f); x->setPan(0.5f);
+    render(0.15625f, 0.5f, 0.09375f, 0.375f);
+    CHECK(near(a->getLeftLevel(), 0.25f) && near(b->getRightLevel(), 0.25f)); // Instrument meters are pre-bus.
+    master.setGain(0.5f); render(0.078125f, 0.25f, 0.09375f, 0.375f);
+    master.setMuted(true); render(0, 0, 0.09375f, 0.375f);
+    master.setMuted(false); master.setGain(1);
+    x->setMuted(true); render(0.0625f, 0.125f, 0, 0); // Direct Master is unaffected by bus mute.
+    x->setMuted(false); x->setVolume(1); x->setPan(0);
+    CHECK(channels.setChannelMixerDestination(b->getId(), y->getId()));
+    x->setSolo(true); render(0.25f, 0.5f, 0.25f, 0.5f); // Solo also gates direct Master audio.
+    y->setSolo(true); render(0.375f, 0.75f, 0.25f, 0.5f, 0.125f, 0.25f);
+    x->setMuted(true); render(0.125f, 0.25f, 0, 0, 0.125f, 0.25f);
+    y->setSolo(false); render(0, 0, 0, 0); // Muted solo still participates in anySolo.
+    x->setSolo(false); x->setMuted(false);
+    y->setVolume(0);
+    for (float pan : {-1.0f, -0.00001f, 0.0f, 0.00001f, 1.0f}) {
+        x->setPan(pan);
+        const float left = 0.25f * (1 - std::max(0.0f, pan));
+        const float right = 0.5f * (1 + std::min(0.0f, pan));
+        render(left + 0.0625f, right + 0.125f, left, right);
+        render(0.3125f, 0.3125f, 0.25f, 0.25f, 0, 0, 1); // Mono balance stays unity.
+    }
+    x->setPan(-0.5f); x->setVolume(0.5f); y->setVolume(1);
+    CHECK(channels.setChannelMixerDestination(b->getId(), x->getId()));
+    a->setVolume(2); a->setPan(0.5f); b->setVolume(0.5f); b->setPan(-0.5f);
+    render(0.21875f, 0.390625f, 0.15625f, 0.265625f); // Instrument controls then summed-bus controls.
+    a->setVolume(1); a->setPan(0); b->setVolume(1); b->setPan(0); x->setVolume(1); x->setPan(0);
+    second.leftOutput = -0.25f; second.rightOutput = -0.5f;
+    render(0.0625f, 0.125f, 0, 0); // Bus meter measures summed audio, not summed magnitudes.
+    second.leftOutput = 0.125f; second.rightOutput = 0.25f;
+    a->setMixerTrackId(999999); // Defensive render fallback for a route outside the validated UI API.
+    render(0.4375f, 0.875f, 0.125f, 0.25f);
+    x->setSolo(true); render(0.125f, 0.25f, 0.125f, 0.25f); // Invalid fallback obeys direct-Master solo policy.
+    x->setSolo(false);
+
+    // Add destinations after preparation, including the last preallocated slot.
+    mixer.prepareToPlay(96000, 127);
+    MixerChannel* added = nullptr;
+    while (channels.getNumMixerChannels() < ChannelList::maxMixerChannels) added = channels.addMixerChannel();
+    CHECK(added && channels.setChannelMixerDestination(a->getId(), added->getId()));
+    CHECK(added->getId() >= ChannelList::maxMixerChannels);
+    render(0.4375f, 0.875f, 0.125f, 0.25f);
+    CHECK(near(added->getMeter().getLeft(), 0.25f));
+    first.constantOutput = false;
+    rendering = true; mixer.processBlock(buffer, midi); rendering = false;
+    const auto decay = static_cast<float>(0.25 * std::pow(0.01, 127.0 / (96000 * 0.5)));
+    CHECK(near(added->getMeter().getLeft(), decay)); // Structure-time meter preparation uses the current rate.
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+    channels.clearMixerChannels();
+    CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == MasterDestination);
+    rendering = true; mixer.processBlock(buffer, midi); rendering = false;
+    CHECK(near(buffer.getSample(0, 0), 0.1875f) && near(buffer.getSample(1, 0), 0.375f));
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
+static void independentMixerNoteTests() {
+    Probe first, second;
+    ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+    auto* a = channels.addChannel("Arrangement"); auto* b = channels.addChannel("Live");
+    a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(first)));
+    b->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(second)));
+    auto* x = channels.getMixerChannels().front().get();
+    auto* y = channels.restoreMixerChannel(17, "Reroute"); CHECK(y); y->setVolume(0.5f);
+    const auto xid = x->getId(), yid = y->getId();
+    CHECK(channels.setChannelMixerDestination(a->getId(), xid));
+    CHECK(channels.setChannelMixerDestination(b->getId(), xid));
+    auto source = std::make_unique<MidiClip>(0, 8);
+    source->addNote(Note(60, 0, 4));
+    source->addNote(Note(62, 64.0 / 24000, 64.0 / 24000)); // Attack and release while the bus is muted.
+    const auto clipId = clips.addClip(std::move(source));
+    tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(clipId, a->getId(), 0, 8));
+    ChannelMixer mixer(channels, tracks, clips, state);
+    mixer.prepareToPlay(48000, 64); mixer.setActiveChannel(1); state.setPlaying(true);
+    juce::AudioBuffer<float> buffer(2, 64);
+    juce::MidiBuffer midi; midi.ensureSize(32768);
+    midi.addEvent(juce::MidiMessage::controllerEvent(1, 64, 127), 0);
+    midi.addEvent(juce::MidiMessage::noteOn(1, 72, 0.5f), 0);
+    int liveAttacks = 1, liveReleases = 0, arrangementAttacks = 1, arrangementReleases = 0;
+    auto render = [&](float level) {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20); // Includes route/name notifications.
+        const auto calls = first.blocks;
+        rendering = true; mixer.processBlock(buffer, midi); rendering = false;
+        CHECK(renderAllocations == 0 && renderDeletions == 0);
+        CHECK(first.blocks == calls + 1 && second.blocks == first.blocks);
+        CHECK(first.held[60] == 1 && second.held[72] == 1 && first.notes == arrangementAttacks && second.notes == liveAttacks);
+        CHECK(first.sounding == arrangementAttacks - arrangementReleases && second.sounding == liveAttacks);
+        CHECK(first.noteOffs == arrangementReleases && second.noteOffs == liveReleases && first.resets == 0 && second.resets == 0);
+        CHECK(!a->isVoiceResetPending() && !b->isVoiceResetPending());
+        CHECK(mixer.getActiveChannelId() == b->getId() && mixer.getOverflowCount() == 0);
+        for (int i = 0; i < 64; ++i) CHECK(std::abs(buffer.getSample(0, i) - level) < 1.0e-6f);
+    };
+    render(0.5f);
+    x->setMuted(true); ++arrangementAttacks; render(0); CHECK(first.held[62] == 1);
+    midi.addEvent(juce::MidiMessage::noteOn(1, 74, 0.5f), 0); ++liveAttacks;
+    ++arrangementReleases;
+    render(0); CHECK(first.held[62] == 0 && second.held[74] == 1); // Bus mute does not suppress fresh MIDI either.
+    midi.addEvent(juce::MidiMessage::noteOff(1, 74), 3); ++liveReleases;
+    render(0); CHECK(second.held[74] == 0 && second.lastOffSample == 3);
+    x->setMuted(false); render(0.5f); // Held voices return without MIDI retrigger/chase.
+    y->setSolo(true); render(0);
+    midi.addEvent(juce::MidiMessage::noteOn(1, 76, 0.5f), 0); ++liveAttacks;
+    render(0); CHECK(second.held[76] == 1); // Solo suppression is audio-only as well.
+    midi.addEvent(juce::MidiMessage::noteOff(1, 76), 7); ++liveReleases;
+    render(0); CHECK(second.held[76] == 0 && second.lastOffSample == 7);
+    CHECK(channels.setChannelMixerDestination(a->getId(), yid)); render(0.125f);
+    CHECK(channels.setChannelMixerDestination(b->getId(), MasterDestination)); render(0.125f);
+    y->setSolo(false); render(0.375f);
+    CHECK(channels.setChannelMixerDestination(b->getId(), yid)); render(0.25f);
+    y->setName("Renamed"); y->setColour(juce::Colours::orange); render(0.25f);
+    channels.removeMixerChannel(xid); render(0.25f); // Compact bus indices without changing y's identity.
+    channels.removeMixerChannel(yid); render(0.5f);
+    CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == MasterDestination);
+    channels.removeMixerChannel(xid); render(0.5f);
+    state.stop();
+    rendering = true; mixer.processBlock(buffer, midi); rendering = false;
+    CHECK(first.noteOffs == arrangementReleases + 1 && second.noteOffs == liveReleases + 1 && first.held[60] == 0 && second.held[72] == 0);
+    CHECK(b->isVoiceResetPending()); // Original pedal/voice ledger survived all audio-only edits.
+    ChannelTestAccess::resetVoices(*b);
+    CHECK(first.sounding == 0 && second.sounding == 0 && second.resetQuiescent && !second.resetOnAudio);
+    CHECK(renderAllocations == 0 && renderDeletions == 0);
+}
+
+static void mixerEditEngineTests() {
+    using Interruption = AudioQuiescence::Interruption;
+    for (int scenario = 0; scenario < 10; ++scenario) {
+        Probe arranged, live;
+        ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
+        auto* a = channels.addChannel("Arrangement"); auto* b = channels.addChannel("Live");
+        a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(arranged)));
+        b->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(live)));
+        auto* bus = channels.getMixerChannels().front().get();
+        const auto busId = bus->getId(); bus->setVolume(0.5f);
+        CHECK(channels.setChannelMixerDestination(a->getId(), busId));
+        CHECK(channels.setChannelMixerDestination(b->getId(), busId));
+        auto source = std::make_unique<MidiClip>(0, 4);
+        source->addNote(Note(60, 0, 128.0 / 24000));
+        const auto clipId = clips.addClip(std::move(source));
+        tracks.addTrack()->addClipInstance(std::make_unique<ClipInstance>(clipId, a->getId(), 0, 4));
+        ChannelMixer mixer(channels, tracks, clips, state); mixer.setActiveChannel(1);
+        AudioEngine engine; engine.setProcessor(&mixer);
+        AudioEngineTestAccess::prepare(engine, 48000, 64);
+        juce::AudioBuffer<float> buffer(2, 64);
+        const auto render = [&] {
+            rendering = true; AudioEngineTestAccess::render(engine, buffer); rendering = false;
+            CHECK(renderAllocations == 0 && renderDeletions == 0);
+            state.pollRenderPosition();
+        };
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        render(); // Consume preparation panic while stopped, before delivering any notes.
+        state.setPlaying(true);
+        engine.handleNoteOn(nullptr, 1, 72, 0.5f); engine.handleNoteOn(nullptr, 1, 74, 0.5f);
+        render();
+        CHECK(arranged.held[60] == 1 && live.held[72] == 1 && live.held[74] == 1);
+        CHECK(arranged.notes == 1 && live.notes == 2 && arranged.noteOffs == 0 && live.noteOffs == 0);
+        CHECK(std::abs(state.getPositionInBeats() - 64.0 / 24000) < 1e-10);
+        const auto revision = state.acquireRenderPosition().revision;
+        engine.handleNoteOff(nullptr, 1, 74, 0); engine.handleNoteOn(nullptr, 1, 76, 0.5f);
+
+        int blockedCalls = 0;
+        const auto blockedRender = [&](bool expectedReset) {
+            bool reset = !expectedReset;
+            CHECK(!AudioQuiescence::instance().enter(&reset) && reset == expectedReset);
+            const auto position = state.acquireRenderPosition();
+            const auto calls = arranged.blocks, liveCalls = live.blocks;
+            const auto skipped = engine.getSkippedBlockCount();
+            for (int ch = 0; ch < 2; ++ch)
+                juce::FloatVectorOperations::fill(buffer.getWritePointer(ch), 0.875f, 64);
+            render();
+            CHECK(engine.getSkippedBlockCount() == skipped + 1);
+            CHECK(buffer.getMagnitude(0, 64) == 0);
+            CHECK(arranged.blocks == calls && live.blocks == liveCalls);
+            CHECK(state.acquireRenderPosition().beats == position.beats &&
+                  state.acquireRenderPosition().revision == position.revision);
+            CHECK(state.getPositionInBeats() == position.beats);
+            CHECK(arranged.held[60] == 1 && live.held[72] == 1 && live.held[74] == 1 && live.held[76] == 0);
+            CHECK(arranged.noteOffs == 0 && live.noteOffs == 0 && arranged.resets == 0 && live.resets == 0);
+            ++blockedCalls;
+        };
+        {
+            // Synchronous list notifications occur inside the real structural edit.
+            struct DuringMixerEdit : ChannelList::Listener {
+                DuringMixerEdit(ChannelList& owner, std::function<void()> callback)
+                    : list(owner), render(std::move(callback)) { list.addListener(this); }
+                ~DuringMixerEdit() override { list.removeListener(this); }
+                void channelAdded(Channel*) override {}
+                void channelRemoved(int) override {}
+                void channelChanged(Channel*) override {}
+                void channelListChanged() override {}
+                void mixerChannelsChanged() override { ++notifications; render(); }
+                ChannelList& list;
+                std::function<void()> render;
+                int notifications = 0;
+            } listener(channels, [&] { blockedRender(false); });
+            switch (scenario) {
+                case 0: CHECK(channels.addMixerChannel("Add during playback")); break;
+                case 1: {
+                    AudioQuiescence::Edit edit(Interruption::PreserveVoices);
+                    CHECK(channels.setChannelMixerDestination(b->getId(), MasterDestination));
+                    blockedRender(false); // The route setter's nested edit must not upgrade to reset.
+                    break;
+                }
+                case 2: channels.removeMixerChannel(busId); break;
+                case 3: channels.clearMixerChannels(); break;
+                case 4: CHECK(channels.restoreMixerChannel(42, "Restore during playback")); break;
+                case 5: {
+                    AudioQuiescence::Edit outer(Interruption::PreserveVoices);
+                    blockedRender(false);
+                    { AudioQuiescence::Edit destructive; blockedRender(true); }
+                    blockedRender(true); // Upgrade remains sticky after the destructive child exits.
+                    break;
+                }
+                case 6: {
+                    AudioQuiescence::Edit outer;
+                    { AudioQuiescence::Edit preserving(Interruption::PreserveVoices); blockedRender(true); }
+                    blockedRender(true); // Preserving children cannot downgrade a destructive parent.
+                    break;
+                }
+                case 7: {
+                    engine.requestPanic();
+                    AudioQuiescence::Edit edit(Interruption::PreserveVoices);
+                    blockedRender(false); // Preserve must not clear a panic already waiting for admission.
+                    break;
+                }
+                case 8: {
+                    // Two events are queued already; one more than ingress capacity requests cleanup.
+                    for (int i = 0; i < 2047; ++i)
+                        engine.handleIncomingMidiMessage(nullptr, juce::MidiMessage::controllerEvent(1, 7, 100));
+                    CHECK(engine.getMidiOverflowCount() == 1);
+                    AudioQuiescence::Edit edit(Interruption::PreserveVoices);
+                    blockedRender(false);
+                    break;
+                }
+                case 9: {
+                    { AudioQuiescence::Edit destructive; blockedRender(true); }
+                    AudioQuiescence::Edit preserving(Interruption::PreserveVoices);
+                    blockedRender(false); // A later preserving rejection must retain the earlier panic.
+                    break;
+                }
+            }
+            CHECK(listener.notifications == (scenario == 0 || scenario == 2 || scenario == 3 || scenario == 4 ? 1 : 0));
+        }
+        CHECK(blockedCalls > 0 && engine.getSkippedBlockCount() == static_cast<unsigned>(blockedCalls));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        const auto calls = arranged.blocks;
+        render();
+        CHECK(arranged.blocks == calls + 1 && live.blocks == arranged.blocks);
+        CHECK(std::abs(state.getPositionInBeats() - 128.0 / 24000) < 1e-10);
+        CHECK(mixer.getActiveChannelId() == b->getId() && mixer.getOverflowCount() == 0);
+        CHECK(engine.getMidiOverflowCount() == (scenario == 8 ? 1u : 0u));
+        if (scenario < 5) {
+            CHECK(state.acquireRenderPosition().revision == revision);
+            CHECK(arranged.held[60] == 1 && arranged.notes == 1 && arranged.noteOffs == 0);
+            CHECK(live.held[72] == 1 && live.held[74] == 0 && live.held[76] == 1);
+            CHECK(live.notes == 3 && live.noteOffs == 1 && live.lastOffSample == 0);
+            CHECK(arranged.lastInputCount == 0 && live.lastInputCount == 2); // No hidden cleanup CCs.
+            const float expected = scenario == 1 ? 0.375f : (scenario == 2 || scenario == 3 ? 0.5f : 0.25f);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int sample = 0; sample < 64; ++sample) CHECK(buffer.getSample(ch, sample) == expected);
+            render(); // Frozen clock resumes the scheduled release at the original boundary, not early.
+            CHECK(arranged.noteOffs == 1 && arranged.lastOffSample == 0 && arranged.sounding == 0);
+            CHECK(live.sounding == 2 && live.noteOffs == 1);
+            engine.handleNoteOff(nullptr, 1, 72, 0); engine.handleNoteOff(nullptr, 1, 76, 0);
+            render(); CHECK(live.sounding == 0 && live.noteOffs == 3);
+        } else {
+            CHECK(state.acquireRenderPosition().revision != revision);
+            CHECK(arranged.notes == 1 && arranged.noteOffs == 1 && arranged.sounding == 0);
+            CHECK(live.notes == 2 && live.noteOffs == 2 && live.sounding == 0); // Queued attack was discarded.
+            CHECK(live.held[72] == 0 && live.held[74] == 0 && live.held[76] == 0);
+            CHECK(arranged.lastOffSample == 0 && live.lastOffSample == 0 && buffer.getMagnitude(0, 64) == 0);
+            render(); CHECK(arranged.noteOffs == 1 && live.noteOffs == 2); // Cleanup happens only once.
+        }
+        CHECK(!a->isVoiceResetPending() && !b->isVoiceResetPending() && arranged.resets == 0 && live.resets == 0);
+        engine.clearProcessor();
+    }
+}
+
 static void mixerSignalTests() {
     Probe first, second, third;
     first.constantOutput = second.constantOutput = true;
@@ -2452,6 +2841,9 @@ static void mixerSuppressionTests() {
     TransportState state;
     auto* a = channels.addChannel("A");
     auto* b = channels.addChannel("B");
+    const auto busId = channels.getMixerChannels().front()->getId();
+    CHECK(channels.setChannelMixerDestination(a->getId(), busId));
+    CHECK(channels.setChannelMixerDestination(b->getId(), busId));
     a->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(first)));
     b->setPlugin(std::make_unique<PluginHost>(std::make_unique<OfflineInstrument>(second)));
     auto source = std::make_unique<MidiClip>(0, 8);
@@ -2531,21 +2923,37 @@ static void mixerSuppressionTests() {
 static void mixerBindingTests() {
     Project project;
     auto& channels = project.getChannelList();
-    auto* a = channels.addChannel("Alpha");
-    auto* b = channels.addChannel("Beta");
+    auto* instrument = channels.addChannel("Instrument");
+    channels.addChannel("Other instrument");
+    channels.clearMixerChannels();
+    auto* a = channels.addMixerChannel("Alpha");
+    auto* b = channels.addMixerChannel("Beta");
     const auto aid = a->getId(), bid = b->getId();
     a->setVolume(1.75f); a->setPan(-0.4f); a->setMuted(true); a->setSolo(true);
     a->setColour(juce::Colours::red); project.setActiveChannel(1);
+    const auto activeId = project.getActiveChannelId();
     project.getMasterBus().setGain(1.5f); project.getMasterBus().setMuted(true);
+    std::function<void(const juce::String&)> renameReply;
+    int prompts = 0;
+    textPromptInterceptor() = [&](const juce::String&, const juce::String&, const juce::String&,
+                                  juce::Component*, std::function<void(const juce::String&)> reply) {
+        ++prompts; renameReply = std::move(reply);
+    };
+    struct ClearPrompt { ~ClearPrompt() { textPromptInterceptor() = {}; } } clearPrompt;
+    std::function<void()> lateRename;
     {
         MixerPanel panel(project); // No peer/window, device, or application is created.
         panel.setBounds(0, 0, 160, 100);
-        auto* viewport = dynamic_cast<juce::Viewport*>(panel.getContentComponent());
+        auto* content = panel.getContentComponent();
+        auto* viewport = &panel.getViewport();
+        CHECK(content && content != viewport && viewport->getParentComponent() == content);
         CHECK(viewport && viewport->getViewedComponent()->getWidth() > viewport->getWidth());
         CHECK(viewport->getViewedComponent()->getHeight() > viewport->getHeight());
-        panel.setCollapsed(true, false); CHECK(!viewport->isVisible());
-        panel.setCollapsed(false, false); CHECK(viewport->isVisible());
+        panel.setCollapsed(true, false); CHECK(!content->isVisible());
+        panel.setCollapsed(false, false); CHECK(content->isVisible());
         CHECK(panel.getNumChannels() == 2);
+        CHECK(panel.getSelectedMixerChannelId() == -1 && !panel.getRemoveChannelButton().isEnabled());
+        panel.getChannelStrip(1)->onStripSelected();
         auto* strip = panel.getChannelStrip(0);
         CHECK(strip->getChannelId() == aid && strip->getTrackName() == "Alpha");
         CHECK(strip->getVolume() == 1.75f && strip->getPan() == -0.4f && strip->isMuted() && strip->isSolo());
@@ -2561,46 +2969,64 @@ static void mixerBindingTests() {
         const auto muteAction = strip->onMuteToggled;
         const auto soloAction = strip->onSoloToggled;
         const auto selectAction = strip->onStripSelected;
+        const auto renameAction = strip->onRenameRequested;
         channels.moveChannel(0, 1);
-        CHECK(panel.getChannelStrip(0)->getChannelId() == bid && panel.getChannelStrip(1)->getChannelId() == aid);
-        CHECK(panel.getChannelStrip(1)->getVolume() == 0.8f && panel.getChannelStrip(0)->isSelected());
+        CHECK(panel.getChannelStrip(0)->getChannelId() == aid && panel.getChannelStrip(1)->getChannelId() == bid);
+        CHECK(panel.getChannelStrip(0)->getVolume() == 0.8f && panel.getChannelStrip(1)->isSelected());
+        auto* temporary = channels.addMixerChannel("Rebuild");
+        channels.removeMixerChannel(temporary->getId());
         gainAction(1.25f); panAction(0.6f); muteAction(false); soloAction(false); selectAction();
         CHECK(a->getVolume() == 1.25f && a->getPan() == 0.6f && !a->isMuted() && !a->isSolo());
-        CHECK(b->getVolume() == 1 && project.getActiveChannelId() == aid);
-        CHECK(panel.getChannelStrip(1)->isSelected());
+        CHECK(b->getVolume() == 1 && project.getActiveChannelId() == activeId);
+        CHECK(instrument->getVolume() == 1 && instrument->getPan() == 0 && !instrument->isMuted());
+        CHECK(panel.getChannelStrip(0)->isSelected());
+        renameAction(); CHECK(prompts == 1 && renameReply);
+        renameReply("   "); CHECK(a->getName() == "Alpha");
+        renameReply("  Renamed bus  "); a->sendSynchronousChangeMessage();
+        CHECK(a->getName() == "Renamed bus" && panel.getChannelStrip(0)->getTrackName() == "Renamed bus");
         panel.getMasterStrip()->onVolumeChanged(0.3f); panel.getMasterStrip()->onMuteToggled(false);
         CHECK(project.getMasterBus().getGain() == 0.3f && !project.getMasterBus().isMuted());
-        channels.removeChannel(1);
+        CHECK(channels.setChannelMixerDestination(instrument->getId(), aid));
+        panel.getRemoveChannelButton().onClick();
         gainAction(2); panAction(-1); muteAction(true); soloAction(true); selectAction();
+        renameAction(); renameReply("Gone"); CHECK(prompts == 1);
         CHECK(panel.getNumChannels() == 1 && b->getVolume() == 1 && !b->isMuted() && !b->isSolo());
-        CHECK(project.getActiveChannelId() == InvalidChannelId);
-        channels.clearChannels(); CHECK(panel.getNumChannels() == 0 && panel.getChannelStrip(0) == nullptr);
-        for (int i = 0; i < 20; ++i) CHECK(channels.addChannel());
+        CHECK(project.getActiveChannelId() == activeId && instrument->getMixerTrackId() == MasterDestination);
+        CHECK(!panel.getRemoveChannelButton().isEnabled());
+        channels.clearMixerChannels(); CHECK(panel.getNumChannels() == 0 && panel.getChannelStrip(0) == nullptr);
+        for (int i = 0; i < 20; ++i) panel.getAddChannelButton().onClick();
         CHECK(panel.getNumChannels() == 20);
-        // Actual strip background mouse path must invoke audition selection.
+        CHECK(channels.getNumChannels() == 2 && project.getActiveChannelId() == activeId);
+        panel.getChannelStrip(0)->onStripSelected();
+        // Actual strip background mouse path selects only the independent bus.
         auto* selected = panel.getChannelStrip(19);
         const juce::MouseEvent click(juce::Desktop::getInstance().getMainMouseSource(), {5, 5},
             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1, 0, 0, 0, 0,
             selected, selected, juce::Time::getCurrentTime(), {5, 5}, juce::Time::getCurrentTime(), 1, false);
         selected->mouseDown(click);
-        CHECK(project.getActiveChannelId() == selected->getChannelId());
+        CHECK(panel.getSelectedMixerChannelId() == selected->getChannelId() && selected->isSelected());
+        CHECK(project.getActiveChannelId() == activeId);
 
         // Simulate the pop-out's external content parent without creating a native
         // window. Structural rebuilds must not apply the hidden panel's bounds.
         juce::Component externalOwner;
-        externalOwner.addAndMakeVisible(viewport);
+        externalOwner.addAndMakeVisible(content);
         const juce::Rectangle<int> externalBounds(0, 0, 760, 480);
-        viewport->setBounds(externalBounds);
+        content->setBounds(externalBounds);
         const auto checkExternalLayout = [&] {
-            CHECK(viewport->getParentComponent() == &externalOwner);
-            CHECK(viewport->getBounds() == externalBounds);
+            CHECK(content->getParentComponent() == &externalOwner);
+            CHECK(content->getBounds() == externalBounds);
+            CHECK(viewport->getParentComponent() == content);
+            CHECK(viewport->getBounds() == externalBounds.withTrimmedTop(28));
+            CHECK(content->getLocalBounds().contains(panel.getAddChannelButton().getBounds()));
+            CHECK(panel.getRemoveChannelButton().getBottom() <= viewport->getY());
             CHECK(panel.getMasterStrip()->getHeight() ==
-                  externalBounds.getHeight() - viewport->getScrollBarThickness());
+                  viewport->getHeight() - viewport->getScrollBarThickness());
             CHECK(viewport->getViewedComponent()->getWidth() == (panel.getNumChannels() + 1) * 97);
         };
-        CHECK(channels.addChannel("External addition"));
+        auto* external = channels.addMixerChannel("External addition"); CHECK(external);
         checkExternalLayout();
-        channels.removeChannel(channels.getNumChannels() - 1);
+        channels.removeMixerChannel(external->getId());
         checkExternalLayout();
         channels.moveChannel(0, 1);
         checkExternalLayout();
@@ -2609,12 +3035,19 @@ static void mixerBindingTests() {
 
         // Exercise the real dock-return hook: reparent first, then use dock bounds.
         panel.onDisplayModeChanged(DisplayMode::Flex, DisplayMode::PopOut);
-        CHECK(viewport->getParentComponent() == &panel);
-        CHECK(viewport->getBounds() == juce::Rectangle<int>(4, panel.getTitleBarHeight(),
+        CHECK(content->getParentComponent() == &panel);
+        CHECK(content->getBounds() == juce::Rectangle<int>(4, panel.getTitleBarHeight(),
               panel.getWidth() - 8, panel.getHeight() - panel.getTitleBarHeight() - 4));
         panel.setSize(300, 240);
-        CHECK(viewport->getWidth() == 292 && viewport->getHeight() == 236 - panel.getTitleBarHeight());
+        CHECK(viewport->getWidth() == 292 && viewport->getHeight() == 236 - panel.getTitleBarHeight() - 28);
+        while (channels.getNumMixerChannels() < ChannelList::maxMixerChannels) CHECK(channels.addMixerChannel());
+        CHECK(!panel.getAddChannelButton().isEnabled());
+        lateRename = panel.getChannelStrip(0)->onRenameRequested;
+        lateRename(); CHECK(prompts == 2);
     }
+    lateRename(); renameReply("After teardown"); CHECK(prompts == 2);
+    channels.getMixerChannels().front()->setName("after teardown");
+    channels.clearMixerChannels();
     channels.getChannel(0)->setName("after teardown");
     channels.clearChannels();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
@@ -2834,6 +3267,7 @@ static void metronomeTests() {
 static void clickMasterAndOverflowTests() {
     ChannelList channels; TrackList tracks; ClipPool clips; TransportState state;
     auto* silent = channels.addChannel("Muted solo"); silent->setSolo(true); silent->setMuted(true);
+    auto* bus = channels.getMixerChannels().front().get(); bus->setSolo(true); bus->setMuted(true);
     ChannelMixer mixer(channels, tracks, clips, state); mixer.prepareToPlay(48000, 512);
     juce::AudioBuffer<float> storage(2, 512); juce::MidiBuffer midi; midi.ensureSize(32768);
     const auto render = [&](int n) {
@@ -2844,7 +3278,7 @@ static void clickMasterAndOverflowTests() {
     state.setMetronomeEnabled(true); state.setPlaying(true); channels.getMasterBus().setGain(0.5f);
     render(1);
     CHECK(storage.getSample(0, 0) == 0.125f && channels.getMasterBus().meter.getLeft() == 0.125f);
-    CHECK(silent->getMeter().getLeft() == 0);
+    CHECK(silent->getMeter().getLeft() == 0 && bus->getMeter().getLeft() == 0); // Click bypasses both solo domains.
     channels.getMasterBus().setMuted(true); render(1); CHECK(storage.getSample(0, 0) == 0);
     channels.getMasterBus().setMuted(false); render(1);
     const double expected = 0.125 * std::exp(-14.0 / 960) * std::cos(juce::MathConstants<double>::twoPi * 1760 * 2 / 48000);
@@ -3735,6 +4169,73 @@ static const juce::PopupMenu::Item* menuText(juce::PopupMenu& menu, juce::String
     return found;
 }
 
+static void mixerRoutingMenuTests() {
+    Project project;
+    auto& channels = project.getChannelList();
+    auto* a = channels.addChannel("Target"); auto* b = channels.addChannel("Active");
+    const auto aid = a->getId(), bid = b->getId();
+    project.setActiveChannel(1);
+    channels.clearMixerChannels();
+    auto* bus = channels.restoreMixerChannel(42, "Shared bus"); CHECK(bus);
+    const auto busId = bus->getId();
+    channels.addMixerChannel("Unused bus");
+    std::function<void()> afterOwner;
+    {
+        ChannelRackContent rack(project);
+        rack.setSize(250, 240);
+        auto* row = dynamic_cast<ChannelRow*>(rack.getChildComponent(1));
+        CHECK(row && row->getChannel() == a && row->getOutputButton().isVisible());
+        CHECK(row->getOutputButton().getButtonText() == "Output: Master");
+        CHECK(row->getLocalBounds().contains(row->getOutputButton().getBounds()));
+        auto menu = row->createOutputMenu();
+        CHECK(menu.getNumItems() == 3 && project.getActiveChannelId() == bid);
+        CHECK(menuText(menu, "Master") && menuText(menu, "Master")->isTicked);
+        const auto* item = menuText(menu, "Shared bus");
+        CHECK(item && item->isEnabled && !item->isTicked && item->action);
+        const auto route = item->action;
+        const auto direct = menuText(menu, "Master")->action;
+        auto context = row->createContextMenu();
+        const auto* output = menuText(context, "Audio Output");
+        CHECK(output && output->subMenu && menuText(*output->subMenu, "Shared bus"));
+        channels.moveChannel(0, 1); // Saved actions still target a, not row index zero or active b.
+        route();
+        CHECK(a->getMixerTrackId() == busId && b->getMixerTrackId() == MasterDestination);
+        CHECK(project.getActiveChannelId() == bid);
+        row = dynamic_cast<ChannelRow*>(rack.getChildComponent(2));
+        CHECK(row && row->getChannel() == a && row->getOutputButton().getButtonText() == "Output: Shared bus");
+        auto* activeRow = dynamic_cast<ChannelRow*>(rack.getChildComponent(1));
+        CHECK(activeRow && activeRow->getChannel() == b && activeRow->isSelected() && !row->isSelected());
+        auto selected = row->createOutputMenu();
+        CHECK(menuText(selected, "Shared bus")->isTicked && !menuText(selected, "Master")->isTicked);
+        CHECK(rack.setChannelOutputById(bid, busId)); // Many-to-one is not exclusive assignment.
+        CHECK(a->getMixerTrackId() == b->getMixerTrackId() && project.getActiveChannelId() == bid);
+        bus->setName("Renamed output"); bus->sendSynchronousChangeMessage();
+        CHECK(row->getOutputButton().getButtonText() == "Output: Renamed output");
+        auto renamed = row->createOutputMenu(); CHECK(menuText(renamed, "Renamed output")->isTicked);
+        direct(); CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == busId);
+        route(); CHECK(a->getMixerTrackId() == busId); // Rename does not invalidate a stable-ID action.
+        channels.removeMixerChannel(busId);
+        CHECK(a->getMixerTrackId() == MasterDestination && b->getMixerTrackId() == MasterDestination);
+        CHECK(row->getOutputButton().getButtonText() == "Output: Master");
+        auto* replacement = channels.addMixerChannel("Shared bus"); CHECK(replacement->getId() != busId);
+        route(); CHECK(a->getMixerTrackId() == MasterDestination);
+        CHECK(!rack.setChannelOutputById(aid, busId) && !rack.setChannelOutputById(aid, -2));
+        auto liveMenu = rack.createOutputMenuForChannel(aid);
+        const auto deletedTarget = menuText(liveMenu, "Shared bus")->action;
+        auto survivorMenu = rack.createOutputMenuForChannel(bid);
+        afterOwner = menuText(survivorMenu, "Shared bus")->action;
+        channels.removeChannel(channels.indexOfChannel(a));
+        deletedTarget(); direct(); route();
+        CHECK(channels.getNumChannels() == 1 && b->getMixerTrackId() == MasterDestination);
+        CHECK(rack.createOutputMenuForChannel(aid).getNumItems() == 0 && project.getActiveChannelId() == bid);
+    }
+    afterOwner(); CHECK(b->getMixerTrackId() == MasterDestination && project.getActiveChannelId() == bid);
+    channels.clearMixerChannels();
+    ChannelRackContent rack(project);
+    auto masterOnly = rack.createOutputMenuForChannel(bid);
+    CHECK(masterOnly.getNumItems() == 1 && menuText(masterOnly, "Master")->isTicked);
+}
+
 static void contextMenuTests() {
     // T14: target-specific menus and keyboard actions; all delayed actions
     // re-resolve stable IDs, so deleted targets become harmless no-ops.
@@ -3767,9 +4268,10 @@ static void contextMenuTests() {
         auto* beta = project.getChannelList().addChannel("Beta");
         auto* rowAlpha = dynamic_cast<ChannelRow*>(rack.getChildComponent(1));
         CHECK(rowAlpha && rowAlpha->getChannel() == alpha);
+        const auto alphaId = alpha->getId();
         CHECK(project.getActiveChannelId() == InvalidChannelId);
         auto menu = rowAlpha->createContextMenu();
-        CHECK(menu.getNumItems() == 5); // Open Plugin Editor, reason header, Select, Rename, Remove (separator excluded).
+        CHECK(menu.getNumItems() == 6); // Editor, reason header, Select, Audio Output, Rename, Remove.
         auto* open = menuText(menu, "Open Plugin Editor");
         CHECK(open && !open->isEnabled && open->action != nullptr); // No editor; reason shown.
         auto* select = menuText(menu, "Select for Live Audition & New Placements");
@@ -3815,7 +4317,7 @@ static void contextMenuTests() {
         CHECK(promptsShown == promptsBeforeStale && confirmsShown == confirmsBeforeStale);
         CHECK(project.getActiveChannelId() == InvalidChannelId);
         CHECK(track->getNumClipInstances() == 1); // Placement remains as an unresolved placeholder.
-        CHECK(track->getClipInstance(0)->getChannelId() == alpha->getId());
+        CHECK(track->getClipInstance(0)->getChannelId() == alphaId);
     }
 
     {
@@ -4673,6 +5175,147 @@ static void builtinSynthTests() {
     }
 }
 
+static void mixerProjectFileTests() {
+    const juce::File home(VIBEDAW_TEST_HOME);
+    juce::String error;
+    Project project;
+    auto& channels = project.getChannelList();
+    auto* a = channels.addChannel("Keep A"); auto* b = channels.addChannel("Keep B");
+    const auto aid = a->getId(), bid = b->getId();
+    auto* bus = channels.getMixerChannels().front().get();
+    const auto busId = bus->getId();
+    bus->setName("Keep mixer"); bus->setVolume(0.75f); bus->setPan(-0.25f);
+    CHECK(channels.setChannelMixerDestination(aid, busId) && channels.setChannelMixerDestination(bid, busId));
+    project.getTrackList().addTrack("Keep lane");
+    const auto validFile = home.getChildFile("mixer-valid.vibedaw");
+    CHECK(project.saveProjectAs(validFile, error));
+    CHECK(!project.isDirty());
+    ProjectDocument::Staged staged;
+    CHECK(ProjectDocument::stage(validFile.loadFileAsString(), staged, error));
+    CHECK(staged.channels.size() == 2 && staged.channels[0].mixerTrackId == busId && staged.channels[1].mixerTrackId == busId);
+    bus->setName("Dirty mixer"); bus->sendSynchronousChangeMessage();
+    CHECK(project.isDirty());
+    project.setActiveChannel(1);
+    project.getTransportState().setPlaying(true); project.getTransportState().setPositionInBeats(2);
+    const auto before = ProjectDocument::serialize(project);
+    const auto invalidFile = home.getChildFile("mixer-invalid.vibedaw");
+    for (int invalid = 0; invalid < 21; ++invalid) {
+        auto document = juce::JSON::parse(before);
+        auto* root = document.getDynamicObject(); CHECK(root);
+        auto entry = root->getProperty("mixerChannels")[0];
+        auto* mixer = entry.getDynamicObject(); CHECK(mixer);
+        auto* instrument = root->getProperty("channels")[0].getDynamicObject(); CHECK(instrument);
+        // Invalid-ID cases must fail on the ID itself, not an incidental dangling route.
+        if (invalid >= 4 && invalid <= 7)
+            for (auto& channel : *root->getProperty("channels").getArray())
+                channel.getDynamicObject()->setProperty("mixerTrackId", MasterDestination);
+        switch (invalid) {
+            case 0: root->removeProperty("mixerChannels"); break;
+            case 1: root->setProperty("mixerChannels", 42); break;
+            case 2: root->setProperty("mixerChannels", juce::Array<juce::var>{42}); break;
+            case 3: root->setProperty("mixerChannels", juce::Array<juce::var>{entry, entry}); break;
+            case 4: mixer->setProperty("id", MasterDestination); break;
+            case 5: mixer->setProperty("id", std::numeric_limits<int>::max()); break;
+            case 6: mixer->setProperty("id", 1.5); break;
+            case 7: mixer->setProperty("id", "not an ID"); break;
+            case 8: mixer->setProperty("volume", -0.01); break;
+            case 9: mixer->setProperty("volume", 2.01); break;
+            case 10: mixer->setProperty("volume", "nan"); break;
+            case 11: mixer->setProperty("pan", -1.01); break;
+            case 12: mixer->setProperty("pan", 1.01); break;
+            case 13: mixer->setProperty("muted", "true"); break;
+            case 14: mixer->setProperty("solo", 1); break;
+            case 15: instrument->setProperty("mixerTrackId", 999999); break;
+            case 16: instrument->setProperty("mixerTrackId", -2); break;
+            case 17: instrument->setProperty("mixerTrackId", "Master"); break;
+            case 18: {
+                juce::Array<juce::var> oversized;
+                for (int id = 0; id < ChannelList::maxMixerChannels; ++id) {
+                    auto copy = juce::JSON::parse(juce::JSON::toString(entry));
+                    copy.getDynamicObject()->setProperty("id", id);
+                    oversized.add(copy);
+                }
+                root->setProperty("mixerChannels", oversized);
+                CHECK(ProjectDocument::stage(juce::JSON::toString(document), staged, error));
+                CHECK(staged.mixerChannels.size() == ChannelList::maxMixerChannels);
+                auto extra = juce::JSON::parse(juce::JSON::toString(entry));
+                extra.getDynamicObject()->setProperty("id", ChannelList::maxMixerChannels);
+                oversized.add(extra);
+                root->setProperty("mixerChannels", oversized);
+                break;
+            }
+            case 19: mixer->setProperty("colour", "not a colour"); break;
+            case 20: mixer->setProperty("name", 17); break;
+        }
+        const auto json = juce::JSON::toString(document);
+        CHECK(!ProjectDocument::stage(json, staged, error) && error.isNotEmpty());
+        CHECK(invalidFile.replaceWithText(json));
+        CHECK(project.prepareLoad(validFile, error)); // A later failed prepare must discard this pending load too.
+        CHECK(!project.prepareLoad(invalidFile, error) && error.isNotEmpty());
+        project.commitLoad();
+        CHECK(ProjectDocument::serialize(project) == before);
+        CHECK(channels.getChannelById(aid) == a && channels.getChannelById(bid) == b);
+        CHECK(channels.getMixerChannelById(busId) == bus && project.getActiveChannelId() == bid);
+        CHECK(project.isDirty() && project.getProjectFile() == validFile);
+        CHECK(project.getTransportState().isPlaying() && project.getTransportState().getPositionInBeats() == 2);
+    }
+    CHECK(project.prepareLoad(validFile, error)); project.commitLoad();
+    CHECK(!project.isDirty() && channels.getNumMixerChannels() == 1);
+    CHECK(channels.getChannelById(aid)->getMixerTrackId() == busId && channels.getChannelById(bid)->getMixerTrackId() == busId);
+    CHECK(channels.getMixerChannelById(busId)->getVolume() == 0.75f && channels.getMixerChannelById(busId)->getPan() == -0.25f);
+
+    // A true v1 document has no mixerChannels section. Even route 0 must not
+    // connect to the new default bus: the old property never affected audio.
+    const juce::String legacy = R"json({
+        "formatVersion": 1,
+        "master": {"gain": 0.8, "muted": false},
+        "channels": [
+            {"id": 7, "name": "Legacy A", "type": "instrument", "volume": 0.75,
+             "pan": -0.25, "muted": true, "solo": true, "mixerTrackId": 0, "colour": "ffffa500"},
+            {"id": 11, "name": "Legacy B", "type": "instrument", "volume": 1.5,
+             "pan": 0.5, "muted": false, "solo": false, "mixerTrackId": 999, "colour": "ff6a6aff"}
+        ],
+        "clips": [], "tracks": [],
+        "transport": {"tempo": 96, "numerator": 7, "denominator": 8,
+                      "loop": {"exists": false, "enabled": false}, "metronome": false}
+    })json";
+    CHECK(ProjectDocument::stage(legacy, staged, error));
+    CHECK(staged.version == 1 && staged.mixerChannels.size() == 1 && staged.channels.size() == 2);
+    CHECK(staged.channels[0].mixerTrackId == MasterDestination && staged.channels[1].mixerTrackId == MasterDestination);
+    const auto legacyFile = home.getChildFile("mixer-legacy-v1.vibedaw");
+    CHECK(legacyFile.replaceWithText(legacy) && project.prepareLoad(legacyFile, error));
+    project.commitLoad();
+    CHECK(!project.isDirty() && channels.getNumMixerChannels() == 1 && channels.getNumChannels() == 2);
+    auto* migrated = channels.getChannelById(7); auto* migratedB = channels.getChannelById(11);
+    CHECK(migrated && migratedB && migrated->getName() == "Legacy A");
+    CHECK(migrated->getVolume() == 0.75f && migrated->getPan() == -0.25f && migrated->isMuted() && migrated->isSolo());
+    CHECK(migrated->getColour() == juce::Colour(0xffffa500));
+    CHECK(migratedB->getVolume() == 1.5f && migratedB->getPan() == 0.5f && !migratedB->isMuted() && !migratedB->isSolo());
+    CHECK(migrated->getMixerTrackId() == MasterDestination && migratedB->getMixerTrackId() == MasterDestination);
+    bus = channels.getMixerChannels().front().get();
+    CHECK(bus->getVolume() == 1 && bus->getPan() == 0 && !bus->isMuted() && !bus->isSolo());
+    CHECK(project.getMasterBus().getGain() == 0.8f && project.getTransportState().getTempo() == 96);
+    CHECK(ProjectDocument::stage(ProjectDocument::serialize(project), staged, error));
+    CHECK(staged.version == ProjectDocument::currentVersion && staged.mixerChannels.size() == 1);
+
+    // Zero is a saved v2 collection, not a request to seed the v1/default bus.
+    channels.clearMixerChannels(); CHECK(project.isDirty());
+    const auto zeroFile = home.getChildFile("mixer-zero-v2.vibedaw");
+    CHECK(project.saveProjectAs(zeroFile, error));
+    CHECK(ProjectDocument::stage(zeroFile.loadFileAsString(), staged, error) && staged.mixerChannels.empty());
+    channels.addMixerChannel("Discard on load");
+    CHECK(project.prepareLoad(zeroFile, error)); project.commitLoad();
+    CHECK(channels.getNumMixerChannels() == 0 && channels.getNumChannels() == 2 && !project.isDirty());
+    CHECK(channels.getChannelById(7)->getMixerTrackId() == MasterDestination);
+    CHECK(ProjectDocument::stage(ProjectDocument::serialize(project), staged, error) && staged.mixerChannels.empty());
+    bus = channels.addMixerChannel("Dirty controls"); CHECK(project.isDirty());
+    CHECK(project.saveProject(error));
+    bus->setVolume(0.5f); bus->sendSynchronousChangeMessage(); CHECK(project.isDirty());
+    CHECK(project.saveProject(error));
+    CHECK(channels.setChannelMixerDestination(7, bus->getId()));
+    channels.getChannelById(7)->sendSynchronousChangeMessage(); CHECK(project.isDirty());
+}
+
 static void projectFileTests() {
     const juce::File home(VIBEDAW_TEST_HOME);
     CHECK(home.isDirectory());
@@ -4681,6 +5324,8 @@ static void projectFileTests() {
     juce::String error;
 
     // ---- Build a two-channel sketch with a shared clip and full document state.
+    Probe first, second;
+    std::vector<std::unique_ptr<Probe>> restoredProbes; // Probes must outlive the Project's plugin hosts.
     Project project;
     auto& channels = project.getChannelList();
     auto& pool = project.getClipPool();
@@ -4688,10 +5333,8 @@ static void projectFileTests() {
     auto& transport = project.getTransportState();
 
     CHECK(!project.isDirty() && project.getProjectName() == juce::String("Untitled"));
-    Probe first, second;
     // Restore seam: only the fake offline format resolves; state is applied
     // exactly as the default restorer would (T07 contract).
-    std::vector<std::unique_ptr<Probe>> restoredProbes;
     int restoreCalls = 0;
     ProjectTestAccess::restorer(project,
         [&](const juce::PluginDescription& description, const juce::MemoryBlock& state) -> std::unique_ptr<PluginHost> {
@@ -4705,6 +5348,12 @@ static void projectFileTests() {
         });
     auto* alpha = channels.addChannel("Alpha");
     auto* beta = channels.addChannel("Beta");
+    channels.clearMixerChannels();
+    auto* group = channels.restoreMixerChannel(3, "Shared group"); CHECK(group);
+    group->setVolume(1.25f); group->setPan(0.5f); group->setMuted(true); group->setSolo(true);
+    group->setColour(juce::Colours::cyan);
+    auto* unusedGroup = channels.restoreMixerChannel(19, "Unused group"); CHECK(unusedGroup);
+    unusedGroup->setVolume(0.25f); unusedGroup->setPan(-1);
     const auto alphaId = alpha->getId();
     const auto betaId = beta->getId();
     CHECK(project.isDirty()); // Channel creation is document content.
@@ -4713,7 +5362,7 @@ static void projectFileTests() {
     alpha->setVolume(0.75f);
     alpha->setPan(-0.25f);
     alpha->setSolo(true);
-    alpha->setMixerTrackId(3);
+    CHECK(channels.setChannelMixerDestination(alpha->getId(), 3));
     beta->setVolume(1.5f);
     beta->setMuted(true);
     beta->setColour(juce::Colour(0xffffa500));
@@ -4764,6 +5413,9 @@ static void projectFileTests() {
         }
         CHECK(staged.version == ProjectDocument::currentVersion);
         CHECK(staged.channels.size() == 2 && staged.clips.size() == 3 && staged.tracks.size() == 2);
+        CHECK(staged.version == ProjectDocument::currentVersion && staged.mixerChannels.size() == 2);
+        CHECK(staged.mixerChannels[0].id == 3 && staged.mixerChannels[1].id == 19);
+        CHECK(staged.channels[0].mixerTrackId == 3 && staged.channels[1].mixerTrackId == MasterDestination);
         CHECK(!staged.tracks[0].instances[0].id.isEmpty());
         CHECK(staged.channels[0].plugin.has_value());
         CHECK(std::memcmp(staged.channels[0].plugin->state.getData(), "STATE-BYTES", 11) == 0);
@@ -4776,6 +5428,7 @@ static void projectFileTests() {
     CHECK(project.getProjectName() == juce::String("roundtrip"));
     transport.setTempo(200.0); // Post-save mutation must be discarded by the load.
     channels.addChannel("Doomed");
+    channels.clearMixerChannels();
     CHECK(project.prepareLoad(projectFile, error));
     project.commitLoad();
     CHECK(restoreCalls == 2);
@@ -4796,6 +5449,14 @@ static void projectFileTests() {
     CHECK(restoredAlpha->isSolo() && !restoredAlpha->isMuted() && restoredAlpha->getMixerTrackId() == 3);
     CHECK(restoredBeta->getVolume() == 1.5f && restoredBeta->isMuted() && !restoredBeta->isSolo());
     CHECK(restoredBeta->getColour() == juce::Colour(0xffffa500));
+    CHECK(restoredBeta->getMixerTrackId() == MasterDestination);
+    CHECK(channels.getNumMixerChannels() == 2);
+    group = channels.getMixerChannelById(3); unusedGroup = channels.getMixerChannelById(19);
+    CHECK(group && unusedGroup && channels.getMixerChannels()[0].get() == group && channels.getMixerChannels()[1].get() == unusedGroup);
+    CHECK(group->getName() == "Shared group" && group->getVolume() == 1.25f && group->getPan() == 0.5f);
+    CHECK(group->isMuted() && group->isSolo() && group->getColour() == juce::Colours::cyan);
+    CHECK(unusedGroup->getName() == "Unused group" && unusedGroup->getVolume() == 0.25f && unusedGroup->getPan() == -1);
+    CHECK(!unusedGroup->isMuted() && !unusedGroup->isSolo());
     CHECK(restoredAlpha->hasPlugin() && restoredBeta->hasPlugin());
     CHECK(project.getActiveChannelId() == alphaId);
     {
@@ -4860,6 +5521,9 @@ static void projectFileTests() {
     CHECK(freshClipId > midiClipId && freshClipId > audioClipId && freshClipId > patternClipId);
     auto* freshChannel = channels.addChannel("Fresh");
     CHECK(freshChannel->getId() > alphaId && freshChannel->getId() > betaId);
+    CHECK(freshChannel->getMixerTrackId() == MasterDestination);
+    auto* freshMixer = channels.addMixerChannel(); CHECK(freshMixer && freshMixer->getId() > 19);
+    channels.removeMixerChannel(freshMixer->getId());
     // Channel reorder preserves per-instance routing identity.
     auto* restoredTrackOne = tracks.getTrackById(trackOneId);
     CHECK(restoredTrackOne != nullptr);
@@ -4872,9 +5536,9 @@ static void projectFileTests() {
 
     // ---- Missing plugins stay as unresolved channels preserving identity+blob.
     {
+        Probe probe;
         Project source;
         auto* channel = source.getChannelList().addChannel("Unavailable");
-        Probe probe;
         channel->setPlugin(std::make_unique<PluginHost>(std::make_unique<StatefulInstrument>(probe)));
         const auto missingFile = home.getChildFile("missing" + extension);
         CHECK(source.saveProjectAs(missingFile, error));
@@ -4932,6 +5596,7 @@ static void projectFileTests() {
         auto buildDocument = []() {
             auto* root = new juce::DynamicObject();
             root->setProperty("formatVersion", ProjectDocument::currentVersion);
+            root->setProperty("mixerChannels", juce::Array<juce::var>());
             auto* masterObject = new juce::DynamicObject();
             masterObject->setProperty("gain", 1.0);
             masterObject->setProperty("muted", false);
@@ -4984,6 +5649,12 @@ static void projectFileTests() {
         };
 
         ProjectDocument::Staged staged;
+        {
+            auto* valid = buildDocument();
+            valid->setProperty("channels", juce::Array<juce::var>{channelObject(0)});
+            CHECK(ProjectDocument::stage(juce::JSON::toString(juce::var(valid)), staged, error));
+            CHECK(staged.version == ProjectDocument::currentVersion && staged.mixerChannels.empty());
+        }
         {
             auto* future = buildDocument();
             future->setProperty("formatVersion", ProjectDocument::currentVersion + 1);
@@ -5079,6 +5750,8 @@ static void projectFileTests() {
         CHECK(!fresh.isDirty());
         fresh.getClipPool().addClip(std::make_unique<MidiClip>());
         CHECK(fresh.isDirty());
+        CHECK(fresh.getChannelList().addMixerChannel("Discard on New"));
+        CHECK(fresh.getChannelList().getNumMixerChannels() == 2);
         fresh.newProject();
         CHECK(!fresh.isDirty() && fresh.getProjectName() == juce::String("Untitled"));
         // New sessions seed the built-in instrument so first-time users can play.
@@ -5086,6 +5759,7 @@ static void projectFileTests() {
         const auto* seeded = fresh.getChannelList().getChannel(0);
         CHECK(seeded != nullptr && seeded->getPlugin() != nullptr);
         CHECK(seeded->getPlugin()->getPluginName() == juce::String("VibeSynth"));
+        CHECK(seeded->getMixerTrackId() == MasterDestination && fresh.getChannelList().getNumMixerChannels() == 1);
         CHECK(fresh.getTrackList().getNumTracks() == 0 && fresh.getClipPool().getNumClips() == 0);
         CHECK(fresh.getTransportState().getTempo() == 120.0);
         CHECK(!fresh.getTransportState().isLoopRegionSet() && !fresh.getTransportState().isLoopEnabled());
@@ -5093,6 +5767,11 @@ static void projectFileTests() {
         CHECK(fresh.getProjectFile().getFullPathName().isEmpty());
     }
 }
+
+#include "midi_timing_tests.h"
+#include "recording_model_tests.h"
+#include "recording_session_tests.h"
+#include "recording_ui_tests.h"
 
 int main() {
     try {
@@ -5127,15 +5806,21 @@ int main() {
         transportClockTests();
         transportEngineTests();
         externalMidiTests();
+        midiTimingTests();
         arrangementPlaybackTests();
         arrangementLifecycleTests();
         arrangementCapacityTests();
         arrangementBoundaryOwnershipTests();
         arrangementMergedCapacityTests();
+        independentMixerModelTests();
+        independentMixerSignalTests();
+        independentMixerNoteTests();
+        mixerEditEngineTests();
         mixerSignalTests();
         mixerMeterTests();
         mixerSuppressionTests();
         mixerBindingTests();
+        mixerRoutingMenuTests();
         loopTimestampTests();
         deferredWrapOffsetTests();
         loopControlCapacityTests();
@@ -5149,9 +5834,13 @@ int main() {
         editorNavigationTests();
         builtinSynthTests();
         projectFileTests();
+        mixerProjectFileTests();
         integrationWorkflowTests();
+        expressiveClipTests();
+        recorderSessionTests();
+        recordingUiTests();
         juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        std::cout << "Theme/control/keyboard paint, T03/T06/T01/T02/T04/T05, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, built-in synth, T09 external MIDI and tempo control tests passed\n";
+        std::cout << "Theme/control/keyboard paint, T03/T06/T01/T02/T04/T05, independent mixer/v2 project files, T10 editor access, T14 context menu, T16 loop UX, T07 project file, T08 editor navigation, built-in synth, T09 external MIDI and tempo control tests passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAILED: " << e.what() << '\n';

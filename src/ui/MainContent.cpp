@@ -6,6 +6,7 @@
 #include "utils/Logger.h"
 #include "components/FileDialog.h"
 #include "components/TextPrompt.h"
+#include "components/RecordingControls.h"
 #include "editor/PianoRollGeometry.h"
 #include "sidebar/Sidebar.h"
 #include "sidebar/SidebarContainer.h"
@@ -28,6 +29,32 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     
     transport_ = std::make_unique<TransportComponent>(transportState_);
     addAndMakeVisible(*transport_);
+    transport_->setRecordAction([this] {
+        const juce::Component::SafePointer<MainContent> safe(this);
+        auto& recorder = project_.getMidiRecorder();
+        RecordingControls::ScopedRecorderCommand command(recorder);
+        if (!recorder.isSessionActive()) { openRecordingSetup(); return; }
+        juce::String error;
+        const bool arm = !recorder.isRecording();
+        const bool success = recorder.setRecording(arm, error);
+        if (!safe) return;
+        recordingError_ = error;
+        if (success) {
+            if (arm) recorder.getPlaybackTransport().setPlaying(true);
+        } else if (recordingError_.isEmpty()) recordingError_ = "Recording state could not be changed.";
+        if (!safe) return;
+        timerCallback();
+    }, [this] { openRecordingSetup(); });
+    transport_->setPlaybackActions([this] { togglePlayback(); }, [this] {
+        const juce::Component::SafePointer<MainContent> safe(this);
+        auto& recorder = project_.getMidiRecorder();
+        RecordingControls::ScopedRecorderCommand command(recorder);
+        recordingError_.clear();
+        if (recorder.isSessionActive()) recorder.stop();
+        else transportState_.stop();
+        if (!safe) return;
+        timerCallback();
+    });
     
     leftSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Left);
     leftSidebarContainer_->setContainerListener(this);
@@ -138,6 +165,10 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
 
 MainContent::~MainContent() {
     stopTimer();
+    if (recordingPopover_) {
+        recordingPopover_->setVisible(false);
+        recordingPopover_->dismiss();
+    }
     closeAllClipEditors();
     project_.getClipPool().removeListener(this);
     project_.removeListener(this);
@@ -145,13 +176,41 @@ MainContent::~MainContent() {
 }
 
 void MainContent::timerCallback() {
+    const juce::Component::SafePointer<MainContent> safe(this);
+    auto& recorder = project_.getMidiRecorder();
+    RecordingControls::ScopedRecorderCommand command(recorder);
+    recorder.poll();
+    if (!safe) return;
     transportState_.pollRenderPosition();
+    if (!safe) return;
+    if (recorder.isSessionActive()) recorder.getPlaybackTransport().pollRenderPosition();
+    if (!safe) return;
+    transport_->setRecorderState(recorder.isSessionActive(), recorder.isRecording(),
+                                recorder.isSessionActive() && recorder.getPlaybackTransport().isPlaying());
+    updateStatusLabel();
     // CPU/RAM readouts are 1 Hz class, piggybacking on the 30 Hz poll timer.
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (now - lastSystemPollTime_ >= 1000.0) {
         lastSystemPollTime_ = now;
         refreshSystemStats();
     }
+}
+
+void MainContent::openRecordingSetup() {
+    if (recordingPopover_) return;
+    recordingError_.clear();
+    auto controls = std::make_unique<RecordingControls>(project_, false, InvalidClipId, true);
+    controls->setLifetimeOwner(this);
+    recordingPopover_ = &juce::CallOutBox::launchAsynchronously(std::move(controls),
+                                                               transport_->getScreenBounds(), nullptr);
+}
+
+void MainContent::togglePlayback() {
+    auto& recorder = project_.getMidiRecorder();
+    RecordingControls::ScopedRecorderCommand command(recorder);
+    if (!recorder.isSessionActive()) transportState_.togglePlay();
+    else if (recorder.getPlaybackTransport().isPlaying()) recorder.stop();
+    else recorder.getPlaybackTransport().setPlaying(true);
 }
 
 void MainContent::refreshSystemStats() {
@@ -260,12 +319,12 @@ bool MainContent::keyPressed(const juce::KeyPress& key) {
 
 bool MainContent::handleKeyPress(const juce::KeyPress& key) {
     if (key.getKeyCode() == ' ' && !key.getModifiers().isCtrlDown()) {
-        transportState_.togglePlay();
+        togglePlayback();
         return true;
     }
     
     if (key.getKeyCode() == juce::KeyPress::returnKey && !key.getModifiers().isAltDown()) {
-        transportState_.reset();
+        if (!project_.getMidiRecorder().isSessionActive()) transportState_.reset();
         return true;
     }
 
@@ -376,6 +435,19 @@ void MainContent::openPluginWindow() {
 
 void MainContent::updateStatusLabel() {
     juce::String status;
+    auto& recorder = project_.getMidiRecorder();
+    if (recordingError_.isNotEmpty() || recorder.isSessionActive() || recorder.hasPendingContent()) {
+        auto* channel = project_.getChannelList().getChannelById(recorder.getChannelId());
+        auto* clip = project_.getClipPool().getClip(recorder.getTargetClipId());
+        status = recorder.getStatus();
+        if (recordingError_.isNotEmpty()) status += " | " + recordingError_;
+        if (recorder.isSessionActive())
+            status = (channel ? channel->getName() : "Missing instrument") + " / "
+                + (clip ? clip->getName() : "New MIDI clip") + ": " + status;
+        statusLabel_.setText(status, juce::dontSendNotification);
+        statusLabel_.setTooltip(status);
+        return;
+    }
     
     int activeIndex = project_.getActiveChannel();
     auto& channels = project_.getChannelList();
@@ -392,6 +464,7 @@ void MainContent::updateStatusLabel() {
     }
     
     status += " | MIDI: " + (midiManager_.isConnected() ? midiManager_.getCurrentDeviceName() : "Not connected");
+    if (recorder.getStatus().isNotEmpty()) status += " | Recorder: " + recorder.getStatus();
     status += " | Plugin editors: initial testing (unguarded restarts)";
     
     statusLabel_.setText(status, juce::dontSendNotification);
@@ -443,7 +516,9 @@ void MainContent::clipOpened(ClipId clipId, Clip* clip) {
         if (midiClip) {
             // Arrangement -> source-local beat for the playhead: follow the
             // placement containing the transport position (earliest on overlap).
-            auto provider = [this, clipId, midiClip](double arrangementBeat, double& local) -> bool {
+            auto provider = [this, clipId](double arrangementBeat, double& local) -> bool {
+                auto* source = project_.getClipPool().getClip(clipId);
+                if (!source) return false;
                 bool found = false;
                 double bestStart = 0.0;
                 for (const auto& track : project_.getTrackList().getTracks()) {
@@ -452,7 +527,7 @@ void MainContent::clipOpened(ClipId clipId, Clip* clip) {
                             continue;
                         double candidate = 0.0;
                         if (sourceLocalBeat(arrangementBeat, instance->getStartTime(),
-                                            instance->getDuration(), midiClip->getDuration(), candidate)) {
+                                            instance->getDuration(), source->getDuration(), candidate)) {
                             if (!found || instance->getStartTime() < bestStart) {
                                 found = true;
                                 bestStart = instance->getStartTime();
@@ -464,7 +539,7 @@ void MainContent::clipOpened(ClipId clipId, Clip* clip) {
                 return found;
             };
             auto* window = new ClipEditorWindow(midiClip, clipId, &midiManager_,
-                                                &transportState_, std::move(provider));
+                                                &transportState_, std::move(provider), true, &project_);
             window->setListener(this);
             openClipEditors_.push_back(window);
         }
@@ -477,8 +552,12 @@ void MainContent::clipSelected(ClipId clipId, Clip*) {
 
 void MainContent::clipWillBeRemoved(ClipId id) {
     // Close while the source is still alive so grids can detach their listeners.
-    for (int i = static_cast<int>(openClipEditors_.size()) - 1; i >= 0; --i)
-        if (openClipEditors_[i]->getClipId() == id) openClipEditors_[i]->closeButtonPressed();
+    std::vector<juce::Component::SafePointer<ClipEditorWindow>> closing;
+    for (auto* window : openClipEditors_)
+        if (window->getClipId() == id) closing.emplace_back(window);
+    // Closing an owner can synchronously close other editors too.
+    for (const auto& window : closing)
+        if (window) window->closeButtonPressed();
 }
 
 void MainContent::clipEditorClosed(ClipEditorWindow* window) {

@@ -8,7 +8,7 @@
 namespace vibedaw {
 
 class MixerPanel : public Panel, private ChannelList::Listener,
-                   private Project::Listener, private juce::MultiTimer, private juce::ComponentListener {
+                   private juce::MultiTimer, private juce::ComponentListener {
 public:
     explicit MixerPanel(Project&);
     ~MixerPanel() override;
@@ -17,21 +17,30 @@ public:
     MixerStrip* getChannelStrip(int index);
     MasterStrip* getMasterStrip() { return &masterStrip; }
     int getNumChannels() const { return static_cast<int>(channelStrips.size()); }
+    int getSelectedMixerChannelId() const { return selectedMixerChannelId; }
+    juce::TextButton& getAddChannelButton() { return addChannelButton; }
+    juce::TextButton& getRemoveChannelButton() { return removeChannelButton; }
+    juce::Viewport& getViewport() { return viewport; }
 private:
     void rebuildStrips();
     void refreshControls();
     void layoutStrips();
     void componentMovedOrResized(juce::Component&, bool, bool) override { layoutStrips(); }
     void timerCallback(int) override;
-    void channelAdded(Channel*) override { rebuildStrips(); }
-    void channelRemoved(int) override { rebuildStrips(); }
-    void channelListChanged() override { rebuildStrips(); }
-    void channelChanged(Channel*) override { refreshControls(); }
-    void activeChannelChanged(int) override { refreshControls(); }
+    void channelAdded(Channel*) override {}
+    void channelRemoved(int) override {}
+    void channelListChanged() override {}
+    void channelChanged(Channel*) override {}
+    void mixerChannelsChanged() override { rebuildStrips(); }
+    void mixerChannelChanged(MixerChannel*) override { refreshControls(); }
 
     Project& project;
+    juce::Component* mixerContent = nullptr; // Owned as Panel content, including pop-out mode.
+    juce::Viewport viewport;
     juce::Component stripContent;
-    juce::Viewport* viewport = nullptr; // Owned as Panel content, including pop-out mode.
+    juce::TextButton addChannelButton{"+ Add Channel"};
+    juce::TextButton removeChannelButton{"Remove Selected"};
+    int selectedMixerChannelId = -1;
     MasterStrip masterStrip;
     std::vector<std::unique_ptr<MixerStrip>> channelStrips;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixerPanel)

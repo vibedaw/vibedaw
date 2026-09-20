@@ -17,6 +17,7 @@
 namespace vibedaw {
 
 class ChannelMixer;
+class MidiRecorder;
 
 // Owns the live arrangement models and the project document state. The models
 // are replaced in place (clear + repopulate) on project load: ChannelMixer and
@@ -69,13 +70,14 @@ public:
     bool loadPlugin(const juce::String& pluginPath, ChannelId target = InvalidChannelId);
     TransportState& getTransportState() { return transport; }
     const TransportState& getTransportState() const { return transport; }
+    MidiRecorder& getMidiRecorder() { return *recorder_; }
 
     // T07 project document: New/Open/Save/Save As. File selection, discard
     // confirmation and error surfacing are the caller's (UI) responsibility.
     // Prepare/commit is two-phase: a failed prepare leaves the session intact.
     juce::String getProjectName() const;
     const juce::File& getProjectFile() const { return projectFile_; }
-    bool isDirty() const { return dirty_; }
+    bool isDirty() const;
     void markDirty();
     void clearDirty();
     void newProject();
@@ -95,6 +97,7 @@ private:
     ChannelList channelList;
     ClipPool clipPool;
     Settings settings;
+    std::unique_ptr<MidiRecorder> recorder_;
 
     ChannelId activeChannelId_ = InvalidChannelId;
 
@@ -117,6 +120,8 @@ private:
         if (channel->getId() == activeChannelId_) notifyActiveChannelChanged(getActiveChannel());
     }
     void channelListChanged() override;
+    void mixerChannelsChanged() override { markDirty(); }
+    void mixerChannelChanged(MixerChannel*) override { markDirty(); }
     // TrackList::Listener
     void trackAdded(Track* track) override;
     void trackRemoved(int) override { markDirty(); }

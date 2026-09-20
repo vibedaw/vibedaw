@@ -12,10 +12,11 @@
 namespace vibedaw {
 
 class Channel;
+class MidiRecorder;
 
 class ChannelMixer : public juce::AudioProcessor, public ChannelList::Listener {
 public:
-    ChannelMixer(ChannelList&, TrackList&, ClipPool&, TransportState&);
+    ChannelMixer(ChannelList&, TrackList&, ClipPool&, TransportState&, MidiRecorder* = nullptr);
     ~ChannelMixer() override;
     
     void setActiveChannel(int index);
@@ -48,16 +49,35 @@ public:
     void channelRemoved(int index) override;
     void channelChanged(Channel* channel) override;
     void channelListChanged() override;
+    void mixerChannelsChanged() override;
     unsigned getOverflowCount() const { return overflowCount.load(); }
     bool arrangementOverflowed() const { return arrangement.hasOverflow(); }
+    // Engine-only render metadata. Synthetic cleanup is never performance input.
+    void notifyInputStatus(bool cleanup, bool lost, bool interrupted) noexcept {
+        inputCleanup = cleanup; inputLost = lost; inputInterrupted = interrupted;
+    }
 
 private:
     ChannelList& channelList;
     ArrangementPublisher arrangement;
     TransportState& transport;
     TransportClock clock;
+    MidiRecorder* recorder = nullptr;
+    TransportState* clockTransport = nullptr;
+    unsigned recorderGeneration = 0;
+    bool inputCleanup = false, inputLost = false, inputInterrupted = false;
+    struct ExpressionOwnership {
+        ChannelId id = InvalidChannelId;
+        std::array<bool, 16 * 129> lanes{};
+        bool cleanupPending = false;
+    };
+    std::array<ExpressionOwnership, ChannelList::maxChannels> expressionOwnership{};
+    std::array<bool, 16 * 129> liveExpressionOwned{};
+    std::array<int, 16 * 129> liveExpressionValues{};
+    bool previousSession = false, previousPlaying = false;
     Metronome metronome;
     juce::AudioBuffer<float> scratch;
+    std::array<juce::AudioBuffer<float>, ChannelList::maxMixerChannels> mixerScratch;
     juce::MidiBuffer channelMidi;
     struct ScheduledEvent {
         // size == -1 is an internal arrangement-only wrap barrier, never plugin MIDI.
@@ -66,6 +86,7 @@ private:
         unsigned char data[3]{};
         unsigned order = 0;
         int previousAttack = -1;
+        MidiEventOrigin origin = MidiEventOrigin::Live;
     };
     std::array<ScheduledEvent, Channel::maxLiveEvents> scheduled{};
     std::array<ScheduledEvent, Channel::maxLiveEvents> merged{};

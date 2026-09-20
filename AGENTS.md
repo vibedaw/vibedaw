@@ -19,6 +19,8 @@ Main.cpp (not owned by Project) and set as the engine's sole processor.
 - `AudioQuiescence` - single writer/one-render-consumer gate. Structural edits
   (`AudioQuiescence::Edit`) block render admission off audio; render callbacks
   call `enter()`/`leave()`. All model/plugin replacement must happen under an `Edit`.
+  Audio-only mixer/routing edits use `PreserveVoices`: skipped callbacks are silent
+  but keep queued MIDI and held notes. Default/nested destructive edits retain panic.
 
 ## Ownership / Signal Flow (implemented)
 ```
@@ -33,7 +35,7 @@ On-screen keyboard (MidiKeyboardState) -> AudioEngine::handleNoteOn/Off
     -> same bounded midiQueue (never duplicated)
 
 Audio callback (AudioEngine::audioDeviceIOCallbackWithContext)
-    └─> drain midiQueue at sample 0 (or panic cleanup CCs)
+    └─> drain timestamped midiQueue to block offsets (or marked panic cleanup)
             └─> ChannelMixer::processBlock
                     ├─> ArrangementPublisher snapshots (LatestState) per destination
                     ├─> live input -> active channel only
@@ -47,6 +49,10 @@ compensation). UI never drives playback time; it sends commands and polls
 published position. Live input routes to the active channel; arrangement events
 route by each instance's stable `ChannelId`. Processors are merged per
 destination so each plugin is processed once per block.
+Instrument audio then routes by stable `MixerChannelId` to an independent mixer
+channel (many instruments may share it), or directly to Master (`-1`, the default).
+Mixer channels apply gain/pan/audio-only mute/solo after summing; they all feed
+Master. Mixer solo excludes direct-Master instruments but not the metronome.
 
 ## Timing Units
 - Quarter-note beats everywhere in models: notes, clip source length, placement
@@ -65,8 +71,14 @@ destination so each plugin is processed once per block.
   default `[0, 4)`), metronome enable. Audio publishes position; UI polls.
 - `MidiManager` - external device selection/open (`connectToDevice`/`disconnect`),
   `MidiListener` for UI feedback; forwards raw messages into the engine queue.
-- `MixerState.h` - `MasterBus` (gain 0..2, mute, meters) owned by the instrument
-  graph, never by an arrangement Track.
+- `MidiRecorder` - project-owned shared controller, consumed by ChannelMixer on
+  the audio clock. Pins live routing during sessions; supports continuous capture,
+  takes, replace and overdub. Clip sessions park song playback. Bounded temporary
+  notes/CC/bend are committed on disarm/stop, not every UI tick. Initial limits and
+  deferred work: `.docs/tasks/T21-midi-recording.md`; hardware checks: `.docs/TOTEST.md`.
+- `MixerState.h` - independent `MixerChannel` destinations and `MasterBus`, owned
+  by `ChannelList`, never by an arrangement Track. New projects start with one
+  mixer channel; removing a destination reroutes its instruments to Master.
 
 ## Project Model (`src/project/`)
 - `Project` - owns `TrackList`, `ChannelList`, `ClipPool`, `TransportState`,
@@ -81,7 +93,7 @@ destination so each plugin is processed once per block.
 - `ClipPool`/`Clip`/`MidiClip`/`AudioClip`/`PatternClip` - pooled sources
   (stable `ClipId`); placements reference them; deleting a placement never
   deletes the source.
-- `ProjectDocument` - versioned JSON v1 (see `.docs/PROJECT_FORMAT.md`),
+- `ProjectDocument` - versioned JSON v3 with v1/v2 loading (see `.docs/PROJECT_FORMAT.md`),
   parse-validate-stage then two-phase `prepareLoad`/`commitLoad`; failed loads
   leave the session intact; saves are atomic temp-file writes.
 
@@ -119,10 +131,12 @@ destination so each plugin is processed once per block.
 - `Icons.cpp` - vendored Tabler (MIT) transport icon paths.
 
 ## Persistence
-- Projects: `.docs/PROJECT_FORMAT.md` (`.vibedaw` JSON v1). `ProjectDocument`
+- Projects: `.docs/PROJECT_FORMAT.md` (`.vibedaw` JSON v2). `ProjectDocument`
   parse-validate-stage -> `Project::prepareLoad`/`commitLoad` (atomic; failed
   loads change nothing). Saves are temp-file + move, never false success.
   Missing plugins become unresolved channels preserving identity+blob.
+  V1 migration ignores its formerly inert mixerTrackId and preserves instrument
+  controls, with direct-Master outputs and one empty mixer channel.
 - Settings (`Settings`, JSON) are application preferences, not the project file.
 
 ## Tests (`tests/`)

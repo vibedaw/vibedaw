@@ -3,7 +3,8 @@
 
 namespace vibedaw {
 
-// Tabler Icons v1.28 (metronome v2.40) outline path data, MIT License.
+// Tabler Icons outline path data, MIT License (transport v1.28, metronome
+// v2.40, infinity v1.2, stack-2 v1.39, playlist-add v1.53).
 // Copyright (c) Paweł Kuna. Multiple subpaths are concatenated per icon; each
 // begins with M, so concatenation preserves the source geometry.
 namespace {
@@ -20,11 +21,15 @@ const char* const iconPaths[] = {
         "m3 3l-3 -3l3 -3",                                                   // repeat
     "M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 "
         "1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13"
-        "M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"                                 // metronome
+        "M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0",                                // metronome
+    "M9.828 9.172a4 4 0 1 0 0 5.656a10 10 0 0 0 2.172 -2.828a10 10 0 0 1 2.172 -2.828"
+        "a4 4 0 1 1 0 5.656a10 10 0 0 1 -2.172 -2.828a10 10 0 0 0 -2.172 -2.828", // infinity
+    "M12 4l-8 4l8 4l8 -4l-8 -4M4 12l8 4l8 -4M4 16l8 4l8 -4",                 // stack-2
+    "M19 8h-14M5 12h9M11 16h-6M15 16h6M18 13v6"                              // playlist-add
 };
 
-std::array<juce::Path, 8> buildPaths() {
-    std::array<juce::Path, 8> paths{};
+std::array<juce::Path, std::size(iconPaths)> buildPaths() {
+    std::array<juce::Path, std::size(iconPaths)> paths{};
     for (size_t i = 0; i < paths.size(); ++i)
         paths[i] = juce::Drawable::parseSVGPath(iconPaths[i]);
     return paths;
@@ -33,7 +38,7 @@ std::array<juce::Path, 8> buildPaths() {
 } // namespace
 
 const juce::Path& Icons::path(IconId id) {
-    static const std::array<juce::Path, 8> paths = buildPaths();
+    static const auto paths = buildPaths();
     return paths[static_cast<size_t>(id)];
 }
 

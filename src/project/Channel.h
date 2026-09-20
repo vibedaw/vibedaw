@@ -50,7 +50,12 @@ public:
     const juce::File& getSampleFile() const { return sampleFile; }
     bool hasSample() const { return sampleFile.exists(); }
     
-    void setMixerTrackId(int id) { mixerTrackId = id; notifyChanged(); }
+    void setMixerTrackId(int id) {
+        AudioQuiescence::Edit edit(AudioQuiescence::Interruption::PreserveVoices);
+        if (mixerTrackId == id) return;
+        mixerTrackId = id;
+        notifyChanged();
+    }
     int getMixerTrackId() const { return mixerTrackId; }
     
     void setVolume(float newVolume);

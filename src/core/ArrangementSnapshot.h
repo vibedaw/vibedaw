@@ -10,6 +10,8 @@
 
 namespace vibedaw {
 
+enum class MidiEventOrigin { Live, Arrangement, Recording };
+
 struct RenderNote {
     double start = 0, end = 0;
     ChannelId destination = InvalidChannelId;
@@ -20,6 +22,9 @@ struct ArrangementSnapshot {
         double beat = 0, end = 0;
         unsigned token = 0;
         int key = 0, velocity = 0; // velocity zero is a release.
+        bool expression = false;
+        unsigned char data[3]{};
+        ChannelId destination = InvalidChannelId;
     };
     struct Destination {
         ChannelId id = InvalidChannelId;
@@ -35,11 +40,19 @@ struct ArrangementSnapshot {
 
 // Message-thread compiler. No model pointer is retained in the published data.
 inline ArrangementSnapshot compileArrangement(const TrackList& tracks, const ClipPool& clips,
-                                              const ChannelList& channels, unsigned revision) {
+                                              const ChannelList& channels, unsigned revision,
+                                              ClipId excludedClip = InvalidClipId,
+                                              ChannelId excludedChannel = InvalidChannelId,
+                                              double excludedStart = -1.0,
+                                              const juce::String& excludedPlacement = {}) {
     ArrangementSnapshot result;
     result.revision = revision;
     for (const auto& track : tracks.getTracks()) {
         for (const auto& placement : track->getClipInstances()) {
+            if ((!excludedPlacement.isEmpty() && placement->getId() == excludedPlacement) ||
+                (excludedPlacement.isEmpty() && placement->getClipId() == excludedClip &&
+                (excludedChannel == InvalidChannelId || placement->getChannelId() == excludedChannel) &&
+                (excludedStart < 0 || placement->getStartTime() == excludedStart))) continue;
             auto* source = dynamic_cast<MidiClip*>(clips.getClip(placement->getClipId()));
             if (!source || source->isMuted() || placement->isMuted() ||
                 !channels.getChannelById(placement->getChannelId())) continue;
@@ -53,12 +66,28 @@ inline ArrangementSnapshot compileArrangement(const TrackList& tracks, const Cli
                 if (!std::isfinite(start) || !std::isfinite(end) || !(end > start)) continue;
                 if (result.notes.size() == ArrangementSnapshot::maxNotes) {
                     result.notes.clear();
+                    result.events.clear();
                     result.overflow = true;
                     return result;
                 }
                 result.notes.push_back({start, end,
                     placement->getChannelId(), juce::jlimit(0, 127, note.getPitch()),
                     juce::jlimit(1, 127, note.getVelocity()), juce::jlimit(1, 16, note.getChannel())});
+            }
+            for (const auto& expression : source->getExpressionEvents()) {
+                if (!expression.isValid() || expression.beat >= length) continue;
+                if (result.events.size() == MidiClip::maxExpressionEvents) {
+                    result.notes.clear(); result.events.clear(); result.overflow = true;
+                    return result;
+                }
+                ArrangementSnapshot::Event event;
+                event.beat = placement->getStartTime() + expression.beat;
+                event.expression = true;
+                event.data[0] = static_cast<unsigned char>(expression.status);
+                event.data[1] = static_cast<unsigned char>(expression.data1);
+                event.data[2] = static_cast<unsigned char>(expression.data2);
+                event.destination = placement->getChannelId();
+                result.events.push_back(event);
             }
         }
     }
@@ -82,21 +111,24 @@ inline ArrangementSnapshot compileArrangement(const TrackList& tracks, const Cli
     }
     for (size_t i = 0; i < count; ++i) {
         const auto& note = voices[i];
-        if (result.destinations.empty() || result.destinations.back().id != note.destination) {
-            if (!result.destinations.empty()) result.destinations.back().end = result.events.size();
-            result.destinations.push_back({note.destination, result.events.size(), 0});
-        }
         const int key = (note.midiChannel - 1) * 128 + note.pitch;
         const auto token = static_cast<unsigned>(i + 1);
-        result.events.push_back({note.start, note.end, token, key, note.velocity});
-        result.events.push_back({note.end, note.end, token, key, 0});
+        result.events.push_back({note.start, note.end, token, key, note.velocity, false, {}, note.destination});
+        result.events.push_back({note.end, note.end, token, key, 0, false, {}, note.destination});
+    }
+    std::stable_sort(result.events.begin(), result.events.end(), [](const auto& a, const auto& b) {
+        const int ap = a.expression ? 1 : (a.velocity ? 2 : 0);
+        const int bp = b.expression ? 1 : (b.velocity ? 2 : 0);
+        return std::tie(a.destination, a.beat, ap) < std::tie(b.destination, b.beat, bp);
+    });
+    for (size_t i = 0; i < result.events.size(); ++i) {
+        const auto id = result.events[i].destination;
+        if (result.destinations.empty() || result.destinations.back().id != id) {
+            if (!result.destinations.empty()) result.destinations.back().end = i;
+            result.destinations.push_back({id, i, 0});
+        }
     }
     if (!result.destinations.empty()) result.destinations.back().end = result.events.size();
-    for (const auto& destination : result.destinations)
-        std::sort(result.events.begin() + destination.begin, result.events.begin() + destination.end,
-            [](const auto& a, const auto& b) {
-                return std::tie(a.beat, a.velocity, a.token) < std::tie(b.beat, b.velocity, b.token);
-            });
     return result;
 }
 

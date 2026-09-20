@@ -73,6 +73,7 @@ set(SOURCES
     src/core/AudioEngine.cpp
     src/core/ChannelMixer.cpp
     src/core/MidiManager.cpp
+    src/core/MidiRecorder.cpp
     src/core/TransportState.cpp
     src/project/Project.cpp
     src/project/Track.cpp

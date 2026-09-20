@@ -34,7 +34,6 @@ void TransportState::setPlaying(bool playing) {
 }
 
 void TransportState::setRecording(bool recording) {
-    recording = false; // Recording is unavailable until the recording task.
     if (recording_ != recording) {
         recording_ = recording;
         publishControl();
