@@ -18,7 +18,10 @@ enum class IconId {
     metronome,     // metronome
     continuous,    // infinity
     takes,         // stack-2
-    overdub        // playlist-add
+    overdub,       // playlist-add
+    browser,       // folder
+    channelRack,   // server
+    clips          // copy
 };
 
 class Icons {

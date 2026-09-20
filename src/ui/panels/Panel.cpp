@@ -304,10 +304,14 @@ void Panel::updateLayout() {
     
     if (contentHeight > 0 && content_) {
         content_->setVisible(true);
-        content_->setBounds(bounds.removeFromTop(contentHeight));
+        resizeContent(bounds.removeFromTop(contentHeight));
     } else if (content_) {
         content_->setVisible(false);
     }
+}
+
+void Panel::resizeContent(juce::Rectangle<int> bounds) {
+    content_->setBounds(bounds);
 }
 
 void Panel::showInFlexMode() {

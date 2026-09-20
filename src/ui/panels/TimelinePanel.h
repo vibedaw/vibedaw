@@ -44,8 +44,7 @@ private:
     void scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeStart) override;
     
     void layoutContent();
-    void syncVerticalScroll();
-    void syncHorizontalScroll();
+    void syncScroll();
     
     Project& project;
     TrackList& trackList;

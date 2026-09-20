@@ -77,6 +77,7 @@ void TimelineContent::resized() {
 }
 
 void TimelineContent::setScrollOffset(int verticalOffset, double horizontalOffset) {
+    if (verticalScrollOffset == verticalOffset && horizontalScrollOffset == horizontalOffset) return;
     verticalScrollOffset = verticalOffset;
     horizontalScrollOffset = horizontalOffset;
     

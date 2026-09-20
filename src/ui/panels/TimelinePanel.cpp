@@ -105,7 +105,7 @@ TimelinePanel::TimelinePanel(Project& proj)
     content->onAutoScroll = [this](int dx, int dy) {
         horizontalScrollBar->setCurrentRangeStart(horizontalScrollBar->getCurrentRangeStart() + dx, juce::dontSendNotification);
         verticalScrollBar->setCurrentRangeStart(verticalScrollBar->getCurrentRangeStart() + dy, juce::dontSendNotification);
-        syncVerticalScroll();
+        syncScroll();
     };
 
     juce::Component* controls[] = { &placementStatus };
@@ -191,12 +191,9 @@ void TimelinePanel::resized() {
     layoutContent();
 }
 
-void TimelinePanel::scrollBarMoved(juce::ScrollBar* scrollBar, double newRangeStart) {
-    if (scrollBar == verticalScrollBar.get()) {
-        syncVerticalScroll();
-    } else if (scrollBar == horizontalScrollBar.get()) {
-        syncHorizontalScroll();
-    }
+void TimelinePanel::scrollBarMoved(juce::ScrollBar* scrollBar, double) {
+    if (scrollBar == verticalScrollBar.get() || scrollBar == horizontalScrollBar.get())
+        syncScroll();
 }
 
 void TimelinePanel::layoutContent() {
@@ -235,19 +232,13 @@ void TimelinePanel::layoutContent() {
     addTrackButton->setBounds(bounds.getX(), bounds.getBottom() - scrollBarWidth,
                                headerWidth, scrollBarWidth);
     
-    syncVerticalScroll();
-    syncHorizontalScroll();
+    syncScroll();
 }
 
-void TimelinePanel::syncVerticalScroll() {
+void TimelinePanel::syncScroll() {
     int scrollOffset = static_cast<int>(verticalScrollBar->getCurrentRangeStart());
     headerList->setScrollOffset(scrollOffset);
     content->setScrollOffset(scrollOffset, horizontalScrollBar->getCurrentRangeStart());
-}
-
-void TimelinePanel::syncHorizontalScroll() {
-    double scrollOffset = horizontalScrollBar->getCurrentRangeStart();
-    content->setScrollOffset(static_cast<int>(verticalScrollBar->getCurrentRangeStart()), scrollOffset);
 }
 
 } // namespace vibedaw

@@ -42,6 +42,9 @@ void SidebarContainer::removeSidebar(Sidebar* sidebar) {
     if (sidebar == nullptr) return;
 
     sidebar->setListener(nullptr);
+    transitions_.erase(std::remove_if(transitions_.begin(), transitions_.end(),
+        [sidebar](const auto& transition) { return transition.sidebar == sidebar; }), transitions_.end());
+    sidebar->setAlpha(1.0f);
     removeChildComponent(sidebar);
 
     auto it = std::find(sidebars_.begin(), sidebars_.end(), sidebar);
@@ -49,17 +52,19 @@ void SidebarContainer::removeSidebar(Sidebar* sidebar) {
         sidebars_.erase(it);
     }
 
-    updateLayout();
+    layoutChanged();
 }
 
 void SidebarContainer::clearSidebars() {
+    transitions_.clear();
     for (auto* sidebar : sidebars_) {
         sidebar->setListener(nullptr);
+        sidebar->setAlpha(1.0f);
         removeChildComponent(sidebar);
     }
     sidebars_.clear();
     tabs_.clear();
-    updateLayout();
+    layoutChanged();
 }
 
 int SidebarContainer::getSidebarCount() const {
@@ -99,15 +104,16 @@ bool SidebarContainer::hasCollapsedSidebars() const {
 int SidebarContainer::expandedTotalWidth() const {
     int total = 0;
     for (auto* sidebar : sidebars_) {
-        if (sidebar->isExpanded()) {
-            total += sidebar->getSidebarWidth();
-        }
+        total += presentationWidth(sidebar);
     }
     return total;
 }
 
 int SidebarContainer::railWidth() const {
-    return hasCollapsedSidebars() ? Sidebar::collapseTabWidth : 0;
+    float fraction = 0.0f;
+    for (auto* sidebar : sidebars_)
+        fraction = std::max(fraction, 1.0f - widthFraction(sidebar));
+    return juce::roundToInt(Sidebar::collapseTabWidth * fraction);
 }
 
 int SidebarContainer::getTotalWidth() const {
@@ -115,11 +121,94 @@ int SidebarContainer::getTotalWidth() const {
 }
 
 int SidebarContainer::displayedSidebarWidth(Sidebar* sidebar, int budget, int expandedTotal) const {
-    if (!sidebar->isExpanded()) return 0;
+    const int width = presentationWidth(sidebar);
     if (expandedTotal <= 0 || expandedTotal <= budget) {
-        return sidebar->getSidebarWidth();
+        return width;
     }
-    return static_cast<int>((static_cast<long long>(sidebar->getSidebarWidth()) * budget) / expandedTotal);
+    return static_cast<int>((static_cast<long long>(width) * budget) / expandedTotal);
+}
+
+const SidebarContainer::Transition* SidebarContainer::transitionFor(const Sidebar* sidebar) const {
+    for (const auto& transition : transitions_)
+        if (transition.sidebar == sidebar) return &transition;
+    return nullptr;
+}
+
+float SidebarContainer::widthFraction(const Sidebar* sidebar) const {
+    if (const auto* transition = transitionFor(sidebar)) return transition->width;
+    return sidebar->isExpanded() ? 1.0f : 0.0f;
+}
+
+int SidebarContainer::presentationWidth(const Sidebar* sidebar) const {
+    return juce::roundToInt(sidebar->getSidebarWidth() * widthFraction(sidebar));
+}
+
+bool SidebarContainer::showsTab(const Sidebar* sidebar) const {
+    if (const auto* transition = transitionFor(sidebar)) return transition->showTab;
+    return sidebar->isCollapsed();
+}
+
+void SidebarContainer::setAnimationsEnabled(bool enabled) {
+    animationsEnabled_ = enabled;
+    if (!enabled && !transitions_.empty()) {
+        transitions_.clear();
+        layoutChanged();
+    }
+}
+
+void SidebarContainer::advanceAnimation(double now) {
+    if (transitions_.empty()) return;
+    const int previousRail = railWidth();
+    bool geometryChanged = false, tabsChanged = false;
+    std::vector<Sidebar*> closed;
+    for (auto& transition : transitions_) {
+        const int previousWidth = presentationWidth(transition.sidebar);
+        const bool previousTab = transition.showTab;
+        const double elapsed = now - transition.started;
+        const auto progress = [elapsed](double start, double duration) {
+            const float t = static_cast<float>(juce::jlimit(0.0, 1.0,
+                (elapsed - start) / duration));
+            return t * t * (3.0f - 2.0f * t);
+        };
+        if (transition.expanding) {
+            transition.width = transition.initialWidth + (1.0f - transition.initialWidth)
+                * progress(0.0, reflowDurationMs);
+            transition.alpha = transition.initialAlpha + (1.0f - transition.initialAlpha)
+                * progress(reflowDurationMs, fadeDurationMs);
+        } else {
+            transition.alpha = transition.initialAlpha * (1.0f - progress(0.0, fadeDurationMs));
+            transition.width = transition.initialWidth * (1.0f - progress(fadeDurationMs, reflowDurationMs));
+            transition.showTab = transition.showTab || elapsed >= fadeDurationMs;
+            if (elapsed >= fadeDurationMs + reflowDurationMs) closed.push_back(transition.sidebar);
+        }
+        geometryChanged |= previousWidth != presentationWidth(transition.sidebar);
+        tabsChanged |= previousTab != transition.showTab;
+    }
+    transitions_.erase(std::remove_if(transitions_.begin(), transitions_.end(),
+        [now](const auto& transition) { return now - transition.started >= fadeDurationMs + reflowDurationMs; }),
+        transitions_.end());
+    if (geometryChanged || previousRail != railWidth()) layoutChanged();
+    else if (tabsChanged) updateLayout();
+    else updatePresentation();
+    // Pulse only once the full restore button is visible, not while its rail is growing.
+    for (auto& tab : tabs_)
+        if (std::find(closed.begin(), closed.end(), &tab->sidebar()) != closed.end()) tab->flash();
+}
+
+void SidebarContainer::layoutChanged() {
+    // Let the workspace apply its width budget before laying out children, once.
+    layoutDirty_ = true;
+    if (containerListener_) containerListener_->sidebarContainerChanged(this);
+    if (layoutDirty_) updateLayout();
+}
+
+void SidebarContainer::updatePresentation() {
+    for (auto* sidebar : sidebars_) {
+        const auto* transition = transitionFor(sidebar);
+        const float alpha = transition ? transition->alpha : 1.0f;
+        sidebar->setAlpha(alpha);
+        sidebar->setVisible(presentationWidth(sidebar) > 0 && sidebar->getWidth() > 0 && alpha > 0.0f);
+    }
 }
 
 int SidebarContainer::getDisplayedWidth() const {
@@ -137,6 +226,7 @@ int SidebarContainer::getDisplayedWidth() const {
 }
 
 void SidebarContainer::constrainTo(int availableWidth) {
+    if (constrainedAvailable_ == availableWidth && !layoutDirty_) return;
     constrainedAvailable_ = availableWidth;
     updateLayout();
 }
@@ -164,24 +254,30 @@ void SidebarContainer::resized() {
 }
 
 void SidebarContainer::sidebarToggled(Sidebar* sidebar, bool expanded) {
-    juce::ignoreUnused(sidebar, expanded);
-    updateLayout();
-
-    if (containerListener_) {
-        containerListener_->sidebarContainerChanged(this);
+    if (animationsEnabled_) {
+        // The model already holds the target state. Start from the previous presentation,
+        // including partial progress when a shortcut reverses an in-flight transition.
+        const auto* previous = transitionFor(sidebar);
+        const float width = previous ? previous->width : (expanded ? 0.0f : 1.0f);
+        const float alpha = previous ? previous->alpha : (expanded ? 0.0f : 1.0f);
+        const bool showTab = !expanded && previous && previous->showTab;
+        transitions_.erase(std::remove_if(transitions_.begin(), transitions_.end(),
+            [sidebar](const auto& transition) { return transition.sidebar == sidebar; }), transitions_.end());
+        transitions_.push_back({ sidebar, expanded, juce::Time::getMillisecondCounterHiRes(),
+                                 width, alpha, width, alpha, showTab });
     }
+    layoutChanged();
 }
 
 void SidebarContainer::sidebarResized(Sidebar* sidebar, int newWidth) {
     juce::ignoreUnused(sidebar, newWidth);
-    updateLayout();
-
-    if (containerListener_) {
-        containerListener_->sidebarContainerChanged(this);
-    }
+    layoutChanged();
 }
 
 void SidebarContainer::updateLayout() {
+    if (updatingLayout_) return;
+    const juce::ScopedValueSetter<bool> guard(updatingLayout_, true);
+    layoutDirty_ = false;
     if (sidebars_.empty()) {
         tabs_.clear();
         setSize(0, getHeight());
@@ -208,29 +304,36 @@ void SidebarContainer::updateLayout() {
     int currentX = 0;
 
     for (auto* sidebar : sidebars_) {
-        if (sidebar->isExpanded()) {
-            int width = displayedSidebarWidth(sidebar, budget, expandedTotal);
-            sidebar->setVisible(true);
-            sidebar->setBounds(contentBounds.getX() + currentX, 0, width, getHeight());
-            currentX += width;
-        } else {
-            sidebar->setVisible(false);
-        }
+        const int width = displayedSidebarWidth(sidebar, budget, expandedTotal);
+        sidebar->setBounds(contentBounds.getX() + currentX, 0, width, getHeight());
+        currentX += width;
     }
+    updatePresentation();
 
     int tabX = (side_ == Side::Left) ? 0 : getWidth() - Sidebar::collapseTabWidth;
     int tabY = 0;
     for (auto& tab : tabs_) {
-        tab->setVisible(true);
+        // A full-size button must not paint or receive clicks over an adjacent panel
+        // while its rail is still growing.
+        tab->setVisible(rail == Sidebar::collapseTabWidth);
         tab->setBounds(tabX, tabY, Sidebar::collapseTabWidth, Sidebar::collapseTabWidth);
         tabY += Sidebar::collapseTabWidth;
     }
 }
 
 void SidebarContainer::updateTabs() {
+    size_t index = 0;
+    bool unchanged = true;
+    for (auto* sidebar : sidebars_) {
+        if (!showsTab(sidebar)) continue;
+        if (index >= tabs_.size() || &tabs_[index]->sidebar() != sidebar) unchanged = false;
+        ++index;
+    }
+    if (unchanged && index == tabs_.size()) return;
+
     std::vector<Sidebar*> collapsed;
     for (auto* sidebar : sidebars_) {
-        if (sidebar->isCollapsed()) {
+        if (showsTab(sidebar)) {
             collapsed.push_back(sidebar);
         }
     }
@@ -254,7 +357,7 @@ void SidebarContainer::updateTabs() {
 
     tabs_ = std::move(rebound);
     for (auto& tab : tabs_) {
-        addAndMakeVisible(tab.get());
+        addChildComponent(tab.get());
     }
 }
 

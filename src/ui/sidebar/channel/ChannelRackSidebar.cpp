@@ -502,7 +502,7 @@ void ChannelRackContent::selectChannel(int index) {
 
 Sidebar* createChannelRackSidebar(Project& project) {
     auto* sidebar = new Sidebar("Channel Rack", Sidebar::Side::Left);
-    sidebar->setIconSymbol(juce::String(juce::CharPointer_UTF8("\xe2\x96\xa6")));
+    sidebar->setIcon(IconId::channelRack);
     sidebar->setMinWidth(150);
     sidebar->setMaxWidth(400);
     sidebar->setSidebarWidth(250);

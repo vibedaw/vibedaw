@@ -41,6 +41,7 @@ void TrackHeaderList::resized() {
 }
 
 void TrackHeaderList::setScrollOffset(int offset) {
+    if (scrollOffset == offset) return;
     scrollOffset = offset;
     updateHeaderPositions();
 }

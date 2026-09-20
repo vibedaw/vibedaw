@@ -91,6 +91,7 @@ public:
     
 protected:
     PanelTitleBar* getTitleBar() const;
+    virtual void resizeContent(juce::Rectangle<int> bounds);
     
 private:
     juce::String panelName_;

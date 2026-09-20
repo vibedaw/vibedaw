@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/Icons.h"
 #include "ui/components/IconButton.h"
 
 namespace vibedaw {
@@ -21,8 +22,8 @@ public:
     
     juce::String getName() const { return name_; }
     int getId() const { return id_; }
-    void setIconSymbol(const juce::String& symbol) { iconSymbol_ = symbol; }
-    const juce::String& getIconSymbol() const { return iconSymbol_; }
+    void setIcon(IconId icon) { icon_ = icon; }
+    IconId getIcon() const { return icon_; }
     
     bool isExpanded() const { return expanded_; }
     bool isCollapsed() const { return !expanded_; }
@@ -60,7 +61,7 @@ public:
     
 private:
     juce::String name_;
-    juce::String iconSymbol_;
+    IconId icon_ = IconId::browser;
     int id_;
     Side side_;
     bool expanded_ = true;

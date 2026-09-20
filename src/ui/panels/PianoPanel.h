@@ -19,6 +19,7 @@ public:
     void onPanelStateChanged(PanelState newState, PanelState oldState) override;
     
 private:
+    void resizeContent(juce::Rectangle<int> bounds) override;
     std::unique_ptr<PianoComponent> piano_;
     juce::TextButton octaveDown_{"-"}, octaveUp_{"+"};
     juce::Label octaveLabel_;

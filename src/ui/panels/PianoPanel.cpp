@@ -85,6 +85,11 @@ void PianoPanel::resized() {
 
     velocitySlider_.setBounds(controls.removeFromTop(22));
 
+    updateOctaveLabel();
+}
+
+void PianoPanel::resizeContent(juce::Rectangle<int> bounds) {
+    bounds.removeFromLeft(150);
     if (auto* content = getContentComponent()) {
         if (auto* piano = dynamic_cast<PianoComponent*>(content)) {
             int pianoWidth = piano->getTotalKeyboardWidth();
@@ -94,7 +99,6 @@ void PianoPanel::resized() {
             content->setBounds(bounds);
         }
     }
-    updateOctaveLabel();
 }
 
 void PianoPanel::shiftOctave(int direction) {

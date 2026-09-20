@@ -452,16 +452,30 @@ factories. `sidebarRailTests` covers:
   cleanly when space returns.
 - Remembered widths survive repeated toggle cycles; one resize notification
   drives a coherent relayout; removing a collapsed sidebar drops exactly its tab.
-- Factories wire distinct UTF-8 glyphs (Browser, Channel Rack, Clips) with
-  tooltip names; SidebarTab exposes its bound sidebar and tooltip for testing.
+- Factories wire distinct vector icons (folder, rack, overlapping clips) with
+  restore-action tooltips; SidebarTab exposes its bound sidebar for testing.
 
-IconButton now also carries tooltip support. MainContent's narrow-window
-priority (left, then right, center keeps the remainder) and the Ctrl+B toggle
-are exercised through the container APIs; the MainContent wiring itself is
-source-reviewed, not compiled by this target. No native paint, hover visuals,
-tooltip popups or watcher observation is claimed; those remain T13 watcher
-acceptance. Final build succeeded and CTest 1/1 passed (6.76 seconds); no
-application build/launch, staging or commit.
+`sidebarAnimationTests` advances the real message-thread animation code with
+deterministic timestamps, without sleeping. Both left and right containers cover
+the 80 ms fade followed by 120 ms width reflow, reverse-order restore, intermediate
+geometry, a single 300 ms identity-bound restore-button pulse, rapid reversals,
+concurrent collapses, resizing, removal, clear, and animation cancellation. Tabs
+stay hidden until their rail can fit them without overlapping neighboring panels.
+The pulse is also painted offscreen, and `iconTests` renders every vector icon.
+Fade-only frames are checked to emit no workspace-layout notifications; simulated
+8 ms frame callbacks verify that reflow updates are not capped at 60 Hz.
+
+MainContent enables animations and uses the containers' presentation widths to
+resize the remaining workspace on each tick. Its wiring and Ctrl+B path are
+compiled by this target and source-reviewed; the animation tests use a lightweight
+layout listener rather than constructing MainContent. Sidebar transitions and
+restore pulses use `VBlankAttachment` to update with the peer's repaint cycle
+(timer-backed on JUCE's Linux backend, not a hardware-vsync guarantee).
+`panelLayoutTests` checks one final keyboard bounds assignment per resize and
+that unchanged timeline scroll offsets skip lane layout while real offset, zoom,
+and size changes still update it. Native hover/focus dispatch, tooltip popups,
+and measured frame pacing remain watcher acceptance checks.
+No application build or launch is needed for these offline tests.
 
 ## T14 Context Menus and Keyboard Actions
 

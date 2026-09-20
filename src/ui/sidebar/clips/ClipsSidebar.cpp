@@ -374,7 +374,7 @@ void ClipsContent::selectClip(int index) {
 
 Sidebar* createClipsSidebar(Project& project) {
     auto* sidebar = new Sidebar("Clips", Sidebar::Side::Right);
-    sidebar->setIconSymbol(juce::String(juce::CharPointer_UTF8("\xe2\x99\xaa")));
+    sidebar->setIcon(IconId::clips);
     sidebar->setMinWidth(150);
     sidebar->setMaxWidth(400);
     sidebar->setSidebarWidth(250);

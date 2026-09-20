@@ -58,6 +58,7 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     
     leftSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Left);
     leftSidebarContainer_->setContainerListener(this);
+    leftSidebarContainer_->setAnimationsEnabled(true);
     addAndMakeVisible(*leftSidebarContainer_);
     
     auto* browserSidebar = createBrowserSidebar(pluginScanner_);
@@ -75,6 +76,7 @@ MainContent::MainContent(juce::MidiKeyboardState& keyboardState, MidiManager& ma
     
     rightSidebarContainer_ = std::make_unique<SidebarContainer>(Sidebar::Side::Right);
     rightSidebarContainer_->setContainerListener(this);
+    rightSidebarContainer_->setAnimationsEnabled(true);
     addAndMakeVisible(*rightSidebarContainer_);
     
     auto* clipsSidebar = createClipsSidebar(project_);
@@ -360,7 +362,6 @@ bool MainContent::handleKeyPress(const juce::KeyPress& key) {
             auto* sidebar = leftSidebarContainer_->getSidebar(0);
             if (sidebar) {
                 sidebar->toggle();
-                updateLayout();
             }
         }
         return true;

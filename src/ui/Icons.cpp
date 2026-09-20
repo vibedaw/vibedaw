@@ -4,7 +4,7 @@
 namespace vibedaw {
 
 // Tabler Icons outline path data, MIT License (transport v1.28, metronome
-// v2.40, infinity v1.2, stack-2 v1.39, playlist-add v1.53).
+// v2.40, infinity v1.2, stack-2 v1.39, playlist-add v1.53; folder, server, copy).
 // Copyright (c) Paweł Kuna. Multiple subpaths are concatenated per icon; each
 // begins with M, so concatenation preserves the source geometry.
 namespace {
@@ -25,7 +25,14 @@ const char* const iconPaths[] = {
     "M9.828 9.172a4 4 0 1 0 0 5.656a10 10 0 0 0 2.172 -2.828a10 10 0 0 1 2.172 -2.828"
         "a4 4 0 1 1 0 5.656a10 10 0 0 1 -2.172 -2.828a10 10 0 0 0 -2.172 -2.828", // infinity
     "M12 4l-8 4l8 4l8 -4l-8 -4M4 12l8 4l8 -4M4 16l8 4l8 -4",                 // stack-2
-    "M19 8h-14M5 12h9M11 16h-6M15 16h6M18 13v6"                              // playlist-add
+    "M19 8h-14M5 12h9M11 16h-6M15 16h6M18 13v6",                             // playlist-add
+    "M5 4h4l3 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12"
+        "a2 2 0 0 1 2 -2",                                                   // folder
+    "M5 3h14a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4a2 2 0 0 1 2 -2"
+        "M5 13h14a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4a2 2 0 0 1 2 -2"
+        "M7 7v.01M7 17v.01",                                                 // server
+    "M9 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2"
+        "M17 7v-2a2 2 0 0 0 -2 -2h-10a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h2"       // copy
 };
 
 std::array<juce::Path, std::size(iconPaths)> buildPaths() {

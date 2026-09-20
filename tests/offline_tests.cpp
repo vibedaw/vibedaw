@@ -53,6 +53,21 @@ using namespace vibedaw;
 #define CHECK(x) do { if (!(x)) throw std::runtime_error(std::string(__FILE__) + ":" + std::to_string(__LINE__) + ": " #x); } while (false)
 
 namespace vibedaw {
+struct SidebarContainerTestAccess {
+    static double started(const SidebarContainer& container, const Sidebar& sidebar) {
+        const auto* transition = container.transitionFor(&sidebar);
+        CHECK(transition != nullptr);
+        return transition->started;
+    }
+    static void advance(SidebarContainer& container, double now) { container.advanceAnimation(now); }
+    static bool running(const SidebarContainer& container) { return !container.transitions_.empty(); }
+    static constexpr double fade = SidebarContainer::fadeDurationMs;
+    static constexpr double reflow = SidebarContainer::reflowDurationMs;
+};
+struct SidebarTabTestAccess {
+    static void advance(SidebarTab& tab, double elapsed) { tab.advanceFlash(tab.flashStartTime_ + elapsed); }
+    static float amount(const SidebarTab& tab) { return tab.flashAmount_; }
+};
 struct DawWindowTestAccess {
     static void poll(DawWindow& window) { window.pollNativeState(juce::Time::getMillisecondCounterHiRes()); }
     static void expire(DawWindow& window) { window.pollNativeState(window.requestStarted_ + 1600.0); }
@@ -955,7 +970,7 @@ static void sidebarRailTests() {
         CHECK(tab && &tab->sidebar() == browser.get());
         CHECK(tab->getBounds() == juce::Rectangle<int>(0, 0, 28, 28));
         CHECK(left.getLocalBounds().contains(tab->getBounds()));
-        CHECK(tab->getTooltip() == "Browser");
+        CHECK(tab->getTooltip() == "Restore Browser");
 
         rack->setExpanded(false);
         CHECK(left.getTotalWidth() == 28 && left.getWidth() == 28); // No blank reserved column.
@@ -966,7 +981,7 @@ static void sidebarRailTests() {
         CHECK(browserTab->getBounds() == juce::Rectangle<int>(0, 0, 28, 28));
         CHECK(rackTab->getBounds() == juce::Rectangle<int>(0, 28, 28, 28));
         CHECK(left.getLocalBounds().contains(rackTab->getBounds()));
-        CHECK(rackTab->getTooltip() == "Channel Rack");
+        CHECK(rackTab->getTooltip() == "Restore Channel Rack");
 
         // Equal-count membership changes must rebind tabs, not leave stale bindings.
         browser->setExpanded(true);
@@ -1087,21 +1102,181 @@ static void sidebarRailTests() {
         CHECK(browser->isVisible());
     }
 
-    { // Factories wire distinct glyphs; tooltips use the sidebar names.
+    { // Factories wire semantic vector icons; tooltips name the restore action.
         Project project;
         auto clips = std::unique_ptr<Sidebar>(createClipsSidebar(project));
-        CHECK(clips->getName() == "Clips" && clips->getIconSymbol().isNotEmpty());
+        CHECK(clips->getName() == "Clips" && clips->getIcon() == IconId::clips);
         auto rack = std::unique_ptr<Sidebar>(createChannelRackSidebar(project));
-        CHECK(rack->getName() == "Channel Rack" && rack->getIconSymbol().isNotEmpty());
+        CHECK(rack->getName() == "Channel Rack" && rack->getIcon() == IconId::channelRack);
         PluginScanner scanner;
         auto browser = std::unique_ptr<Sidebar>(createBrowserSidebar(scanner));
-        CHECK(browser->getName() == "Browser" && browser->getIconSymbol().isNotEmpty());
-        CHECK(clips->getIconSymbol() != rack->getIconSymbol());
-        CHECK(rack->getIconSymbol() != browser->getIconSymbol());
-        CHECK(browser->getIconSymbol() != clips->getIconSymbol());
+        CHECK(browser->getName() == "Browser" && browser->getIcon() == IconId::browser);
         SidebarTab tab(*clips);
-        CHECK(tab.getTooltip() == "Clips");
+        CHECK(tab.getTooltip() == "Restore Clips");
         CHECK(&tab.sidebar() == clips.get());
+    }
+}
+
+static void sidebarAnimationTests() {
+    using Animation = SidebarContainerTestAccess;
+    using Pulse = SidebarTabTestAccess;
+    constexpr double fade = Animation::fade, reflow = Animation::reflow, duration = fade + reflow;
+    for (auto side : {Sidebar::Side::Left, Sidebar::Side::Right}) {
+        Sidebar closing("Closing", side), remaining("Remaining", side);
+        SidebarContainer container(side);
+        struct Workspace : SidebarContainerListener {
+            juce::Component center;
+            int layouts = 0;
+            void sidebarContainerChanged(SidebarContainer* sidebars) override {
+                ++layouts;
+                center.setBounds(sidebars->getDisplayedWidth(), 0,
+                                 1000 - sidebars->getDisplayedWidth(), 600);
+            }
+        } workspace;
+        closing.setSidebarWidth(220);
+        remaining.setSidebarWidth(250);
+        container.addSidebar(&closing);
+        container.addSidebar(&remaining);
+        container.setSize(470, 600);
+        container.setContainerListener(&workspace);
+        workspace.sidebarContainerChanged(&container);
+        container.setAnimationsEnabled(true);
+        const auto centerBefore = workspace.center.getBounds();
+        const auto remainingBefore = remaining.getBounds();
+
+        closing.setExpanded(false);
+        auto start = Animation::started(container, closing);
+        CHECK(closing.isVisible() && closing.isCollapsed() && container.getTabCount() == 0);
+        CHECK(Animation::running(container));
+        workspace.layouts = 0;
+        Animation::advance(container, start + fade / 2);
+        CHECK(closing.getAlpha() > 0.45f && closing.getAlpha() < 0.55f);
+        CHECK(workspace.center.getBounds() == centerBefore && remaining.getBounds() == remainingBefore);
+        CHECK(container.getDisplayedWidth() == 470 && closing.getSidebarWidth() == 220);
+        Animation::advance(container, start + fade);
+        CHECK(workspace.layouts == 0); // Opacity and tab membership do not relayout the workspace.
+        CHECK(!closing.isVisible() && container.getDisplayedWidth() == 470);
+        CHECK(container.getTabCount() == 1 && !container.getTab(0)->isFlashing());
+        CHECK(!container.getTab(0)->isVisible());
+        Animation::advance(container, start + fade + reflow / 2);
+        CHECK(workspace.layouts == 1);
+        CHECK(container.getDisplayedWidth() == 374); // 110px closing + 250px remaining + 14px rail.
+        CHECK(workspace.center.getWidth() > centerBefore.getWidth());
+        CHECK(workspace.center.getWidth() < 1000 - 278);
+        CHECK(remaining.isVisible() && remaining.getAlpha() == 1.0f);
+        CHECK(!container.getTab(0)->isVisible());
+        Animation::advance(container, start + duration);
+        CHECK(!Animation::running(container) && container.getDisplayedWidth() == 278);
+        CHECK(!closing.isVisible() && closing.getAlpha() == 1.0f);
+        CHECK(workspace.center.getWidth() == 722);
+        auto* tab = container.getTab(0);
+        CHECK(tab && &tab->sidebar() == &closing && tab->isFlashing() && tab->isVisible());
+        CHECK(container.getLocalBounds().contains(tab->getBounds()));
+
+        // One identity-bound pulse survives relayout and stops after 300 ms.
+        juce::Image highlighted(juce::Image::ARGB, 28, 28, true);
+        { juce::Graphics g(highlighted); tab->paintButton(g, false, false); }
+        Pulse::advance(*tab, 150);
+        CHECK(std::abs(Pulse::amount(*tab) - 0.5f) < 0.001f);
+        container.constrainTo(300);
+        CHECK(container.getTab(0) == tab && std::abs(Pulse::amount(*tab) - 0.5f) < 0.001f);
+        Pulse::advance(*tab, 300);
+        CHECK(!tab->isFlashing());
+        juce::Image idle(juce::Image::ARGB, 28, 28, true);
+        { juce::Graphics g(idle); tab->paintButton(g, false, false); }
+        CHECK(highlighted.getPixelAt(14, 14) != idle.getPixelAt(14, 14));
+        Animation::advance(container, start + 500);
+        CHECK(!tab->isFlashing());
+
+        // Restore makes room first, then fades in. The tab may destroy itself on activation.
+        container.constrainTo(1000);
+        tab->activate();
+        start = Animation::started(container, closing);
+        CHECK(closing.isExpanded() && !closing.isVisible() && container.getTabCount() == 0);
+        Animation::advance(container, start + reflow / 2);
+        CHECK(container.getDisplayedWidth() == 374 && !closing.isVisible());
+        Animation::advance(container, start + reflow);
+        CHECK(container.getDisplayedWidth() == 470 && !closing.isVisible());
+        workspace.layouts = 0;
+        Animation::advance(container, start + reflow + fade / 2);
+        CHECK(closing.isVisible() && closing.getAlpha() > 0.45f && closing.getAlpha() < 0.55f);
+        Animation::advance(container, start + duration);
+        CHECK(workspace.layouts == 0); // Restoring opacity also needs no workspace layout.
+        CHECK(closing.getAlpha() == 1.0f && !Animation::running(container));
+        CHECK(workspace.center.getBounds() == centerBefore && remaining.getBounds() == remainingBefore);
+
+        // Reverse during both phases without snapping alpha/width or leaving a stale tab.
+        for (double elapsed : {fade / 2, fade + reflow / 2}) {
+            closing.setExpanded(false);
+            Animation::advance(container, Animation::started(container, closing) + elapsed);
+            const auto width = container.getDisplayedWidth();
+            const auto alpha = closing.getAlpha();
+            closing.setExpanded(true);
+            CHECK(container.getDisplayedWidth() == width && closing.getAlpha() == alpha);
+            Animation::advance(container, Animation::started(container, closing) + reflow + fade / 2);
+            const auto reverseWidth = container.getDisplayedWidth();
+            const auto reverseAlpha = closing.getAlpha();
+            closing.setExpanded(false);
+            CHECK(container.getDisplayedWidth() == reverseWidth && closing.getAlpha() == reverseAlpha);
+            Animation::advance(container, Animation::started(container, closing) + duration);
+            CHECK(container.getTabCount() == 1 && container.getTab(0)->isFlashing());
+            closing.setExpanded(true);
+            Animation::advance(container, Animation::started(container, closing) + duration);
+            CHECK(closing.isVisible() && closing.getAlpha() == 1.0f && container.getTabCount() == 0);
+        }
+
+        // High-refresh callbacks are not throttled to 60 Hz, and fade frames do no layout.
+        closing.setExpanded(false);
+        start = Animation::started(container, closing);
+        workspace.layouts = 0;
+        for (double elapsed = 8; elapsed <= fade; elapsed += 8)
+            Animation::advance(container, start + elapsed);
+        CHECK(workspace.layouts == 0);
+        int distinctWidths = 0, lastWidth = container.getWidth();
+        for (double elapsed = fade + 8; elapsed < duration; elapsed += 8) {
+            Animation::advance(container, start + elapsed);
+            if (lastWidth != container.getWidth()) ++distinctWidths;
+            lastWidth = container.getWidth();
+        }
+        CHECK(distinctWidths >= 10);
+        Animation::advance(container, start + duration);
+        closing.setExpanded(true);
+        Animation::advance(container, Animation::started(container, closing) + duration);
+
+        // Both transitions can run together; resizing never overwrites preferred widths.
+        closing.setExpanded(false);
+        remaining.setExpanded(false);
+        start = Animation::started(container, remaining);
+        Animation::advance(container, start + fade + reflow / 2);
+        container.constrainTo(100);
+        container.setSize(container.getWidth(), 400);
+        CHECK(container.getDisplayedWidth() <= 100);
+        CHECK(closing.getSidebarWidth() == 220 && remaining.getSidebarWidth() == 250);
+        Animation::advance(container, start + duration);
+        CHECK(container.getWidth() == 28 && container.getTabCount() == 2);
+        CHECK(container.getTab(0)->isFlashing() && container.getTab(1)->isFlashing());
+        Pulse::advance(*container.getTab(0), 300);
+        remaining.setExpanded(true);
+        Animation::advance(container, Animation::started(container, remaining) + duration);
+        CHECK(container.getTabCount() == 1 && !container.getTab(0)->isFlashing());
+        container.constrainTo(1000);
+        CHECK(remaining.getWidth() == 250);
+
+        // Removal/clear/disable during a transition restore opacity and stop animation work.
+        closing.setExpanded(true);
+        Animation::advance(container, Animation::started(container, closing) + reflow + fade / 2);
+        container.removeSidebar(&closing);
+        CHECK(closing.getAlpha() == 1.0f && !Animation::running(container));
+        CHECK(container.getWidth() == 250 && container.getTabCount() == 0);
+        remaining.setExpanded(false);
+        container.setAnimationsEnabled(false);
+        CHECK(container.getWidth() == 28 && !remaining.isVisible() && remaining.getAlpha() == 1.0f);
+        CHECK(!Animation::running(container));
+        container.setAnimationsEnabled(true);
+        remaining.setExpanded(true);
+        container.clearSidebars();
+        CHECK(container.getWidth() == 0 && container.getTabCount() == 0 && !Animation::running(container));
+        CHECK(remaining.getAlpha() == 1.0f);
     }
 }
 
@@ -3654,7 +3829,7 @@ static void keyboardPaintTests() {
 }
 
 static void iconTests() {
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i <= static_cast<int>(IconId::clips); ++i) {
         const auto id = static_cast<IconId>(i);
         const auto& path = Icons::path(id);
         CHECK(path.getBounds().getWidth() > 0 && path.getBounds().getHeight() > 0);
@@ -5772,6 +5947,7 @@ static void projectFileTests() {
 #include "recording_model_tests.h"
 #include "recording_session_tests.h"
 #include "recording_ui_tests.h"
+#include "panel_layout_tests.h"
 
 int main() {
     try {
@@ -5801,6 +5977,8 @@ int main() {
         timelineInvalidationTests();
         timelineGestureReviewTests();
         sidebarRailTests();
+        sidebarAnimationTests();
+        panelLayoutTests();
         contextMenuTests();
         pluginEditorCreationTests();
         transportClockTests();
